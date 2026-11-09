@@ -1,0 +1,130 @@
+diff --git a/src/wrapper/clap-juce-wrapper.cpp b/src/wrapper/clap-juce-wrapper.cpp
+index 9f87bb5..df396a1 100644
+--- a/src/wrapper/clap-juce-wrapper.cpp
++++ b/src/wrapper/clap-juce-wrapper.cpp
+@@ -1003,13 +1003,12 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+     bool audioPortsInfo(uint32_t index, bool isInput,
+                         clap_audio_port_info *info) const noexcept override
+     {
+-        // For now hardcode to stereo out. Fix this obviously.
+         const auto bus = processor->getBus(isInput, (int)index);
+-        const auto busDefaultLayout = bus->getDefaultLayout();
++        const auto busLayout = bus->getCurrentLayout();
+ 
+         // For now we only support mono or stereo buses
+-        jassert(busDefaultLayout == juce::AudioChannelSet::mono() ||
+-                busDefaultLayout == juce::AudioChannelSet::stereo());
++        jassert(busLayout == juce::AudioChannelSet::mono() ||
++                busLayout == juce::AudioChannelSet::stereo());
+ 
+         auto getPortID = [](bool isPortInput, uint32_t portIndex) {
+             return (isPortInput ? 1 << 15 : 1) + portIndex;
+@@ -1037,7 +1036,8 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+             info->flags |= CLAP_AUDIO_PORT_REQUIRES_COMMON_SAMPLE_SIZE;
+         }
+ 
+-        if (processor->getBus(!isInput, (int)index) != nullptr)
++        const auto otherBus = processor->getBus(!isInput, (int)index);
++        if (otherBus != nullptr && otherBus->getCurrentLayout() == busLayout)
+         {
+             // this bus has a corresponding bus on the other side, so it can do in-place processing
+             info->in_place_pair = getPortID(!isInput, index);
+@@ -1048,11 +1048,11 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+             info->in_place_pair = CLAP_INVALID_ID;
+         }
+ 
+-        info->channel_count = (uint32_t)busDefaultLayout.size();
++        info->channel_count = (uint32_t)busLayout.size();
+ 
+-        if (busDefaultLayout == juce::AudioChannelSet::mono())
++        if (busLayout == juce::AudioChannelSet::mono())
+             info->port_type = CLAP_PORT_MONO;
+-        else if (busDefaultLayout == juce::AudioChannelSet::stereo())
++        else if (busLayout == juce::AudioChannelSet::stereo())
+             info->port_type = CLAP_PORT_STEREO;
+         else
+             jassertfalse; // @TODO: implement CLAP_PORT_SURROUND and CLAP_PORT_AMBISONIC through
+@@ -1060,17 +1060,40 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+ 
+         return true;
+     }
+-    uint32_t audioPortsConfigCount() const noexcept override
++    bool implementsAudioPortsConfig() const noexcept override { return true; }
++    uint32_t audioPortsConfigCount() const noexcept override { return 3; }
++
++    bool audioPortsGetConfig(uint32_t index, clap_audio_ports_config *config) const noexcept override
+     {
+-        DBG("audioPortsConfigCount CALLED - returning 0");
+-        return 0;
++        if (index >= audioPortsConfigCount())
++            return false;
++
++        constexpr const char *names[] = {"Stereo", "Mono to Stereo", "Mono"};
++        const bool monoInput = index != 0;
++        const bool monoOutput = index == 2;
++        *config = {};
++        config->id = index;
++        snprintf(config->name, sizeof(config->name), "%s", names[index]);
++        config->input_port_count = config->output_port_count = 1;
++        config->has_main_input = config->has_main_output = true;
++        config->main_input_channel_count = monoInput ? 1 : 2;
++        config->main_output_channel_count = monoOutput ? 1 : 2;
++        config->main_input_port_type = monoInput ? CLAP_PORT_MONO : CLAP_PORT_STEREO;
++        config->main_output_port_type = monoOutput ? CLAP_PORT_MONO : CLAP_PORT_STEREO;
++        return true;
+     }
+-    bool audioPortsGetConfig(uint32_t /*index*/,
+-                             clap_audio_ports_config * /*config*/) const noexcept override
++
++    bool audioPortsSetConfig(clap_id configId) noexcept override
+     {
+-        return false;
++        if (isActive() || configId >= audioPortsConfigCount())
++            return false;
++        const auto mono = juce::AudioChannelSet::mono();
++        const auto stereo = juce::AudioChannelSet::stereo();
++        auto layout = processor->getBusesLayout();
++        layout.inputBuses.set(0, configId == 0 ? stereo : mono);
++        layout.outputBuses.set(0, configId == 2 ? mono : stereo);
++        return processor->setBusesLayout(layout);
+     }
+-    bool audioPortsSetConfig(clap_id /*configId*/) noexcept override { return false; }
+ 
+     bool implementsNotePorts() const noexcept override { return true; }
+     uint32_t notePortsCount(bool is_input) const noexcept override
+@@ -1424,6 +1447,9 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+         if (paramVariant.processorParam->isAutomatable())
+             info->flags = info->flags | CLAP_PARAM_IS_AUTOMATABLE;
+ 
++        if (paramVariant.processorParam == processor->getBypassParameter())
++            info->flags |= CLAP_PARAM_IS_BYPASS;
++
+         if (paramVariant.processorParam->isBoolean())
+         {
+             // This condition used to say || paramVariant.processorParam->isDiscrete())
+@@ -2420,7 +2446,7 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+         while (sofar < sz)
+         {
+             auto written = stream->write(stream, dat, (uint32_t)(sz - sofar));
+-            if (written < 0)
++            if (written <= 0)
+             {
+                 return false;
+             }
+@@ -2463,8 +2489,14 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+         if (chunkMemory.getSize() == 0)
+             return false;
+ 
+-        // JUCE has no way to report an unstream error; setStateInformation is void
+-        // So we just have to assume it works.
++        // Vocal Stack uses JUCE's binary XML envelope for plugin state.
++        if (chunkMemory.getSize() > 64 * 1024 ||
++            !juce::AudioProcessor::getXmlFromBinary(chunkMemory.getData(), (int)chunkMemory.getSize()))
++        {
++            chunkMemory.reset();
++            return false;
++        }
++
+         processor->setStateInformation(chunkMemory.getData(), (int)chunkMemory.getSize());
+         chunkMemory.reset();
+ 
