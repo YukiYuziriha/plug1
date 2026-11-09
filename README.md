@@ -1,4 +1,4 @@
-# Vocal Stack 1.1.1
+# Vocal Stack 1.1.2
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
@@ -22,8 +22,8 @@ and [VST3](https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical%2BDo
 
 | Control | Default | Effect |
 | --- | --- | --- |
-| Level | 50% | Strength of phrase-level gain correction |
-| Double | 35% | Amount of the two generated layers |
+| Leveler | 50% | Automatic gain riding toward −20 dBFS RMS; 0% off, 100% full correction |
+| Mix | 35% | Generated doubles added to the lead; 0% lead only, 100% maximum doubles, not wet-only |
 | Human | 35% | Variation in the doubles' timing, pitch, and tone |
 | Width | 65% | Stereo spread of the doubles |
 | Formant | 0.0 st | Moves vocal resonances at the original lead pitch |
@@ -64,6 +64,13 @@ Meters keep their history independently of the editor's 30 Hz refresh.
 ![Neon editor with illustrative meter readings](VocalStack-Neon-Shibuya.png)
 
 The preview uses synthetic readings to demonstrate peak hold and clip indication.
+
+Mix is an additive doubles amount with smoothed stack-level compensation, not a
+conventional dry/wet crossfade. The lead remains present at 100%. Leveler is not
+output gain: above its −20 dBFS RMS target it attenuates, and below it boosts active
+phrases. At 0% it applies unity gain; other modules can still change output level.
+Use Output for manual trim. Version 1.1.2 clarifies these names without changing DSP
+or parameter IDs, so existing automation and saved sessions retain their sound.
 
 The leveler detects active phrases from smoothed input RMS and limits correction
 to −10 to +8 dB at full strength. The doubles use separate Signalsmith

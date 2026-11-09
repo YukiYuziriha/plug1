@@ -145,7 +145,7 @@ double currentValue(const Instance& instance, clap_id id) {
 void checkHostControls(const clap_plugin_factory_t& factory) {
     Instance instance(factory);
     constexpr std::array<std::string_view, 10> names{
-        "Level", "Double", "Human", "Width", "Formant",
+        "Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
     const auto& remote = instance.get<clap_plugin_remote_controls_t>(CLAP_EXT_REMOTE_CONTROLS);

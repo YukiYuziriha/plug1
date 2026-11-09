@@ -127,6 +127,24 @@ void leveler() {
     expect(raise > 6.0f && raise <= 8.01f, "Quiet phrase gain out of bounds");
     expect(lower < -8.0f && lower >= -10.01f, "Loud phrase gain out of bounds");
     expect(std::abs(floor) < 0.005f, "Below-gate input was amplified");
+
+    // Isolate the rider from the doubles and formant paths when checking unity.
+    const auto probe = tone(rate, std::sqrt(2.0f) * std::pow(10.0f, -15.0f / 20.0f), 125, 3);
+    for (const float strength : {0.0f, 0.5f, 1.0f}) {
+        settings.level = strength;
+        const auto result = render(probe, nullptr, rate, 1, settings);
+        const float change = ratioDb(rms(result.left, 2 * rate, 3 * rate),
+            rms(probe, 2 * rate - result.latency, 3 * rate - result.latency));
+        std::cout << "Leveler at " << strength * 100 << "% with -15 dBFS RMS input: "
+                  << change << " dB\n";
+        expect(std::abs(change + 5.0f * strength) < 0.12f,
+               "Leveler no longer follows its fixed RMS target or zero-strength unity");
+        if (strength == 0.0f) {
+            for (size_t i = result.latency; i < probe.size(); ++i)
+                expect(result.left[i] == probe[i - result.latency],
+                       "Zero Leveler with no doubles/formant is not exact unity");
+        }
+    }
 }
 
 void formant() {

@@ -288,7 +288,7 @@ void editorSkin(bool neon) {
     editor->setVisible(true);
     expectPassiveControls(*editor);
 
-    constexpr std::array<const char*, 6> names{"Level", "Double", "Human", "Width", "Formant", "Output"};
+    constexpr std::array<const char*, 6> names{"Leveler", "Mix", "Human", "Width", "Formant", "Output"};
     std::array<juce::Slider*, names.size()> knobs{};
     std::vector<juce::Component*> controls;
     MeterPanel* meters = nullptr;

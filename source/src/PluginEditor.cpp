@@ -17,11 +17,11 @@ constexpr uint32_t night = 0x090d17, panel = 0x111827, outline = 0x2b3a53;
 constexpr uint32_t signPink = 0xff4ca0, signCyan = 0x64f5e3, signYellow = 0xf8de6b;
 constexpr uint32_t nightText = 0xf1f5ff, nightMuted = 0x9eafc8;
 constexpr std::array<const char*, knobParameterIds.size()> knobNames{
-    "Level", "Double", "Human", "Width", "Formant", "Output"
+    "Leveler", "Mix", "Human", "Width", "Formant", "Output"
 };
 constexpr std::array<const char*, knobParameterIds.size()> knobTips{
-    "How strongly active phrases are leveled",
-    "How much of the two generated takes is mixed in",
+    "Automatic gain riding toward -20 dBFS RMS: 0% off, 100% full correction (-10 to +8 dB). Not output volume",
+    "Amount of generated doubles added to the lead, with level compensation. 0% lead only; 100% maximum doubles, not wet-only",
     "How far the doubles vary in timing, pitch and tone",
     "How widely the generated takes are panned",
     "Move the vocal resonances while keeping the lead pitch. Double-click for 0 st",
@@ -263,7 +263,7 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     const float angle = start + position * (end - start);
     const auto name = slider.getName();
     const auto accent = rgb(!flash ? 0xf5a24b : name == "Formant" ? signCyan
-                            : name == "Level" || name == "Output" ? signYellow : signPink);
+                            : name == "Leveler" || name == "Output" ? signYellow : signPink);
     Path track, value;
     track.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, start, end, true);
     g.setColour(flash ? rgb(outline) : rgb(0x50564f));

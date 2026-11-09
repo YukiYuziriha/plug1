@@ -30,8 +30,8 @@ State::ParameterLayout Processor::makeParameters() {
             juce::NormalisableRange<float>{0.0f, 100.0f, 1.0f}, initial,
             juce::AudioParameterFloatAttributes{}.withLabel("%").withStringFromValueFunction(percentText)));
     };
-    percent(0, "Level", 50);
-    percent(1, "Double", 35);
+    percent(0, "Leveler", 50);
+    percent(1, "Mix", 35);
     percent(2, "Human", 35);
     percent(3, "Width", 65);
     layout.add(std::make_unique<juce::AudioParameterFloat>(
