@@ -102,9 +102,10 @@ class DoublerPanel final : public juce::Component {
     class VoiceCard final : public juce::Component {
     public:
         VoiceCard(Processor& owner, size_t index)
-            : pitch(owner, voicePitchParameterId(index), "PITCH", "st") {
+            : voiceSlot(index), pitch(owner, voicePitchParameterId(index), "PITCH", "st") {
             enabled.setComponentID(voiceParameterId(index, 0));
-            enabled.setButtonText("VOICE " + juce::String(int(index + 1)));
+            enabled.setButtonText("On");
+            enabled.setName("Enable voice " + juce::String(int(index + 1)));
             enabled.setClickingTogglesState(true);
             enabled.setTooltip("Mute this voice without removing its card or settings");
             addAndMakeVisible(enabled);
@@ -131,7 +132,8 @@ class DoublerPanel final : public juce::Component {
             auto area = getLocalBounds().reduced(8);
             auto header = area.removeFromTop(25);
             remove.setBounds(header.removeFromRight(64));
-            enabled.setBounds(header);
+            header.removeFromLeft(112);
+            enabled.setBounds(header.removeFromLeft(54));
             area.removeFromTop(5);
             pitch.setBounds(area.removeFromTop(34));
             area.removeFromTop(5);
@@ -142,8 +144,18 @@ class DoublerPanel final : public juce::Component {
         void paint(juce::Graphics& g) override {
             g.setColour(juce::Colour(neon ? 0xff111827 : 0xff252826));
             g.fillRoundedRectangle(getLocalBounds().toFloat(), 4.0f);
-            g.setColour(selected ? juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b) : juce::Colour(neon ? 0xff2b3a53 : 0xff515850));
+            const auto colour = VoiceMonitor::voiceColour(voiceSlot);
+            g.setColour(selected ? colour : juce::Colour(neon ? 0xff2b3a53 : 0xff515850));
             g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.7f), 4.0f, selected ? 1.6f : 1.0f);
+            g.setColour(colour.withAlpha(0.12f));
+            g.fillRoundedRectangle(5.0f, 5.0f, float(getWidth() - 10), 32.0f, 3.0f);
+            g.setColour(colour);
+            g.fillEllipse(12, 10, 22, 22);
+            g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            g.setColour(juce::Colour(0xff151b20));
+            g.drawText(juce::String(int(voiceSlot + 1)), 12, 10, 22, 22, juce::Justification::centred);
+            g.setColour(juce::Colour(0xffe4e9ee));
+            g.drawText("VOICE", 42, 10, 66, 22, juce::Justification::centredLeft);
         }
         void setSelected(bool value) { selected = value; repaint(); }
         void setNeon(bool value) {
@@ -158,6 +170,7 @@ class DoublerPanel final : public juce::Component {
         }
         std::function<void()> onSelect;
     private:
+        const size_t voiceSlot;
         bool neon = false, selected = false;
         juce::TextButton enabled, remove;
         detail::ParameterSlider pitch;
@@ -174,11 +187,15 @@ public:
     explicit DoublerPanel(Processor& processor) : owner(processor) {
         setName("Advanced Doubler drawer");
         enabled.setComponentID("advancedOn");
-        enabled.setButtonText("ADVANCED DOUBLER");
+        enabled.setButtonText("Voice stack");
+        enabled.setName("Advanced voice stack enabled");
         enabled.setClickingTogglesState(true);
         enabled.onClick = [this] { owner.setAdvancedEnabled(enabled.getToggleState()); };
         enabled.setTooltip("Use stored voice settings instead of Basic; disabling preserves edits");
         reset.setButtonText("Reset to Basic");
+        openRouting.setButtonText("Open Routing");
+        openRouting.setTooltip("Open the audio graph and independent effect controls");
+        openRouting.onClick = [this] { if (onOpenRouting) onOpenRouting(); };
         reset.setTooltip("Restore two Basic-derived voices; unrelated modules stay unchanged");
         reset.onClick = [this] { owner.resetVoicesToBasic(); sync(); };
         add.setButtonText("+ Add voice");
@@ -189,7 +206,7 @@ public:
                     for (size_t i = 0; i < cards.size(); ++i)
                         if (!before.voiceSettings[i].present) { select(i, true); break; }
                 };
-        for (auto* button : {&enabled, &reset, &add}) addAndMakeVisible(*button);
+        for (auto* button : {&enabled, &reset, &add, &openRouting}) addAndMakeVisible(*button);
         addAndMakeVisible(monitor);
         monitor.onSelect = [this](size_t slot) { select(slot, true); };
         viewport.setViewedComponent(&cardArea, false);
@@ -234,17 +251,23 @@ public:
         monitor.update(owner.getVoiceSnapshots());
     }
     void setNeon(bool neon) {
-        for (auto* button : {&enabled, &reset, &add}) {
+        for (auto* button : {&enabled, &reset, &add, &openRouting}) {
             button->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
             button->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
         }
+        openRouting.setColour(juce::TextButton::textColourOffId, juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b));
         monitor.setNeon(neon);
         for (auto& card : cards) card->setNeon(neon);
     }
+    std::function<void()> onOpenRouting;
     void resized() override {
-        enabled.setBounds(0, 0, 178, 26);
-        add.setBounds(getWidth() - 254, 0, 116, 26);
-        reset.setBounds(getWidth() - 132, 0, 132, 26);
+        enabled.setBounds(0, 0, 164, 26);
+        auto actions = getLocalBounds().removeFromTop(26);
+        reset.setBounds(actions.removeFromRight(116));
+        actions.removeFromRight(12);
+        openRouting.setBounds(actions.removeFromRight(128));
+        actions.removeFromRight(8);
+        add.setBounds(actions.removeFromRight(116));
         monitor.setBounds(0, 32, getWidth(), 100);
         viewport.setBounds(0, 140, getWidth(), juce::jmax(0, getHeight() - 140));
         int x = 0;
@@ -264,7 +287,7 @@ private:
     }
     Processor& owner;
     size_t selectedSlot = 0;
-    juce::TextButton enabled, reset, add;
+    juce::TextButton enabled, reset, add, openRouting;
     VoiceMonitor monitor;
     juce::Component cardArea;
     juce::Viewport viewport;

@@ -28,7 +28,9 @@ struct Settings {
     float choraleMix = 0.25f, choraleMotion = 0.35f;
     std::array<FxSettings, 16> fxSettings{};
     // Opt-in processor bridge. Slot 0 always uses the legacy Chorale fields;
-    // slots 1..15 drive nodes 100..114 without touching graph/state publication.
+    // slots 1..15 drive Chorale/Waveshaper/EQ/Crossover nodes 100..114 without
+    // touching graph/state publication. Without opt-in, node-authored nested
+    // settings remain authoritative. Added effects never depend on choraleOn.
     bool fxAutomation = false;
 };
 
@@ -53,9 +55,11 @@ public:
     void process(const float* const* input, float* const* output, int count,
                  const Settings&, bool hostBypass = false);
     int latency() const noexcept { return latencySamples; }
-    // Conservative bound includes the maximum supported serial FX chain.
+    // Active routing plan's longest connected tail, plus source delay/latency.
+    // Queued graph edits update the routing bound when audio installs them.
+    // Tone EQ/LR4 phase and ADAA phase are not integer sample latency.
     double tailSeconds() const noexcept {
-        return (latencySamples + maxDoubleDelay) / rate + RoutingExecutor::maximumTailSeconds;
+        return (latencySamples + maxDoubleDelay) / rate + routing.tailSeconds();
     }
     Meters meters() const noexcept;
     void resetMeters() noexcept;

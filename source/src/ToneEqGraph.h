@@ -1,0 +1,309 @@
+#pragma once
+
+#include "PluginProcessor.h"
+#include "Equalizer.h"
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <array>
+#include <cmath>
+#include <functional>
+#include <vector>
+
+namespace vocalstack {
+
+// Defined by the processor parameter layer; no fallback IDs or DSP access here.
+juce::String toneParameterId(size_t slot, const char* field);
+juce::String eqBandParameterId(size_t slot, size_t band, const char* field);
+
+namespace toneui {
+inline float value(Processor& owner, const juce::String& id, float fallback = 0) {
+    if (const auto* p = owner.parameters.getRawParameterValue(id)) {
+        const auto v = p->load(std::memory_order_relaxed);
+        if (std::isfinite(v)) return v;
+    }
+    return fallback;
+}
+inline void write(Processor& owner, const juce::String& id, float actual) {
+    if (auto* p = owner.parameters.getParameter(id))
+        p->setValueNotifyingHost(p->convertTo0to1(actual));
+}
+inline void edit(Processor& owner, const juce::String& id, float actual) {
+    if (auto* p = owner.parameters.getParameter(id)) {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(p->convertTo0to1(actual));
+        p->endChangeGesture();
+    }
+}
+inline juce::Colour bandColour(size_t band) {
+    constexpr std::array<juce::uint32, 8> colours{
+        0xfff5a24b, 0xfff0cf65, 0xff9ed872, 0xff64d5ba,
+        0xff6eb9ef, 0xffa99afa, 0xffed8ec6, 0xffee8b82};
+    return juce::Colour(colours[band % colours.size()]);
+}
+inline const std::array<const char*, 14> modeLabels{
+    "Bell", "Low shelf 12 dB/oct", "High shelf 12 dB/oct",
+    "Low shelf 24 dB/oct", "High shelf 24 dB/oct",
+    "Low cut 6 dB/oct", "Low cut 12 dB/oct", "Low cut 24 dB/oct", "Low cut 48 dB/oct",
+    "High cut 6 dB/oct", "High cut 12 dB/oct", "High cut 24 dB/oct", "High cut 48 dB/oct", "Notch"};
+
+// Reads APVTS values only. The response is the settled requested response, not
+// the audio engine's in-flight smoothing state and not a spectrum analyzer.
+class EqGraph final : public juce::Component, public juce::SettableTooltipClient {
+public:
+    EqGraph(Processor& processor, size_t fxSlot) : owner(processor), slot(fxSlot) {
+        setName("EQ response graph");
+        setTitle("EQ response: drag bands, wheel for Q, double-click to add");
+        setWantsKeyboardFocus(false);
+        setMouseClickGrabsKeyboardFocus(false);
+        setTooltipText();
+        refresh(true);
+    }
+    ~EqGraph() override { finishGesture(); }
+    std::function<void(size_t)> onSelect;
+    void setNeon(bool enabled) { neon = enabled; repaint(); }
+    void select(size_t band) { selected = juce::jmin(size_t(7), band); rebuildPaths(); repaint(); }
+    void resized() override { rebuildPaths(); }
+    void visibilityChanged() override { if (!isShowing()) finishGesture(); }
+    void refresh(bool force = false) {
+        EqualizerSettings next;
+        next.enabled = value(owner, fxParameterId(slot, "On"), 1) >= 0.5f;
+        next.shiftSemitones = value(owner, toneParameterId(slot, "EqShift"));
+        next.gainDb = value(owner, toneParameterId(slot, "EqGain"));
+        next.adaptiveQ = value(owner, toneParameterId(slot, "EqAdaptiveQ")) >= 0.5f;
+        bool changed = next.enabled != settings.enabled || next.shiftSemitones != settings.shiftSemitones
+            || next.gainDb != settings.gainDb || next.adaptiveQ != settings.adaptiveQ;
+        for (size_t b = 0; b < next.bands.size(); ++b) {
+            auto& band = next.bands[b];
+            band.enabled = value(owner, eqBandParameterId(slot, b, "On")) >= 0.5f;
+            band.frequency = value(owner, eqBandParameterId(slot, b, "Frequency"), 1000);
+            band.gainDb = value(owner, eqBandParameterId(slot, b, "Gain"));
+            band.q = value(owner, eqBandParameterId(slot, b, "Q"), 0.707f);
+            band.mode = juce::jlimit(0, 13, int(std::lround(value(owner, eqBandParameterId(slot, b, "Mode")))));
+            const auto& old = settings.bands[b];
+            changed |= band.enabled != old.enabled || band.frequency != old.frequency
+                || band.gainDb != old.gainDb || band.q != old.q || band.mode != old.mode;
+        }
+        double nextRate = owner.getSampleRate();
+        if (!std::isfinite(nextRate) || nextRate < 8000 || nextRate > 768000) nextRate = 48000;
+        changed |= nextRate != sampleRate;
+        settings = next;
+        sampleRate = nextRate;
+        if (changed || force) { rebuildPaths(); repaint(); }
+    }
+    void paint(juce::Graphics& g) override {
+        const auto bounds = getLocalBounds().toFloat();
+        g.setColour(juce::Colour(neon ? 0xff0d1420 : 0xff1c211f));
+        g.fillRoundedRectangle(bounds, 5);
+        const auto area = plot();
+        if (area.getWidth() < 10 || area.getHeight() < 10) return;
+        g.setFont(juce::Font(juce::FontOptions(10.0f)));
+        for (float hz : {20.0f, 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f}) {
+            const auto x = xFor(hz);
+            g.setColour(juce::Colour(0xff809398).withAlpha(0.13f));
+            g.drawVerticalLine(int(x), area.getY(), area.getBottom());
+            if (hz == 20 || hz == 100 || hz == 1000 || hz == 10000) {
+                g.setColour(juce::Colour(0xffa8b3bb));
+                g.drawText(hz < 1000 ? juce::String(int(hz)) : juce::String(int(hz / 1000)) + "k",
+                           int(x) - 12, int(area.getBottom()) + 3, 30, 14, juce::Justification::centred);
+            }
+        }
+        for (int db : {-24, -12, 0, 12, 24}) {
+            const auto y = yFor(float(db));
+            g.setColour(juce::Colour(0xffa8b3bb).withAlpha(db == 0 ? 0.45f : 0.14f));
+            g.drawHorizontalLine(int(y), area.getX(), area.getRight());
+            g.setColour(juce::Colour(0xffa8b3bb));
+            g.drawText((db > 0 ? "+" : "") + juce::String(db), 1, int(y) - 6, 27, 13, juce::Justification::centredRight);
+        }
+        {
+            juce::Graphics::ScopedSaveState clip(g);
+            g.reduceClipRegion(area.toNearestInt());
+            g.setColour(bandColour(selected).withAlpha(0.65f));
+            g.strokePath(bandPath, juce::PathStrokeType(1.1f));
+            g.setColour(juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b).withAlpha(settings.enabled ? 1.0f : 0.4f));
+            g.strokePath(totalPath, juce::PathStrokeType(2.0f));
+        }
+        for (size_t b = 0; b < settings.bands.size(); ++b) {
+            if (!settings.bands[b].enabled) continue;
+            const auto p = bandPoint(b);
+            const auto colour = bandColour(b);
+            g.setColour(colour.withAlpha(b == selected ? 0.22f : 0.1f));
+            g.fillEllipse(p.x - 12, p.y - 12, 24, 24);
+            g.setColour(colour);
+            g.fillEllipse(p.x - 7, p.y - 7, 14, 14);
+            if (b == selected) {
+                g.setColour(juce::Colour(0xffeef2ee));
+                g.drawEllipse(p.x - 9, p.y - 9, 18, 18, 1.3f);
+            }
+            g.setColour(juce::Colour(0xff151b20));
+            g.drawText(juce::String(int(b + 1)), int(p.x) - 7, int(p.y) - 7, 14, 14, juce::Justification::centred);
+        }
+        g.setColour(juce::Colour(0xff7e9297).withAlpha(0.5f));
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 5, 1);
+        g.setColour(juce::Colour(0xffa8b3bb));
+        g.drawText(hoverHint.isEmpty() ? "Hz / dB   |   requested response" : hoverHint,
+                   getLocalBounds().removeFromTop(18).reduced(7, 0), juce::Justification::centredRight);
+    }
+    void mouseMove(const juce::MouseEvent& e) override {
+        const bool onBand = hit(e.position) >= 0;
+        const int mode = edgeMode(e.position);
+        const juce::String next = onBand ? "Drag: frequency / gain | wheel: Q"
+            : mode == 13 ? "Drag inward: add notch"
+            : mode == 1 || mode == 2 ? "Drag curve end: add shelf"
+            : mode >= 0 ? "Drag edge: add cut" : "Double-click: add bell";
+        if (hoverHint != next) { hoverHint = next; setTooltip(next); repaint(); }
+        setMouseCursor(onBand ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::CrosshairCursor);
+    }
+    void mouseExit(const juce::MouseEvent&) override { hoverHint.clear(); repaint(); }
+    void mouseDown(const juce::MouseEvent& e) override {
+        finishGesture();
+        pendingMode = -1;
+        if (!e.mods.isLeftButtonDown() || e.getNumberOfClicks() > 1) return;
+        refresh();
+        const int found = hit(e.position);
+        if (found >= 0) { choose(size_t(found)); dragBand = found; return; }
+        pendingMode = edgeMode(e.position);
+    }
+    void mouseDrag(const juce::MouseEvent& e) override {
+        if (!e.mods.isLeftButtonDown() || e.getDistanceFromDragStart() < 3) return;
+        if (dragBand < 0 && pendingMode >= 0) {
+            dragBand = create(pendingMode, e.position);
+            pendingMode = -1;
+        }
+        if (dragBand < 0) return;
+        if (gestures.empty()) {
+            begin(eqBandParameterId(slot, size_t(dragBand), "Frequency"));
+            if (hasGain(settings.bands[size_t(dragBand)].mode))
+                begin(eqBandParameterId(slot, size_t(dragBand), "Gain"));
+        }
+        moveBand(size_t(dragBand), e.position);
+    }
+    void mouseUp(const juce::MouseEvent&) override { finishGesture(); pendingMode = -1; }
+    void mouseDoubleClick(const juce::MouseEvent& e) override {
+        finishGesture();
+        if (!e.mods.isLeftButtonDown() || !plot().contains(e.position) || hit(e.position) >= 0) return;
+        create(0, e.position);
+    }
+    void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override {
+        const int found = hit(e.position);
+        if (found < 0 || wheel.deltaY == 0 || !gestures.empty()) return;
+        choose(size_t(found));
+        const auto id = eqBandParameterId(slot, selected, "Q");
+        const auto q = value(owner, id, 0.707f);
+        // A wheel event is a complete, balanced host gesture, including trackpads.
+        edit(owner, id, juce::jlimit(0.1f, 18.0f, q * std::exp(wheel.deltaY * 2.0f)));
+        refresh();
+    }
+private:
+    void setTooltipText() {
+        // Component is deliberately not a keyboard command target.
+        const juce::String instructions = "Double-click empty space: bell. Drag a curve end: shelf. "
+            "Drag a side edge: cut. Drag bottom edge: notch. Wheel on a band: Q.";
+        setDescription(instructions);
+        setTooltip(instructions);
+    }
+    int edgeMode(juce::Point<float> p) const {
+        const auto area = plot();
+        if (!area.expanded(8).contains(p)) return -1;
+        if (p.y >= area.getBottom() - 10) return 13;
+        if (p.x <= area.getX() + 12 || p.x >= area.getRight() - 12) {
+            const bool low = p.x < area.getCentreX();
+            const float edgeDb = responseDb(low ? 20.0 : 20000.0, settings);
+            return std::abs(p.y - yFor(edgeDb)) < 14 ? (low ? 1 : 2) : (low ? 6 : 10);
+        }
+        return -1;
+    }
+    juce::Rectangle<float> plot() const {
+        return getLocalBounds().toFloat().withTrimmedLeft(32).withTrimmedRight(13)
+            .withTrimmedTop(24).withTrimmedBottom(23);
+    }
+    float xFor(float hz) const {
+        return plot().getX() + plot().getWidth() * std::log(juce::jlimit(20.0f, 20000.0f, hz) / 20.0f) / std::log(1000.0f);
+    }
+    float frequencyFor(float x) const {
+        const auto a = plot();
+        return 20.0f * std::pow(1000.0f, juce::jlimit(0.0f, 1.0f, (x - a.getX()) / juce::jmax(1.0f, a.getWidth())));
+    }
+    float yFor(float db) const {
+        return plot().getCentreY() - juce::jlimit(-24.0f, 24.0f, db) * plot().getHeight() / 48.0f;
+    }
+    float gainFor(float y) const {
+        return juce::jlimit(-24.0f, 24.0f, (plot().getCentreY() - y) * 48.0f / juce::jmax(1.0f, plot().getHeight()));
+    }
+    static bool hasGain(int mode) { return mode >= 0 && mode <= 4; }
+    juce::Point<float> bandPoint(size_t b) const {
+        const auto& band = settings.bands[b];
+        const auto shifted = juce::jlimit(10.0, sampleRate * 0.45,
+            double(band.frequency) * std::exp2(double(settings.shiftSemitones) / 12.0));
+        return {xFor(float(shifted)), yFor(hasGain(band.mode) ? band.gainDb : 0.0f)};
+    }
+    int hit(juce::Point<float> p) const {
+        if (settings.bands[selected].enabled && p.getDistanceFrom(bandPoint(selected)) < 13) return int(selected);
+        for (size_t b = 0; b < settings.bands.size(); ++b)
+            if (settings.bands[b].enabled && p.getDistanceFrom(bandPoint(b)) < 11) return int(b);
+        return -1;
+    }
+    void choose(size_t b) { selected = b; if (onSelect) onSelect(b); rebuildPaths(); repaint(); }
+    int create(int mode, juce::Point<float> position) {
+        refresh();
+        for (size_t b = 0; b < settings.bands.size(); ++b) {
+            if (settings.bands[b].enabled) continue;
+            edit(owner, eqBandParameterId(slot, b, "Mode"), float(mode));
+            edit(owner, eqBandParameterId(slot, b, "Q"), 0.707f);
+            edit(owner, eqBandParameterId(slot, b, "Frequency"), unshiftedFrequency(position.x));
+            edit(owner, eqBandParameterId(slot, b, "Gain"), hasGain(mode) ? gainFor(position.y) : 0);
+            edit(owner, eqBandParameterId(slot, b, "On"), 1);
+            refresh();
+            choose(b);
+            return int(b);
+        }
+        return -1;
+    }
+    float unshiftedFrequency(float x) const {
+        return juce::jlimit(20.0f, 20000.0f, frequencyFor(x) / std::exp2(settings.shiftSemitones / 12.0f));
+    }
+    void moveBand(size_t b, juce::Point<float> p) {
+        write(owner, eqBandParameterId(slot, b, "Frequency"), unshiftedFrequency(p.x));
+        if (hasGain(settings.bands[b].mode)) write(owner, eqBandParameterId(slot, b, "Gain"), gainFor(p.y));
+        refresh();
+    }
+    void begin(const juce::String& id) {
+        if (auto* p = owner.parameters.getParameter(id)) { p->beginChangeGesture(); gestures.push_back(p); }
+    }
+    void finishGesture() {
+        for (auto* p : gestures) p->endChangeGesture();
+        gestures.clear();
+        dragBand = -1;
+    }
+    float responseDb(double frequency, const EqualizerSettings& s) const {
+        const auto magnitude = Equalizer::frequencyResponse(frequency, sampleRate, s);
+        return float(20.0 * std::log10(juce::jmax(1.0e-12, magnitude)));
+    }
+    void rebuildPaths() {
+        totalPath.clear(); bandPath.clear();
+        const auto a = plot();
+        if (a.getWidth() < 1 || a.getHeight() < 1) return;
+        EqualizerSettings single;
+        single.shiftSemitones = settings.shiftSemitones;
+        single.adaptiveQ = settings.adaptiveQ;
+        single.bands[selected] = settings.bands[selected];
+        const int steps = juce::jlimit(64, 900, int(a.getWidth()));
+        for (int i = 0; i <= steps; ++i) {
+            const auto x = a.getX() + a.getWidth() * float(i) / float(steps);
+            const auto f = frequencyFor(x);
+            const auto y = yFor(responseDb(f, settings));
+            const auto bandY = yFor(responseDb(f, single));
+            if (i == 0) { totalPath.startNewSubPath(x, y); bandPath.startNewSubPath(x, bandY); }
+            else { totalPath.lineTo(x, y); bandPath.lineTo(x, bandY); }
+        }
+    }
+    Processor& owner;
+    size_t slot, selected = 0;
+    EqualizerSettings settings;
+    double sampleRate = 48000;
+    bool neon = false;
+    int dragBand = -1, pendingMode = -1;
+    std::vector<juce::RangedAudioParameter*> gestures;
+    juce::String hoverHint;
+    juce::Path totalPath, bandPath;
+};
+} // namespace toneui
+} // namespace vocalstack

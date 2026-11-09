@@ -9,6 +9,22 @@ constexpr auto stateType = "VocalStack";
 constexpr auto themeProperty = "flash";
 }
 
+juce::String toneParameterId(size_t slot, const char* field) {
+    if (slot == 0 || slot > 15 || field == nullptr) return {};
+    for (size_t f = 0; f < toneParameterFields.size(); ++f)
+        if (std::string_view(field) == toneParameterFields[f])
+            return parameterIds[toneParameterIndex(slot, f)];
+    return {};
+}
+
+juce::String eqBandParameterId(size_t slot, size_t band, const char* field) {
+    if (slot == 0 || slot > 15 || band >= 8 || field == nullptr) return {};
+    for (size_t f = 0; f < eqBandParameterFields.size(); ++f)
+        if (std::string_view(field) == eqBandParameterFields[f])
+            return parameterIds[toneParameterIndex(slot, 9 + band * 5 + f)];
+    return {};
+}
+
 Processor::Processor()
     : AudioProcessor(BusesProperties()
         .withInput("Vocal In", juce::AudioChannelSet::stereo(), true)
@@ -17,15 +33,15 @@ Processor::Processor()
     setLatencySamples(VocalEngine::defaultLatency);
     for (size_t i = 0; i < values.size(); ++i)
         values[i] = parameters.getRawParameterValue(parameterIds[i]);
-    for (size_t i = 10; i < parameterIds.size(); ++i)
-        parameters.addParameterListener(parameterIds[i], this);
+    for (size_t i = 10; i < 94; ++i)
+        if (i < 43 || i >= 46) parameters.addParameterListener(parameterIds[i], this);
     startTimerHz(10);
 }
 
 Processor::~Processor() {
     stopTimer();
-    for (size_t i = 10; i < parameterIds.size(); ++i)
-        parameters.removeParameterListener(parameterIds[i], this);
+    for (size_t i = 10; i < 94; ++i)
+        if (i < 43 || i >= 46) parameters.removeParameterListener(parameterIds[i], this);
 }
 
 void Processor::parameterChanged(const juce::String& id, float value) {
@@ -106,6 +122,45 @@ State::ParameterLayout Processor::makeParameters() {
         percent(int(94 + (slot - 1) * 3 + 1), (name + "Mix").toRawUTF8(), 25);
         percent(int(94 + (slot - 1) * 3 + 2), (name + "Motion").toRawUTF8(), 35);
     }
+    constexpr std::array<float, 8> frequencies{60, 120, 250, 500, 1000, 2500, 6000, 12000};
+    for (size_t slot = 1; slot < 16; ++slot) {
+        const auto name = "FX " + juce::String(int(slot)) + " ";
+        const auto base = toneParameterIndex(slot, 0);
+        const auto addFloat = [&](size_t field, const juce::String& title, float low, float high,
+                                  float initial, const char* unit, bool logarithmic = false) {
+            juce::NormalisableRange<float> range{low, high};
+            if (logarithmic) range.setSkewForCentre(std::sqrt(low * high));
+            layout.add(std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID{parameterIds[base + field], 1}, name + title, range, initial,
+                juce::AudioParameterFloatAttributes{}.withLabel(unit)));
+        };
+        const auto addInt = [&](size_t field, const juce::String& title, int low, int high, int initial) {
+            layout.add(std::make_unique<juce::AudioParameterInt>(
+                juce::ParameterID{parameterIds[base + field], 1}, name + title, low, high, initial));
+        };
+        const auto addBool = [&](size_t field, const juce::String& title) {
+            layout.add(std::make_unique<juce::AudioParameterBool>(
+                juce::ParameterID{parameterIds[base + field], 1}, name + title, false));
+        };
+        addFloat(0, "Wave Drive", 0, 36, 0, "dB");
+        addFloat(1, "Wave Output", -24, 12, 0, "dB");
+        addInt(2, "Wave Shape", 0, 2, 0);
+        addFloat(3, "EQ Shift", -24, 24, 0, "st");
+        addFloat(4, "EQ Gain", -24, 24, 0, "dB");
+        addBool(5, "EQ Adaptive Q");
+        addInt(6, "Band Count", 2, 3, 3);
+        addFloat(7, "Crossover Low", 20, 20000, 250, "Hz", true);
+        addFloat(8, "Crossover High", 20, 20000, 4000, "Hz", true);
+        for (size_t b = 0; b < 8; ++b) {
+            const auto bandName = "EQ Band " + juce::String(int(b + 1)) + " ";
+            const auto field = 9 + b * 5;
+            addBool(field, bandName + "Active");
+            addFloat(field + 1, bandName + "Frequency", 20, 20000, frequencies[b], "Hz", true);
+            addFloat(field + 2, bandName + "Gain", -24, 24, 0, "dB");
+            addFloat(field + 3, bandName + "Q", 0.1f, 18, 0.707f, "");
+            addInt(field + 4, bandName + "Mode", 0, 13, 0);
+        }
+    }
     return layout;
 }
 
@@ -132,9 +187,14 @@ Settings Processor::settings() const {
     result.choraleOn = value(43) >= 0.5f;
     result.choraleMix = value(44) * 0.01f;
     result.choraleMotion = value(45) * 0.01f;
-    processorRouting::applyFxSettings(result, [&](size_t slot, size_t field) {
+    result.fxAutomation = true;
+    processorRouting::applyFxSettings(result.fxSettings, [&](size_t slot, size_t field) {
         return value(slot == 0 ? 43 + field : 94 + (slot - 1) * 3 + field);
     });
+    for (size_t slot = 1; slot < 16; ++slot)
+        processorRouting::applyToneSettings(result.fxSettings[slot], [&](size_t field) {
+            return value(toneParameterIndex(slot, field));
+        });
     return result;
 }
 
@@ -278,15 +338,24 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                 : parameter->convertFrom0to1(parameter->getDefaultValue());
             // A graph-only state can predate fixed FX automation. Seed missing
             // controls from its runnable nodes rather than losing their edits.
-            if (graphTree.isValid() && ((i >= 43 && i < 46) || i >= 94)) {
+            if (graphTree.isValid() && ((i >= 43 && i < 46) || (i >= 94 && i < 139))) {
                 const size_t slot = i < 46 ? 0 : 1 + (i - 94) / 3;
                 const size_t field = i < 46 ? i - 43 : (i - 94) % 3;
                 for (const auto& node : active.nodes)
-                    if (node.type == NodeType::chorale && processorRouting::fxSlot(node.id) == int(slot))
+                    if (processorRouting::isEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
                         initial = field == 0 ? (node.enabled ? 1.0f : 0.0f)
                             : 100 * (field == 1 ? node.mix : node.motion);
             }
 
+            if (graphTree.isValid() && i >= 139) {
+                const size_t slot = 1 + (i - 139) / toneParametersPerSlot;
+                const size_t field = (i - 139) % toneParametersPerSlot;
+                for (const auto& node : active.nodes)
+                    if (processorRouting::isEffect(node.type) && node.type != NodeType::chorale
+                        && processorRouting::fxSlot(node.id) == int(slot))
+                        initial = processorRouting::toneValues(node)[field];
+            }
+            initial = parameter->convertFrom0to1(parameter->convertTo0to1(initial));
             missing.setProperty("value", initial, nullptr);
             restored.addChild(missing, -1, nullptr);
         }
@@ -297,7 +366,9 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
     advancedVisible.store(static_cast<bool>(restored.getProperty("advancedVisible", false)), std::memory_order_relaxed);
     parameters.replaceState(restored);
     advancedInitialized.store(initialized, std::memory_order_relaxed);
-    routingDraft = std::move(draft);
+    active = removeLegacySumNodes(active);
+    if (!processorRouting::validate(active)) active = defaultGraph();
+    routingDraft = active;
     routingActive = std::move(active);
     routingLayout = std::move(layout);
     routingError = graphError;
@@ -397,11 +468,17 @@ juce::String Processor::getRoutingError() const {
 }
 
 bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {
-    // Copy first: callers may pass routingDraft itself. Invalid sketches are
-    // saved for editing, but never replace the last runnable execution plan.
-    Graph candidate = graph;
+    // Visible topology is always the accepted running topology. Rejected edits
+    // never leave fake cables in the editor or a separately saved draft.
+    Graph boundedGraph = graph;
+    for (auto& node : boundedGraph.nodes) processorRouting::boundToneSettings(node);
+    const auto sourceValidation = processorRouting::validate(boundedGraph);
+    if (!sourceValidation) {
+        error = routingError = juce::String(sourceValidation.message);
+        return false;
+    }
+    Graph candidate = removeLegacySumNodes(boundedGraph);
     const auto validation = processorRouting::validate(candidate);
-    routingDraft = candidate;
     if (!validation) {
         error = routingError = juce::String(validation.message);
         return false;
@@ -413,6 +490,7 @@ bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {
             return false;
         }
     }
+    routingDraft = candidate;
     routingActive = std::move(candidate);
     routingError.clear();
     error.clear();
@@ -428,8 +506,8 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
         if (accepted) {
             // Only intentional inspector edits/new nodes update automation.
             // A cable-only edit must not overwrite host-automated FX values.
-            for (const auto& node : graph.nodes) {
-                if (node.type != NodeType::chorale) continue;
+            for (const auto& node : routingActive.nodes) {
+                if (!processorRouting::isEffect(node.type)) continue;
                 const auto old = std::find_if(previous.nodes.begin(), previous.nodes.end(),
                     [&](const RoutingNode& n) { return n.id == node.id && n.type == node.type; });
                 const auto slot = size_t(processorRouting::fxSlot(node.id));
@@ -439,6 +517,13 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
                     setParameterValue(fxParameterId(slot, size_t(1)), node.mix * 100);
                 if (old == previous.nodes.end() || old->motion != node.motion)
                     setParameterValue(fxParameterId(slot, size_t(2)), node.motion * 100);
+                if (slot > 0 && node.type != NodeType::chorale) {
+                    const auto next = processorRouting::toneValues(node);
+                    const auto before = old == previous.nodes.end() ? next : processorRouting::toneValues(*old);
+                    for (size_t f = 0; f < next.size(); ++f)
+                        if (old == previous.nodes.end() || next[f] != before[f])
+                            setParameterValue(parameterIds[toneParameterIndex(slot, f)], next[f]);
+                }
             }
         }
     }
@@ -495,26 +580,13 @@ void Processor::reconnectVoiceLocked(size_t slot) {
     const auto sourceId = source->id;
     if (std::any_of(routingDraft.links.begin(), routingDraft.links.end(),
         [&](const RoutingLink& link) { return link.source == sourceId; })) return;
-    // Reconnect only when the main Mix has an explicit wet Sum. Do not guess
-    // how to rewrite a custom serial FX branch or replace a user's connection.
+    // New voices join the main wet input directly; compensation is automatic.
+    // Do not invent a destination when a custom graph omits the main Mix.
     for (const auto& mix : routingDraft.nodes) {
         if (mix.type != NodeType::mix || !mix.mainControls) continue;
-        for (const auto& wet : routingDraft.links) {
-            if (wet.destination != mix.id || wet.inputPin != 1) continue;
-            const auto sum = std::find_if(routingDraft.nodes.begin(), routingDraft.nodes.end(),
-                [&](const RoutingNode& n) { return n.id == wet.source && n.type == NodeType::sum; });
-            if (sum == routingDraft.nodes.end()) continue;
-            for (int attempt = 0; attempt < RoutingExecutor::maxInputs; ++attempt) {
-                const int pin = (int(slot) + attempt) % RoutingExecutor::maxInputs;
-                const bool used = std::any_of(routingDraft.links.begin(), routingDraft.links.end(),
-                    [&](const RoutingLink& link) { return link.destination == sum->id && link.inputPin == pin; });
-                if (!used && routingDraft.links.size() < RoutingExecutor::maxLinks) {
-                    const RoutingLink link{sourceId, sum->id, pin};
-                    routingDraft.links.push_back(link);
-                    return;
-                }
-            }
-        }
+        if (routingDraft.links.size() < RoutingExecutor::maxLinks)
+            routingDraft.links.push_back({sourceId, mix.id, 1});
+        return;
     }
 }
 

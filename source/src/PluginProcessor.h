@@ -7,11 +7,12 @@
 #include "VoiceBridge.h"
 #include <mutex>
 #include <string_view>
+#include <string>
 
 namespace vocalstack {
 
 // Append host parameters: existing IDs and indices are part of session compatibility.
-inline constexpr std::array<const char*, 139> parameterIds{
+inline constexpr std::array<const char*, 139> legacyParameterIds{
     "level", "double", "human", "width", "formant",
     "levelOn", "doubleOn", "formantOn", "bypass", "outputGain",
     "advancedOn",
@@ -33,22 +34,55 @@ inline constexpr std::array<const char*, 139> parameterIds{
     "fx11Motion", "fx12On", "fx12Mix", "fx12Motion", "fx13On", "fx13Mix", "fx13Motion", "fx14On",
     "fx14Mix", "fx14Motion", "fx15On", "fx15Mix", "fx15Motion"
 };
+inline constexpr size_t toneParametersPerSlot = 49;
+inline constexpr std::array<const char*, 9> toneParameterFields{
+    "WaveDrive", "WaveOutput", "WaveShape", "EqShift", "EqGain", "EqAdaptiveQ",
+    "BandCount", "CrossoverLow", "CrossoverHigh"
+};
+inline constexpr std::array<const char*, 5> eqBandParameterFields{"On", "Frequency", "Gain", "Q", "Mode"};
+inline constexpr size_t toneParameterIndex(size_t slot, size_t field) noexcept {
+    return legacyParameterIds.size() + (slot - 1) * toneParametersPerSlot + field;
+}
+// Storage is never mutated: every const char* remains valid for the plugin lifetime.
+inline const auto toneParameterIdStorage = [] {
+    std::array<std::string, 15 * toneParametersPerSlot> ids;
+    for (size_t slot = 1; slot < 16; ++slot) {
+        const auto prefix = "fx" + std::to_string(slot);
+        const auto base = (slot - 1) * toneParametersPerSlot;
+        for (size_t f = 0; f < toneParameterFields.size(); ++f)
+            ids[base + f] = prefix + toneParameterFields[f];
+        for (size_t band = 0; band < 8; ++band)
+            for (size_t f = 0; f < eqBandParameterFields.size(); ++f)
+                ids[base + 9 + band * 5 + f] = prefix + "EqBand" + std::to_string(band + 1) + eqBandParameterFields[f];
+    }
+    return ids;
+}();
+inline const auto parameterIds = [] {
+    std::array<const char*, 874> ids{};
+    for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
+    for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
+        ids[legacyParameterIds.size() + i] = toneParameterIdStorage[i].c_str();
+    return ids;
+}();
+juce::String toneParameterId(size_t slot, const char* field);
+juce::String eqBandParameterId(size_t slot, size_t band, const char* field);
+
 // All slots are zero-based. Voice fields: On, Gain, Pan, Delay, Detune,
 // Formant, Depth, Rate. FX slot 0 is legacy node 12; 1..15 are nodes 100..114.
 inline constexpr size_t voiceParameterIndex(size_t slot, size_t field) {
     return slot < 4 ? 11 + slot * 8 + field : 46 + (slot - 4) * 8 + field;
 }
 inline constexpr const char* voiceParameterId(size_t slot, size_t field) {
-    return slot < 8 && field < 8 ? parameterIds[voiceParameterIndex(slot, field)] : nullptr;
+    return slot < 8 && field < 8 ? legacyParameterIds[voiceParameterIndex(slot, field)] : nullptr;
 }
 inline constexpr const char* voicePitchParameterId(size_t slot) {
-    return slot < 8 ? parameterIds[78 + slot] : nullptr;
+    return slot < 8 ? legacyParameterIds[78 + slot] : nullptr;
 }
 inline constexpr const char* voicePresentParameterId(size_t slot) {
-    return slot < 8 ? parameterIds[86 + slot] : nullptr;
+    return slot < 8 ? legacyParameterIds[86 + slot] : nullptr;
 }
 inline constexpr const char* fxParameterId(size_t slot, size_t field) {
-    return slot < 16 && field < 3 ? parameterIds[slot == 0 ? 43 + field : 94 + (slot - 1) * 3 + field] : nullptr;
+    return slot < 16 && field < 3 ? legacyParameterIds[slot == 0 ? 43 + field : 94 + (slot - 1) * 3 + field] : nullptr;
 }
 inline constexpr const char* voiceParameterId(size_t slot, std::string_view field) {
     constexpr std::array<std::string_view, 8> names{"On", "Gain", "Pan", "Delay", "Detune", "Formant", "Depth", "Rate"};

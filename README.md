@@ -1,4 +1,4 @@
-# Vocal Stack 1.3.0
+# Vocal Stack 1.4.0
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
@@ -29,8 +29,9 @@ and [VST3](https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical%2BDo
 | Formant | 0.0 st | Moves vocal resonances at the original lead pitch |
 | Output | 0.0 dB | Final output trim, −24 to +12 dB; double-click for unity |
 
-Bitwig's **Plug-in Parameters** button exposes all 139 parameters, including eight
-voices, musical Pitch, presence, and 16 fixed Chorale automation slots. The original **Vocal Stack**
+Bitwig's **Plug-in Parameters** button exposes all 874 parameters, including eight
+voices, musical Pitch, presence, and 16 fixed FX automation slots. The original
+139 IDs/indices are retained; additional tone controls append after them. The original **Vocal Stack**
 CLAP Remote Controls page retains its five knobs and three module switches. A
 second **Output** page supplies output trim and bypass. Original parameter IDs,
 indices and remote assignments are unchanged; new parameters are appended.
@@ -86,7 +87,7 @@ Use Output for manual trim. Other modules can still change final output level.
 ### Advanced Doubler
 
 **Show Advanced / Hide Advanced** only changes editor size, never sound. The
-separate **ADVANCED DOUBLER** switch selects the saved custom stack instead of
+separate **Voice stack** switch selects the saved custom stack instead of
 Basic's two voices. Fresh configurations show two voice cards and **+ Add voice**.
 Add up to eight generated voices (the lead is separate), in a horizontally scrollable
 card area. **On** mutes without removing the card; **Remove** hides/disconnects an
@@ -125,8 +126,9 @@ or Output. Stable routing source identities and dormant FX settings remain.
 With matching settings and shared Formant enabled, Basic and Advanced produce the
 same audio. Disabling Advanced uses Basic processing and retains your custom stack.
 
-The default wet Sum compensates additional active voices relative to the original
-two-voice power budget. Explicit Sum nodes use a one-source budget by default.
+Compensation is automatic wherever multiple branches enter an input. No visible
+Sum/compensation node is required. The main wet input retains the original
+two-voice power budget; other merges use a one-source budget.
 Source-lineage compensation also accounts for duplicated branches; intentional
 Gain and Pan settings are not normalized away. This is not a loudness rider or
 limiter and cannot eliminate correlation/phase-dependent loudness differences.
@@ -150,20 +152,24 @@ Until audio is processed, no live voice measurements are available.
 
 ### Optional FX routing
 
-Click **Routing...** to open the independent native node canvas. Drag output pins
-to input pins, drag nodes to arrange them, and drag blank space to pan. Ctrl+wheel
-or the +/- buttons zoom; **Fit** frames the patch. Select a cable and press
-**Disconnect**, or select a node to inspect/delete/bypass it. Toolbar **Undo/Redo**
-restores graph edits; ordinary controls leave transport shortcuts to the DAW.
+Click **Open Routing** in the main row or Advanced header. Drag output pins to
+input pins, drag nodes to arrange them, and drag blank space to pan. Ctrl+wheel
+or the +/- buttons zoom; **Fit** frames the patch. **Drag a cable's input end**
+to another input to reconnect it, or release over blank space to disconnect it.
+Select a cable to drag either end, or Ctrl+drag its output end. Shared inputs
+pick the selected cable, otherwise the last connected cable. There is no
+Disconnect button. Toolbar **Undo/Redo** restores edits; ordinary controls leave
+transport shortcuts to the DAW.
 
-Available nodes: Lead, Voice sources, Chorale, Compensated Sum, Dry/Wet Mix, Output.
-One Chorale node is one independent machine; routing chooses whether it processes
-one voice, a group, or the whole result. Use explicit Sum nodes for multiple inputs;
-Mix has separate Dry and Wet pins. The default path is:
+Available nodes: Lead, Voice sources, Chorale, Waveshaper, EQ8, Multiband,
+Dry/Wet Mix, Output. One FX node is one independent machine; routing chooses
+whether it processes one voice, a group, or the whole result. Connect several
+voices directly to the same input for an automatically compensated merge.
+Mix retains separate Dry and Wet pins. The default path is:
 
 ```text
 Lead ---------------------> Main Mix Dry
-Voices -> Compensated Sum -> Main Mix Wet
+Voices -------------------> Main Mix Wet (automatic compensation)
 Main Mix -> Chorale -> Output trim / meters
 ```
 
@@ -172,12 +178,15 @@ DOUBLE off selects the dry input of that main node, not an unconditional lead
 shortcut through custom routing. A custom graph may omit it entirely. Global
 bypass always returns latency-aligned original input, ignoring graph and trim.
 
-At most 16 Chorale instances are supported: the original main slot plus 15 fixed
-additional automation slots. FX inspector controls are host parameters; topology
-and positions are saved separately, not automated. An incomplete/invalid sketch
-is retained visibly, with a diagnostic, while the **last valid graph keeps playing**.
-Reconnect required inputs to apply it. Cycles, occupied input pins, invalid links,
-and unsupported additional branch latency are rejected. Per-voice Delay is intentional
+At most 16 FX instances are supported: the original main Chorale slot plus 15
+shared additional slots for Chorale, Waveshaper, EQ8 or Multiband. FX inspector controls are host parameters; topology
+and positions are saved separately, not automated. **Disconnections apply immediately:**
+unconnected inputs receive silence, and disconnected Output is silent (after the
+short de-click ramp). An unused disconnected effect does not invalidate a working
+bypass route. An FX whose input alone is disconnected may finish its short tail.
+Structural errors—cycles, exact duplicate cables, illegal ports, or unsupported
+additional branch latency—are rejected without leaving different cables on screen.
+The visible graph is always the accepted running topology, never a separate draft. Per-voice Delay is intentional
 timing, not latency to be compensated away.
 
 Graph plans are validated/prepared off audio and handed off lock-free. Unchanged
@@ -186,8 +195,53 @@ splices without running shared processors twice; this is not a spectral old/new
 crossfade. Node limits are 48 nodes and 128 links. Reusing a deleted FX automation
 slot intentionally reuses its host automation identity.
 
-EQ, multiband, XP-style Filter and waveshaper are **not included in 1.3.0**; see
-[the staged plan](plan.md) for those follow-ups.
+Old explicit Sum boxes are migrated into direct fan-in cables. Custom old Sum
+power-budget edits are replaced by the new automatic rules; check those patches
+on migration. The default Basic signal path remains regression-tested unchanged.
+
+![Native routing with independent multiband outputs](VocalStack-Routing.png)
+
+### Waveshaper
+
+Three independent curves: **Soft**, **Hard**, and **Asymmetric**. Drive adds up to
+36 dB before shaping; Output trim spans -24 to +12 dB; local Dry/wet blends the
+result. Controls and shape transitions are smoothed. First-order antiderivative
+antialiasing reduces aliasing; this is **not** oversampling or alias-free processing.
+It adds no explicit sample delay but can change frequency-dependent phase/level.
+
+### EQ8
+
+Eight stable bands with 14 independently implemented modes: bell, two shelf slopes
+per side, 6/12/24/48 dB cuts per side, and notch. Graph editing follows EQ+-style
+interaction: double-click to create a bell, drag a point for frequency/gain, wheel
+on a point for Q, drag curve ends for shelves, side edges for cuts, bottom for notch.
+Select a band for exact values/type, enable or remove it. Global frequency Shift,
+output Gain and Adaptive Q are available. **Expand EQ** opens a larger editor.
+
+The response curve uses our actual coefficient builder, not a fabricated spectrum.
+There is currently **no spectrum/reference-track analyzer**, dynamic EQ, or claim
+of sonic equivalence to Bitwig EQ+. UI inspiration includes EQ+ gestures and
+[Pro-Q's selected-band controls](https://www.fabfilter.com/help/pro-q/using/bandcontrols),
+with original code/assets and the existing Device/Neon palettes.
+
+![EQ8 selected-band editor in the Neon palette](VocalStack-EQ.png)
+
+### Two-/three-band routing
+
+A Multiband node exposes **Low / High** in two-band mode or **Low / Mid / High**
+in three-band mode, using complementary LR4 crossovers. Route each output through
+its own FX and reconnect the branches directly downstream. Complementary bands
+recombine at unity rather than being attenuated as extra voices. Duplicated
+same-band branches still receive compensation. Unprocessed recombination is
+magnitude-flat, with IIR all-pass phase—not a sample-identical dry null.
+
+Port identities are stored numerically: in two-band mode #0=Low, #1=High;
+in three-band mode #0=Low, #1=Mid, #2=High. Switching to two bands preserves any
+stored #2 cables, visibly dashed and silent; review band assignments when switching.
+Bypassed splitters pass full-band input on #0 only, with the other ports silent.
+Filter state/control changes are smoothed; crossover ordering is bounded by DSP.
+
+XP-style character Filter, delay and reverb remain follow-ups in [the plan](plan.md).
 
 ### Chorale
 
@@ -257,10 +311,10 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The first configure fetches pinned dependencies. Nine test suites cover DSP,
-Chorale, routing, voices, FX automation, pitch spectra, stacked formant spectra,
-CLAP hosting, and editor/state. Optionally configure with
-`-DVOCALSTACK_TEST_BASELINE=ON` to add a tenth comparison suite; this requires
+The first configure fetches pinned dependencies. Eleven core test suites cover DSP,
+Chorale, routing, voices, FX automation, pitch/formant spectra, tone processors,
+multiband, CLAP hosting, and editor/state. Optionally configure with
+`-DVOCALSTACK_TEST_BASELINE=ON` to add a twelfth comparison suite; this requires
 Python and the pinned pre-routing revision in local Git history. The plugins appear under
 `build/VocalStack_artefacts/Release/`. To build just the portable DSP tests,
 configure with `-DVOCALSTACK_BUILD_PLUGIN=OFF`.
@@ -277,6 +331,8 @@ and rejects invalid binary XML state.
 - `DoublerSettings.h`: shared Basic/Advanced voice configuration contract.
 - `Chorale.h`: isolated, allocation-free-in-processing chorus module.
 - `HarmonyShifter.h`: fixed-latency STFT musical pitch/formant processor.
+- `Waveshaper.h` / `Equalizer.h` / `Multiband.h`: independent tone processors.
+- `ToneEffectPanel.h` / `ToneEqGraph.h`: selected-FX controls and native EQ graph.
 - `Routing.h`: bounded DAG model, validation, explicit mixers, independent FX
   instances, execution-plan publication and off-audio reclamation.
 - `ProcessorRoutingState.h`: graph serialization and fixed FX automation mapping.
@@ -292,7 +348,26 @@ and rejects invalid binary XML state.
 Keep future effects as small DSP modules called by the engine, rather than
 putting signal processing in the editor. See `AGENTS.md` for project conventions.
 
+## Routing behavior corrected in 1.4.0
+
+Ordinary cable disconnections no longer retain the previous audible graph. Unwired
+pins are silent, including Output; cycles and illegal wiring remain rejected.
+Regression tests cover disconnecting Chorale, routing around an unused FX, empty
+mix/sum pins, disconnected-output silence, graph recall, and node deletion.
+
 ## Verification
+
+- 1.4.0 Release CLAP/VST3 built with MSVC 2026. All 11 focused suites passed,
+  including 21 editor cases, independent per-voice FX, automatic fan-in,
+  disconnections, multiband reconstruction, tone DSP/automation and EQ gestures.
+- The pinned default-path comparisons remain bit-identical with unchanged latency.
+  Both skins have generated screenshots; the native EQ/routing views were visually
+  reviewed. The long legacy DSP suite was not completed for this release; focused
+  routing, voice, pitch, formant and effect suites passed instead.
+- Packaged and installed CLAP smoke tests passed. Both installed binary formats
+  match the packaged builds by SHA256. Actual listening and transport behavior
+  in Bitwig remain manual validation.
+
 
 - 1.3.0 Release CLAP/VST3 built with MSVC 2026. All ten suites passed before
   the final UI/state-bridge cleanup. On the final build, the other nine suites

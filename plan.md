@@ -4,9 +4,11 @@
 
 This document records the staged implementation plan and the subsequent control-design decisions.
 
-### Core implementation checkpoint: 1.3.0
+### Current implementation checkpoint: 1.4.0
 
 The user authorized the core through nodes and Voice Motion, excluding follow-up effects. This checkpoint implements eight stable voice slots, musical Pitch/Fine Detune, stacked formants, neutral-origin controls, routing/execution, independent Chorale slots, draft/active graph persistence, native node editing and snapshots.
+
+**1.3.1 clarification:** ordinary disconnections are valid live edits. Unconnected inputs are silence; disconnected Output is silent. Unused disconnected FX cannot block other valid routing. Last-valid fallback applies only to structural errors such as cycles, duplicate/illegal links and unsupported latency—not missing cables. This supersedes the earlier incomplete-draft behavior below.
 
 Implementation choices and limits:
 
@@ -17,7 +19,20 @@ Implementation choices and limits:
 - Voice Motion plots fine detune vertically and shows musical Pitch separately in the readout.
 - Nine core suites plus an optional pinned-history baseline comparison cover automated validation. Listening and transport behavior in the user's Bitwig session remain manual validation.
 
-The remaining sections retain the design requirements. EQ, XP-style Filter, multiband and waveshaper are follow-up work, not included in the core checkpoint.
+### Subsequent user amendments implemented in 1.4.0
+
+These decisions supersede conflicting earlier design text below:
+
+- Visible cables are the accepted running topology. No separately visible non-running draft; invalid cycles/duplicate/illegal links are rejected atomically and removed from view.
+- Gain compensation is automatic at multi-connection inputs. No visible Sum node or manual compensation box; existing Sum boxes migrate to direct links.
+- Cable input ends can be dragged to rewire or dropped on blank canvas to disconnect. Selected cable source ends and Ctrl-output dragging are supported. No Disconnect button.
+- Added independent Waveshaper, EQ8 and 2-/3-band crossover modules sharing the 15 additional stable FX slots. Original 139 host parameters stay ordered; appended tone automation brings the total to 874.
+- EQ targets EQ+-style graph editing, with Pro-Q selected-band readability as an additional UI reference. Original code/assets and Device/Neon colors remain. There is no spectrum/reference analyzer yet and no claim of matching proprietary coefficients.
+- Multiband outputs route through ordinary independent FX and recombine with band-aware unity gains, not voice-count attenuation. Two-band ports #0 Low/#1 High; three-band #0 Low/#1 Mid/#2 High. Stored port #2 cables are dashed/silent in two-band mode, so assignments must be reviewed when switching modes.
+- Advanced header groups Voice stack, Add voice, Open Routing and Reset to Basic; routing inspectors have a wider native panel and expanded EQ view.
+- XP-style character Filter, delay and reverb remain future work.
+
+The remaining sections retain the original staged design and longer-term requirements; amendments above take precedence where the design evolved.
 
 Keep Basic mode quick to use. Advanced adds **up to eight generated voices, a live voice monitor, and an optional FX-routing editor**, backed by separate processing modules.
 

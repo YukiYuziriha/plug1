@@ -94,9 +94,11 @@ void unmappedStandalone() {
 void engineForwarding() {
     Settings settings; settings.levelOn = false; settings.doubles = 0; settings.fxAutomation = true;
     check(settings.fxSettings.size() == 16 && !Settings{}.fxAutomation, "Settings adapter contract");
+    for (auto type : {NodeType::chorale, NodeType::waveshaper, NodeType::equalizer, NodeType::crossover})
     for (int slot : {0, 1, 15}) {
+        if (slot == 0 && type != NodeType::chorale) continue;
         const auto id = std::uint32_t(slot ? slot + 99 : 12);
-        Graph fxGraph{{{1, NodeType::lead}, {id, NodeType::chorale}, {2, NodeType::output}},
+        Graph fxGraph{{{1, NodeType::lead}, {id, type}, {2, NodeType::output}},
                       {{1, id, 0}, {id, 2, 0}}};
         fxGraph.nodes[1].enabled = false; fxGraph.nodes[1].mix = 0; // automation must override both
         Graph dryGraph{{{1, NodeType::lead}, {2, NodeType::output}}, {{1, 2, 0}}};
@@ -104,9 +106,18 @@ void engineForwarding() {
         engine.prepare(48000, 1, 2, settings); dryEngine.prepare(48000, 1, 2, settings);
         check(bool(engine.requestGraph(fxGraph)) && bool(dryEngine.requestGraph(dryGraph)), "engine graph request");
         Chorale reference; reference.prepare(48000);
+        Waveshaper shaper; shaper.prepare(48000);
+        Equalizer eq; eq.prepare(48000);
+        Multiband crossover; crossover.prepare(48000);
         std::array<float, 137> input{}, left{}, right{}, dryLeft{}, dryRight{};
         for (int block = 0; block < 150; ++block) {
             settings.fxSettings[slot] = {block % 4 != 0, float(block % 11) / 10, float(block % 7) / 6};
+            settings.fxSettings[slot].waveshaper = {true, float(block%13), -3, .8f, block%3};
+            auto& e = settings.fxSettings[slot].eq;
+            e.bands[0] = {true, float(200+block*10), float(block%12-6), .8f, 0};
+            settings.fxSettings[slot].bandCount = block < 70 ? 3 : 2;
+            settings.fxSettings[slot].crossoverLow = float(100+block*4);
+            settings.fxSettings[slot].crossoverHigh = 3000;
             settings.choraleOn = block % 3 != 0;
             settings.choraleMix = float(block % 9) / 8; settings.choraleMotion = 0.77f;
             if (block == 80) { // invalid live controls must not poison FX history
@@ -122,7 +133,17 @@ void engineForwarding() {
             const auto fx = slot ? settings.fxSettings[slot]
                 : FxSettings{settings.choraleOn, settings.choraleMix, settings.choraleMotion};
             for (int i = 0; i < 137; ++i) {
-                reference.process(dryLeft[i], dryRight[i], fx.enabled, fx.mix, fx.motion);
+                if (type == NodeType::chorale) reference.process(dryLeft[i], dryRight[i], fx.enabled, fx.mix, fx.motion);
+                else if (type == NodeType::waveshaper) {
+                    auto w = fx.waveshaper; w.enabled = w.enabled && fx.enabled;
+                    shaper.process(dryLeft[i],dryRight[i],w);
+                } else if (type == NodeType::equalizer) {
+                    auto eqSettings = fx.eq; eqSettings.enabled = eqSettings.enabled && fx.enabled;
+                    eq.process(dryLeft[i],dryRight[i],eqSettings);
+                } else {
+                    auto b = crossover.process(dryLeft[i],dryRight[i],fx.bandCount,fx.crossoverLow,fx.crossoverHigh);
+                    if (fx.enabled) { dryLeft[i] = b[0][0]; dryRight[i] = b[0][1]; }
+                }
                 near(left[i], dryLeft[i], "engine did not forward live FX left");
                 near(right[i], dryRight[i], "engine did not forward live FX right");
             }
@@ -131,9 +152,57 @@ void engineForwarding() {
     check(allocations == 0 && destructions == 0, "engine automation allocated/destroyed on audio");
 }
 
+void newEffectSlots() {
+    for (auto type : {NodeType::waveshaper,NodeType::equalizer,NodeType::crossover}) {
+        for (int slot = 1; slot < 16; ++slot) {
+            const auto id = std::uint32_t(slot+99);
+            Graph g{{{1,NodeType::lead},{id,type},{2,NodeType::output}},{{1,id,0},{id,2,0}}};
+            auto& n = g.nodes[1];
+            n.waveshaper = {true, 9,-2,.7f,2};
+            n.eq.bands[0] = {true,700,5,.9f,0};
+            n.crossoverLow = 450; n.crossoverHigh = 2500; n.bandCount = 3;
+            RoutingExecutor executor; executor.prepare(48000);
+            check(bool(executor.requestGraph(g)),"new effect slot graph");
+            Waveshaper shaper; shaper.prepare(48000);
+            Equalizer eq; eq.prepare(48000);
+            Multiband crossover; crossover.prepare(48000);
+            RoutingControls c; c.choraleOn = false; // must never gate added FX
+            for (int i = 0; i < 6000; ++i) {
+                c.fxAutomation = i >= 1000 && i < 4000;
+                auto& live = c.fxSettings[slot];
+                live.enabled = (i/173)%3 != 0;
+                live.waveshaper = {true,float((i/137)%20),-4,.9f,(i/211)%3};
+                live.eq.bands[0] = {true,float(200+(i/137)*33),float((i/173)%12-6),1.2f,0};
+                live.bandCount = i < 3000 ? 2 : 3;
+                live.crossoverLow = float(200+(i/137)*11); live.crossoverHigh = 3300;
+                FxSettings fx{n.enabled,n.mix,n.motion};
+                fx.waveshaper = n.waveshaper; fx.eq = n.eq;
+                fx.bandCount = n.bandCount; fx.crossoverLow = n.crossoverLow; fx.crossoverHigh = n.crossoverHigh;
+                if (c.fxAutomation) fx = live;
+                RoutingSources s; s.lead = {float(.2*std::sin(i*.07)),float(.13*std::cos(i*.031))};
+                auto expected = s.lead;
+                if (type == NodeType::waveshaper) {
+                    auto w = fx.waveshaper; w.enabled = w.enabled && fx.enabled;
+                    shaper.process(expected.left,expected.right,w);
+                } else if (type == NodeType::equalizer) {
+                    auto e = fx.eq; e.enabled = e.enabled && fx.enabled;
+                    eq.process(expected.left,expected.right,e);
+                } else {
+                    const auto b = crossover.process(expected.left,expected.right,fx.bandCount,fx.crossoverLow,fx.crossoverHigh);
+                    if (fx.enabled) expected = {b[0][0],b[0][1]};
+                }
+                audio = true; const auto actual = executor.process(s,c); audio = false;
+                near(actual.left,expected.left,"new effect slot/fallback mismatch left");
+                near(actual.right,expected.right,"new effect slot/fallback mismatch right");
+            }
+        }
+    }
+    check(allocations == 0 && destructions == 0,"new effects allocated on audio");
+}
+
 int main() {
     try {
-        allSlotsLiveAndIndependent(); unmappedStandalone(); engineForwarding();
-        std::cout << "FX automation: all 16 slots, legacy precedence, node fallback, independent warm history, engine forwarding and RT ownership passed\n";
+        allSlotsLiveAndIndependent(); unmappedStandalone(); newEffectSlots(); engineForwarding();
+        std::cout << "FX automation: all 16 slots, tone/crossover slots 1..15, legacy precedence, node fallback, warm history, engine forwarding and RT ownership passed\n";
     } catch (const std::exception& e) { audio = false; std::cerr << e.what() << '\n'; return 1; }
 }

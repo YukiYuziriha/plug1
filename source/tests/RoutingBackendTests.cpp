@@ -1,4 +1,5 @@
 #include "Routing.h"
+#include "VocalEngine.h"
 #include <atomic>
 #include <cstdlib>
 #include <iostream>
@@ -55,7 +56,7 @@ void validation() {
     bad = direct(); bad.nodes[0].voiceSlot = 8; bad.nodes[0].type = NodeType::voice;
     check(!RoutingExecutor::validate(bad), "invalid voice accepted");
     bad = defaultGraph(); bad.links.erase(bad.links.begin() + 8);
-    check(!RoutingExecutor::validate(bad), "missing Mix pin accepted");
+    check(bool(RoutingExecutor::validate(bad)), "unconnected Mix pin must receive silence");
     bad = direct();
     for (int i = 0; i < 17; ++i) {
         bad.nodes.push_back({std::uint32_t(100 + i), NodeType::chorale});
@@ -200,6 +201,7 @@ void concurrentEdits() {
         while (!done.load(std::memory_order_acquire)) {
             const auto out = r.process(s, {});
             if (!std::isfinite(out.left) || !std::isfinite(out.right)) ++errors;
+            if (!std::isfinite(r.tailSeconds()) || r.tailSeconds() < 0) ++errors;
         }
         audio = false;
         if (allocations || destructions) ++errors;
@@ -207,14 +209,189 @@ void concurrentEdits() {
     for (int i = 0; i < 1500; ++i) {
         auto g = i % 2 ? defaultGraph() : independent();
         check(bool(r.requestGraph(g)), "concurrent request");
+        check(std::isfinite(r.tailSeconds()) && r.tailSeconds() >= 0, "concurrent tail publication");
         if (i % 7 == 0) std::this_thread::yield();
     }
     done.store(true, std::memory_order_release); render.join(); r.collectRetired();
     check(errors == 0, "concurrent render failed");
 }
+void automaticFanIn() {
+    RoutingExecutor r; r.prepare(48000);
+    Graph graph{{{1, NodeType::voice, 0}, {2, NodeType::voice, 1}, {100, NodeType::chorale}, {3, NodeType::output}},
+        {{1, 100, 0}, {2, 100, 0}, {100, 3, 0}}};
+    graph.nodes[2].enabled = false;
+    check(bool(r.requestGraph(graph)), "direct voice fan-in rejected");
+    RoutingSources sources; sources.activity[0] = sources.activity[1] = 1;
+    sources.voices[0] = {0.2f, 0}; sources.voices[1] = {0, 0.1f};
+    RoutingControls controls;
+    auto out = r.process(sources, controls);
+    near(out.left, 0.2f / std::sqrt(2.0f), "automatic merge compensation left");
+    near(out.right, 0.1f / std::sqrt(2.0f), "automatic merge erased relative gain");
+    graph.links = {{1, 100, 0}, {100, 3, 0}, {1, 3, 0}};
+    check(bool(r.requestGraph(graph)), "duplicated-branch fan-in rejected");
+    for (int i = 0; i < 1000; ++i) out = r.process(sources, controls);
+    near(out.left, sources.voices[0].left, "duplicate branches increased amplitude");
+    auto legacy = defaultGraph();
+    legacy.nodes.push_back({10, NodeType::sum});
+    legacy.links = {{2, 10, 0}, {3, 10, 1}, {10, 11, 1}, {1, 11, 0}, {11, 12, 0}, {12, 13, 0}};
+    const auto migrated = removeLegacySumNodes(legacy);
+    check(bool(RoutingExecutor::validate(migrated)), "legacy Sum migration invalid");
+    for (const auto& node : migrated.nodes) check(node.type != NodeType::sum, "legacy Sum remains visible");
+}
+void disconnectionsAreLive() {
+    RoutingExecutor r; r.prepare(48000);
+    auto graph = direct();
+    graph.nodes.push_back({100, NodeType::chorale});
+    check(bool(r.requestGraph(graph)), "unused disconnected Chorale rejected");
+    RoutingSources sources; sources.lead = {0.2f, -0.1f};
+    RoutingControls controls;
+    auto out = r.process(sources, controls);
+    near(out.left, 0.2f, "disconnected FX changed direct audio");
+    graph.links = {{1, 100, 0}, {100, 2, 0}};
+    graph.nodes.back().mix = 1;
+    check(bool(r.requestGraph(graph)), "connected Chorale rejected");
+    for (int i = 0; i < 4800; ++i) out = r.process(sources, controls);
+    graph.links.clear();
+    check(bool(r.requestGraph(graph)), "disconnect-all retained old graph");
+    for (int i = 0; i < 1000; ++i) out = r.process(sources, controls);
+    near(out.left, 0, "disconnected Output still plays old Chorale left");
+    near(out.right, 0, "disconnected Output still plays old Chorale right");
+    graph.links = {{100, 2, 0}};
+    check(bool(r.requestGraph(graph)), "unconnected FX input rejected");
+    for (int i = 0; i < 4800; ++i) out = r.process(sources, controls);
+    near(out.left, 0, "unconnected FX input still receives old audio");
+    graph.links = {{1, 2, 0}};
+    check(bool(r.requestGraph(graph)), "routing around disconnected FX rejected");
+    for (int i = 0; i < 1000; ++i) out = r.process(sources, controls);
+    near(out.left, sources.lead.left, "disconnected FX still applied after direct reconnection");
+    auto empty = defaultGraph(); empty.links.clear();
+    check(bool(r.requestGraph(empty)), "all-disconnected sources/mix/sum rejected");
+    for (int i = 0; i < 1000; ++i) out = r.process(sources, controls);
+    near(out.left, 0, "empty graph not silent");
+}
+void toneEffectsAndTypeIdentity() {
+    static_assert(int(NodeType::lead) == 0 && int(NodeType::output) == 5
+        && int(NodeType::waveshaper) == 6 && int(NodeType::equalizer) == 7 && int(NodeType::crossover) == 8);
+    auto defaults = defaultGraph();
+    for (const auto& n : defaults.nodes) check(n.type != NodeType::sum,"default exposes Sum");
+    RoutingExecutor executor; executor.prepare(48000);
+    Graph g{{{1,NodeType::voice,0},{2,NodeType::voice,1},
+        {100,NodeType::waveshaper},{101,NodeType::equalizer},{3,NodeType::output}},
+        {{1,100,0},{2,100,0},{100,101,0},{101,3,0}}};
+    g.nodes[2].waveshaper = {true,12,-3,.8f,2};
+    g.nodes[3].eq.bands[0] = {true,1200,6,1.1f,0};
+    check(bool(executor.requestGraph(g)),"direct voice tone FX graph");
+    Waveshaper shaper; shaper.prepare(48000);
+    Equalizer eq; eq.prepare(48000);
+    RoutingControls c; c.choraleOn = false;
+    for (int i = 0; i < 12000; ++i) {
+        RoutingSources s; s.activity[0] = s.activity[1] = 1;
+        s.voices[0] = {float(.2*std::sin(i*.03)),0};
+        s.voices[1] = {0,float(.1*std::cos(i*.07))};
+        auto expected = StereoSample{s.voices[0].left/std::sqrt(2.f),s.voices[1].right/std::sqrt(2.f)};
+        shaper.process(expected.left,expected.right,g.nodes[2].waveshaper);
+        eq.process(expected.left,expected.right,g.nodes[3].eq);
+        if (i == 4000) {
+            auto reordered = g; std::reverse(reordered.nodes.begin(),reordered.nodes.end());
+            reordered.nodes.push_back({99,NodeType::voice,7});
+            check(bool(executor.requestGraph(reordered)),"new FX reorder");
+        }
+        audio = true; const auto actual = executor.process(s,c); audio = false;
+        if (i < 4000 || i > 4500) {
+            near(actual.left,expected.left,"new FX history/voice fan-in left");
+            near(actual.right,expected.right,"new FX history/voice fan-in right");
+        }
+    }
+    // Same ID, different type must not use an old module (or resurrect its state).
+    Graph changed{{{1,NodeType::lead},{100,NodeType::equalizer},{3,NodeType::output}},
+        {{1,100,0},{100,3,0}}};
+    check(bool(executor.requestGraph(changed)),"type change rejected");
+    RoutingSources zero;
+    for (int i = 0; i < 1000; ++i) executor.process(zero,c);
+    changed.nodes[1].type = NodeType::waveshaper;
+    changed.nodes[1].waveshaper = g.nodes[2].waveshaper;
+    check(bool(executor.requestGraph(changed)),"type changed back rejected");
+    Waveshaper fresh; fresh.prepare(48000);
+    for (int i = 0; i < 1000; ++i) {
+        auto expected = StereoSample{};
+        fresh.process(expected.left,expected.right,changed.nodes[1].waveshaper);
+        const auto actual = executor.process(zero,c);
+        near(actual.left,expected.left,"type change resurrected old shaper history");
+    }
+    // Crossovers count against the same sixteen-machine ceiling.
+    Graph bounded{{{1,NodeType::lead},{2,NodeType::output}},{{1,2,0}}};
+    for (int i = 0; i < 17; ++i)
+        bounded.nodes.push_back({std::uint32_t(100+i), i%3 == 0 ? NodeType::crossover : i%3 == 1 ? NodeType::waveshaper : NodeType::equalizer});
+    check(!RoutingExecutor::validate(bounded),"17 mixed effects accepted");
+    bounded.nodes.pop_back(); check(bool(RoutingExecutor::validate(bounded)),"16 mixed effects rejected");
+    check(allocations == 0 && destructions == 0,"new effects audio ownership");
+}
+void activePlanTails() {
+    const auto tailNear = [](double actual, double expected, const char* message) {
+        check(std::abs(actual - expected) < 1e-9, message);
+    };
+    RoutingExecutor r;
+    tailNear(r.tailSeconds(), 0, "unprepared tail");
+    r.prepare(48000);
+    tailNear(r.tailSeconds(), .040, "default routing advertises excessive tail");
+    const auto install = [&](const Graph& graph, double expected) {
+        const double before = r.tailSeconds();
+        check(bool(r.requestGraph(graph)), "tail graph rejected");
+        tailNear(r.tailSeconds(), before, "pending graph changed active tail early");
+        audio = true;
+        r.process({}, {});
+        const double actual = r.tailSeconds();
+        audio = false;
+        tailNear(actual, expected, "active graph tail incorrect");
+    };
+    install(direct(), 0);
+    auto disconnected = direct();
+    disconnected.nodes.push_back({100,NodeType::equalizer});
+    disconnected.nodes.push_back({101,NodeType::crossover});
+    disconnected.links.push_back({1,100,0}); // driven but no path to Output
+    disconnected.links.push_back({100,101,0});
+    install(disconnected, 0);
+    Graph serial{{{1,NodeType::lead},{100,NodeType::chorale},{101,NodeType::waveshaper},
+        {102,NodeType::equalizer},{103,NodeType::crossover},{2,NodeType::output}},
+        {{1,100,0},{100,101,0},{101,102,0},{102,103,0},{103,2,0}}};
+    install(serial, .040+.020+256+8);
+    auto parallel = serial;
+    parallel.links = {{1,100,0},{1,101,0},{1,102,0},{1,103,0},
+        {100,2,0},{101,2,0},{102,2,0},{103,2,0}};
+    install(parallel,256); // max, not sum of parallel effect bounds
+    parallel.nodes.push_back({104,NodeType::equalizer});
+    parallel.links.push_back({1,104,0}); parallel.links.push_back({104,2,0});
+    install(parallel,256); // two parallel EQs are still one EQ tail
+    parallel.links.push_back({102,104,0});
+    install(parallel,512); // longest of multiple incoming paths includes both EQs
+    // A silent-input machine connected to Output may retain an audible tail.
+    Graph residual{{{100,NodeType::equalizer},{2,NodeType::output}},{{100,2,0}}};
+    install(residual,256);
+    residual.links.clear(); install(residual,0);
+    r.reset(); tailNear(r.tailSeconds(),0,"reset changed graph tail");
+    r.prepare(96000); tailNear(r.tailSeconds(),.040,"reprepare tail not default");
+    auto bad = direct(); bad.links.push_back(bad.links[0]);
+    check(!r.requestGraph(bad),"invalid tail graph accepted");
+    tailNear(r.tailSeconds(),.040,"rejected graph changed tail");
+
+    VocalEngine engine; Settings settings;
+    engine.prepare(48000,1,2,settings);
+    const double defaultTail = engine.tailSeconds();
+    check(defaultTail >= .040 && defaultTail < 1, "default engine still advertises worst-case tail");
+    check(bool(engine.requestGraph(direct())),"engine tail direct request");
+    tailNear(engine.tailSeconds(),defaultTail,"engine tail changed before graph activation");
+    std::array<float,64> input{},left{},right{};
+    const float* in[]{input.data()}; float* out[]{left.data(),right.data()};
+    audio = true; engine.process(in,out,64,settings); audio = false;
+    tailNear(engine.tailSeconds(),defaultTail-.040,"engine did not use active routing tail");
+    check(bool(engine.requestGraph(serial)),"engine tail serial request");
+    audio = true; engine.process(in,out,64,settings); audio = false;
+    tailNear(engine.tailSeconds(),defaultTail-.040+.040+.020+256+8,"engine serial tail forwarding");
+    check(allocations == 0 && destructions == 0,"tail publication allocated/destroyed on audio");
+}
 int main() {
     try {
-        validation(); defaultAndCompensation(); machinesAndPublication(); smoothSplice(); pendingMachineResetRace(); invalidControlValues(); concurrentEdits();
-        std::cout << "Routing backend: validation, endpoints, lineage compensation, independent FX, history, RT ownership and concurrent edits passed\n";
+        activePlanTails(); toneEffectsAndTypeIdentity(); automaticFanIn(); disconnectionsAreLive(); validation(); defaultAndCompensation(); machinesAndPublication(); smoothSplice(); pendingMachineResetRace(); invalidControlValues(); concurrentEdits();
+        std::cout << "Routing backend: active longest-path tails, engine tail forwarding, validation, endpoints, lineage compensation, independent FX, history, RT ownership and concurrent edits passed\n";
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

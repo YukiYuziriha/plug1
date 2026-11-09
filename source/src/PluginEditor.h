@@ -27,6 +27,7 @@ private:
     void timerCallback() override;
     void applyTheme();
     void syncDrawer();
+    void openRouting();
     void drawDevice(juce::Graphics&);
     void drawFlash(juce::Graphics&);
 
@@ -36,7 +37,7 @@ private:
     std::array<juce::Label, knobParameterIds.size()> labels;
     std::array<juce::TextButton, switchParameterIds.size()> switches;
     juce::TextButton theme, reset, copy, paste, drawer, routing;
-        std::unique_ptr<RoutingWindow> routingWindow;
+    std::unique_ptr<RoutingWindow> routingWindow;
     DoublerPanel advancedPanel;
     ChoralePanel choralePanel;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, knobParameterIds.size()> knobLinks;

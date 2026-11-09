@@ -104,14 +104,10 @@ Editor::Editor(Processor& processor)
     drawer.setTooltip("Show or hide voice controls without changing Advanced Doubler activation or sound");
     drawer.onClick = [this] { owner.setAdvancedVisible(!owner.isAdvancedVisible()); syncDrawer(); };
     addAndMakeVisible(drawer);
-    routing.setButtonText("Routing...");
+    routing.setButtonText("Open Routing");
     routing.setTooltip("Open the native audio graph and independent FX inspector");
-    routing.onClick = [this] {
-        if (!routingWindow) routingWindow = std::make_unique<RoutingWindow>(owner);
-        routingWindow->setNeon(style.flash);
-        routingWindow->setVisible(true);
-        routingWindow->toFront(false);
-    };
+    routing.onClick = [this] { openRouting(); };
+    advancedPanel.onOpenRouting = [this] { openRouting(); };
     addAndMakeVisible(routing);
     addChildComponent(advancedPanel);
     addAndMakeVisible(choralePanel);
@@ -128,12 +124,19 @@ Editor::~Editor() {
     setLookAndFeel(nullptr);
 }
 
+void Editor::openRouting() {
+    if (!routingWindow) routingWindow = std::make_unique<RoutingWindow>(owner);
+    routingWindow->setNeon(style.flash);
+    routingWindow->setVisible(true);
+    routingWindow->toFront(false);
+}
+
 void Editor::applyTheme() {
     style.flash = owner.isFlash();
     meterPanel.setNeon(style.flash);
     advancedPanel.setNeon(style.flash);
     choralePanel.setNeon(style.flash);
-        if (routingWindow) routingWindow->setNeon(style.flash);
+    if (routingWindow) routingWindow->setNeon(style.flash);
     const auto foreground = style.flash ? rgb(nightText) : rgb(0xe4e4df);
     const auto muted = style.flash ? rgb(nightMuted) : rgb(0xaeb1a9);
     theme.setButtonText(style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
@@ -179,7 +182,7 @@ void Editor::resized() {
     paste.setBounds(215, 306, 64, 23);
     meterPanel.setBounds(678, 76, 244, 246);
     drawer.setBounds(300, 306, 144, 23);
-        routing.setBounds(450, 306, 88, 23);
+    routing.setBounds(450, 306, 104, 23);
     choralePanel.setBounds(18, 344, 904, 64);
     advancedPanel.setBounds(18, editorHeight, 904, drawerHeight - 12);
 }
@@ -337,20 +340,21 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
     const auto area = button.getLocalBounds().toFloat().reduced(0.7f);
     const bool lit = button.getToggleState();
     const auto name = button.getButtonText();
+    const bool routingAction = name == "Open Routing";
     const auto accent = rgb(name == "BYPASS" ? 0xf58680 : !flash ? 0xe3a15e
-                            : name == "LEVEL" ? signYellow : name == "FORMANT" ? signCyan : signPink);
-    auto fill = lit ? accent : rgb(flash ? panel : 0x333733);
+                            : routingAction || name == "FORMANT" ? signCyan : name == "LEVEL" ? signYellow : signPink);
+    auto fill = lit ? accent : routingAction ? accent.withAlpha(0.18f) : rgb(flash ? panel : 0x333733);
     if (hover) fill = fill.brighter(0.12f);
     if (down) fill = fill.darker(0.12f);
     g.setColour(fill);
     const bool focused = button.hasKeyboardFocus(false);
     if (flash) {
         g.fillRect(area);
-        g.setColour(lit || focused || name == "SKIN  /  NEON" ? accent : rgb(outline));
+        g.setColour(lit || focused || routingAction || name == "SKIN  /  NEON" ? accent : rgb(outline));
         g.drawRect(area, focused ? 2.0f : 1.0f);
     } else {
         g.fillRoundedRectangle(area, 3.0f);
-        g.setColour(lit ? accent.brighter(0.13f) : rgb(0x515850));
+        g.setColour(lit || routingAction ? accent.brighter(0.13f) : rgb(0x515850));
         g.drawRoundedRectangle(area, 3.0f, focused ? 1.6f : 0.7f);
     }
 }

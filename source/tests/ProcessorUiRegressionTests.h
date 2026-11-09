@@ -167,32 +167,32 @@ void routingStateRegression() {
     expect(graphText(validRestore.getRoutingGraph()) == graphText(active), "Valid graph changed on restore");
     expect(validRestore.getRoutingError().isEmpty(), "Valid restore reported draft error");
     auto draft = active;
-    draft.links.pop_back();
-    expect(!owner.setRoutingGraph(draft, error) && error.isNotEmpty(), "Incomplete output draft was published");
-    expect(graphText(owner.getRoutingGraph()) == graphText(draft), "Invalid draft was not retained for editing");
+    draft.links.push_back(draft.links.front());
+    expect(!owner.setRoutingGraph(draft, error) && error.isNotEmpty(), "Duplicate-input draft was published");
+    expect(graphText(owner.getRoutingGraph()) == graphText(active), "Rejected edit changed visible/running topology");
     const auto saved = savedProcessorState(owner);
-    expectSavedGraph(saved, "RoutingGraph", draft);
+    expectSavedGraph(saved, "RoutingGraph", active);
     expectSavedGraph(saved, "ActiveRoutingGraph", active);
     Processor restored;
     juce::MemoryBlock binary;
     owner.getStateInformation(binary);
     restored.setStateInformation(binary.getData(), int(binary.getSize()));
-    expect(graphText(restored.getRoutingGraph()) == graphText(draft), "Binary state discarded incomplete draft");
-    expect(restored.getRoutingError().isNotEmpty(), "Invalid restored draft has no diagnostic");
+    expect(graphText(restored.getRoutingGraph()) == graphText(active), "Binary state changed accepted routing");
+    expect(restored.getRoutingError().isEmpty(), "Accepted saved routing incorrectly reported rejection");
     expect(restored.getRoutingLayout().toXmlString() == expectedLayout, "Draft restore lost layout");
     expectSavedGraph(savedProcessorState(restored), "ActiveRoutingGraph", active);
     auto broken = saved.createCopy();
     auto malformed = broken.getChildWithName("ActiveRoutingGraph");
     malformed.removeAllChildren(nullptr);
     expect(restored.pasteSettings(broken.toXmlString()), "Invalid active graph should safely fall back");
-    expectSavedGraph(savedProcessorState(restored), "ActiveRoutingGraph", vocalstack::defaultGraph());
-    expect(graphText(restored.getRoutingGraph()) == graphText(draft), "Active fallback erased editable draft");
+    expectSavedGraph(savedProcessorState(restored), "ActiveRoutingGraph", active);
+    expect(graphText(restored.getRoutingGraph()) == graphText(active), "Valid visible graph did not override malformed old fallback");
     auto malformedDraft = saved.createCopy();
     malformedDraft.getChildWithName("RoutingGraph").addChild(juce::ValueTree("Unknown"), -1, nullptr);
     expect(restored.pasteSettings(malformedDraft.toXmlString()), "Malformed draft restore failed");
     expect(restored.getRoutingError().isNotEmpty(), "Malformed draft did not report an error");
     expectSavedGraph(savedProcessorState(restored), "ActiveRoutingGraph", active);
-    expect(graphText(restored.getRoutingGraph()) == graphText(vocalstack::defaultGraph()), "Malformed draft fallback is not safe");
+    expect(graphText(restored.getRoutingGraph()) == graphText(active), "Malformed old draft must display the actual fallback graph");
     owner.resetParameters();
     expect(owner.getRoutingLayout().getNumChildren() == 0, "Full reset retained layout positions");
     expect(graphText(owner.getRoutingGraph()) == graphText(vocalstack::defaultGraph()), "Full reset retained custom routing");
@@ -302,7 +302,7 @@ void fxAutomationRegression() {
     retained.nodes[1].enabled = false;
     expect(fallback.setRoutingGraph(retained, error), "Retained audio fixture rejected");
     auto incomplete = retained;
-    incomplete.links.pop_back();
+    incomplete.links.push_back(incomplete.links.front());
     expect(!fallback.setRoutingGraph(incomplete, error), "Invalid audio draft accepted");
     Processor recalled;
     expect(recalled.pasteSettings(fallback.settingsText()), "Active fallback audio recall failed");
@@ -311,6 +311,59 @@ void fxAutomationRegression() {
     for (int i = 24000; i < int(output.size()); ++i)
         expectNear(output[size_t(i)], 0.1f * std::sin(float(i - latency) * 0.037f),
                    "Invalid saved draft did not retain last-valid latency-aligned audio");
+    auto disconnected = retained;
+    disconnected.links.clear();
+    expect(fallback.setRoutingGraph(disconnected, error) && error.isEmpty(), "Disconnect must replace old audible routing");
+    expectSavedGraph(savedProcessorState(fallback), "ActiveRoutingGraph", disconnected);
+    const auto silent = renderProcessorRegression(fallback);
+    for (int i = 24000; i < int(silent.size()); ++i)
+        expectNear(silent[size_t(i)], 0, "Disconnected Output retained audible old graph");
+    Processor disconnectedRecall;
+    expect(disconnectedRecall.pasteSettings(fallback.settingsText()), "Disconnected graph recall rejected");
+    expectSavedGraph(savedProcessorState(disconnectedRecall), "ActiveRoutingGraph", disconnected);
+}
+
+void perVoiceFxSignalPath() {
+    const auto render = [](bool fxOn) {
+        Processor owner;
+        owner.setAdvancedEnabled(true);
+        setParameter(owner, "levelOn", 0); setParameter(owner, "formantOn", 0);
+        setParameter(owner, "human", 0); setParameter(owner, "width", 100);
+        setParameter(owner, "choraleOn", 0); // Main Chorale must not gate this machine.
+        for (size_t slot = 0; slot < 2; ++slot) {
+            setParameter(owner, vocalstack::voiceParameterId(slot, "Delay"), 0);
+            setParameter(owner, vocalstack::voiceParameterId(slot, "Detune"), 0);
+            setParameter(owner, vocalstack::voiceParameterId(slot, "Formant"), 0);
+        }
+        vocalstack::Graph graph{{{2, vocalstack::NodeType::voice, 0}, {3, vocalstack::NodeType::voice, 1},
+            {100, vocalstack::NodeType::chorale}, {13, vocalstack::NodeType::output}},
+            {{2, 100, 0}, {100, 13, 0}, {3, 13, 0}}};
+        juce::String error;
+        expect(owner.setRoutingGraph(graph, error), "Per-voice FX routing rejected");
+        setParameter(owner, "fx1On", fxOn ? 1 : 0);
+        setParameter(owner, "fx1Mix", 100); setParameter(owner, "fx1Motion", 83);
+        owner.prepareToPlay(48000, 137);
+        juce::MidiBuffer midi;
+        std::vector<std::array<float, 2>> result;
+        for (int pos = 0; pos < 48000; pos += 137) {
+            const int count = std::min(137, 48000 - pos);
+            juce::AudioBuffer<float> audio(2, count);
+            for (int i = 0; i < count; ++i) {
+                const float x = 0.1f * std::sin(float(pos + i) * 0.037f);
+                audio.setSample(0, i, x); audio.setSample(1, i, x);
+            }
+            owner.processBlock(audio, midi);
+            for (int i = 0; i < count; ++i) result.push_back({audio.getSample(0, i), audio.getSample(1, i)});
+        }
+        return result;
+    };
+    const auto dry = render(false), wet = render(true);
+    double difference = 0;
+    for (size_t i = 24000; i < wet.size(); ++i) {
+        difference += std::abs(wet[i][0] - dry[i][0]);
+        expectNear(wet[i][1], dry[i][1], "Voice 1 FX leaked into Voice 2 branch");
+    }
+    expect(difference / 24000 > 0.001, "Voice 1 through independent Chorale did not alter Voice 1 audio");
 }
 
 juce::MouseEvent routingMouse(juce::Component& target, juce::Point<float> point, bool dragged = false) {
@@ -343,7 +396,7 @@ void routingUiRegression() {
         vocalstack::RoutingPanel panel(owner);
         panel.addToDesktop(0);
         auto* canvas = panel.getChildComponent(0);
-        expect(canvas != nullptr && canvas->getBounds() == juce::Rectangle<int>(12, 70, 842, 588),
+        expect(canvas != nullptr && canvas->getBounds() == juce::Rectangle<int>(12, 70, 840, 688),
                "Routing canvas dimensions changed");
         const auto click = [&](const char* text) {
             auto* button = findButton(panel, text);
@@ -372,18 +425,14 @@ void routingUiRegression() {
                    "Redo did not restore node position");
         click("Undo");
         // Drag an output onto an occupied input: keep an invalid draft, not a new audio plan.
-        canvas->mouseDown(routingMouse(*canvas, {176, 60}));
+        canvas->mouseDown(routingMouse(*canvas, {210, 62}));
         canvas->mouseDrag(routingMouse(*canvas, {240, 60}, true));
         canvas->mouseUp(routingMouse(*canvas, {240, 60}, true));
-        expect(owner.getRoutingGraph().links.size() == 3 && owner.getRoutingError().isNotEmpty(),
-               "Pin gesture did not retain duplicate-input draft");
+        expect(owner.getRoutingGraph().links.size() == 2 && owner.getRoutingError().isNotEmpty(),
+               "Duplicate cable was left visible instead of rejected");
         expectSavedGraph(savedProcessorState(owner), "ActiveRoutingGraph", graph);
-        click("Undo");
-        expect(graphText(owner.getRoutingGraph()) == graphText(graph) && owner.getRoutingError().isEmpty(),
-               "Cable undo did not restore valid routing");
-        click("Redo");
-        expect(owner.getRoutingError().isNotEmpty(), "Cable redo did not restore invalid draft");
-        click("Undo");
+        expect(graphText(owner.getRoutingGraph()) == graphText(graph),
+               "Rejected cable changed the accepted graph");
         canvas->mouseDown(routingMouse(*canvas, {260, 35}));
         canvas->mouseUp(routingMouse(*canvas, {260, 35}));
         click("Bypass FX");
@@ -405,13 +454,28 @@ void routingUiRegression() {
         canvas->mouseDown(routingMouse(*canvas, {260, 35}));
         canvas->mouseUp(routingMouse(*canvas, {260, 35}));
         click("Delete node");
-        expect(owner.getRoutingGraph().nodes.size() == 2 && owner.getRoutingError().isNotEmpty(),
-               "Delete did not retain incomplete draft");
+        expect(owner.getRoutingGraph().nodes.size() == 2 && owner.getRoutingError().isEmpty(),
+               "Deleting FX must publish disconnected silent Output, not retain old audio");
         click("Undo");
         expect(owner.getRoutingGraph().nodes.size() == 3 && owner.getRoutingError().isEmpty(),
                "Delete undo did not restore FX node and cables");
         expectNear(parameterValue(owner, "fx1Mix"), 79, "Delete undo lost the independent FX slot");
         transport();
+        // Pull the Output cable off its input and drop on the empty canvas.
+        canvas->mouseDown(routingMouse(*canvas, {460, 60}));
+        canvas->mouseDrag(routingMouse(*canvas, {500, 260}, true));
+        canvas->mouseUp(routingMouse(*canvas, {500, 260}, true));
+        expect(owner.getRoutingGraph().links.size() == 1 && owner.getRoutingError().isEmpty(), "Dragging cable end did not disconnect live Output");
+        click("Undo");
+        expect(owner.getRoutingGraph().links.size() == 2, "Undo did not restore dragged cable");
+        // Pull FX's input cable directly onto Output: rewire rather than add.
+        canvas->mouseDown(routingMouse(*canvas, {240, 60}));
+        canvas->mouseDrag(routingMouse(*canvas, {460, 60}, true));
+        canvas->mouseUp(routingMouse(*canvas, {460, 60}, true));
+        bool direct = false;
+        for (const auto& link : owner.getRoutingGraph().links) direct |= link.source == 1 && link.destination == 13;
+        expect(direct && owner.getRoutingError().isEmpty(), "Cable-end reconnect failed with automatic fan-in");
+        click("Undo");
         saveSnapshot(panel, neon ? "routing-neon.png" : "routing-device.png");
     }
 }

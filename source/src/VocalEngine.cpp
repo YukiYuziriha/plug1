@@ -387,6 +387,8 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
     routingControls.choraleOn = targets.choraleOn;
     routingControls.choraleMix = targets.choraleMix;
     routingControls.choraleMotion = targets.choraleMotion;
+    // Forward nested tone/crossover settings as fixed value data; no graph
+    // rebuild or module reset is needed for live FX automation.
     routingControls.fxSettings = targets.fxSettings;
     routingControls.fxAutomation = targets.fxAutomation;
     for (int i = 0; i < count; ++i) {

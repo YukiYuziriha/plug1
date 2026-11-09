@@ -1,6 +1,6 @@
 #pragma once
 
-#include "DoublerPanel.h"
+#include "ToneEffectPanel.h"
 #include <map>
 
 namespace vocalstack {
@@ -11,6 +11,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         Graph graph;
         juce::ValueTree layout;
         std::array<std::array<float, 3>, 16> fxValues{};
+        std::array<std::array<float, toneParametersPerSlot>, 15> toneValues{};
         unsigned fxOnUndoMask = 0;
     };
     class Canvas final : public juce::Component {
@@ -29,35 +30,34 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
     } canvas;
 public:
     explicit RoutingPanel(Processor& processor) : canvas(*this), owner(processor) {
-        setSize(1120, 700);
+        setName("Audio routing canvas and inspector");
+        setSize(1280, 800);
         addAndMakeVisible(canvas);
         addAndMakeVisible(inspector);
         addAndMakeVisible(status);
         status.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
         status.setFont(juce::Font(juce::FontOptions(12.0f)));
-        for (auto* b : {&add, &undo, &redo, &disconnect, &remove, &bypass, &fit, &zoomOut, &zoomIn}) addAndMakeVisible(*b);
+        for (auto* b : {&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn}) addAndMakeVisible(*b);
         add.setButtonText("+ Node"); undo.setButtonText("Undo"); redo.setButtonText("Redo");
-        disconnect.setButtonText("Disconnect"); remove.setButtonText("Delete node"); bypass.setButtonText("Bypass FX");
+        remove.setButtonText("Delete node"); bypass.setButtonText("Bypass FX");
         fit.setButtonText("Fit"); zoomOut.setButtonText("-"); zoomIn.setButtonText("+");
         add.onClick = [this] { showAddMenu(); };
         undo.onClick = [this] { stepHistory(undoStates, redoStates); };
         redo.onClick = [this] { stepHistory(redoStates, undoStates); };
-        disconnect.onClick = [this] {
-            if (selectedLink < 0 || selectedLink >= int(graph.links.size())) return;
-            remember(); graph.links.erase(graph.links.begin() + selectedLink); selectedLink = -1; publish();
-        };
+
         remove.onClick = [this] { deleteSelection(); };
         bypass.onClick = [this] { toggleBypass(); };
         fit.onClick = [this] { fitGraph(); };
         zoomOut.onClick = [this] { zoomAt(canvas.getLocalBounds().getCentre().toFloat(), 1.0f / 1.2f); };
         zoomIn.onClick = [this] { zoomAt(canvas.getLocalBounds().getCentre().toFloat(), 1.2f); };
-        disconnect.setTooltip("Select a cable, then disconnect. Incomplete drafts remain visible; the previous valid graph keeps running");
+        canvas.setName("Routing node canvas");
+        add.setTooltip("Add an independent effect, a dry/wet mixer, or a missing source");
         remove.setTooltip("Delete the selected node and its cables. Output is retained");
-        bypass.setTooltip("Bypass the selected Chorale without changing its wiring");
+        bypass.setTooltip("Bypass the selected FX through its host parameter. A bypassed splitter passes full-band audio on port 0 only.");
         graph = owner.getRoutingGraph();
         loadLayout(owner.getRoutingLayout());
         ensurePositions();
-        validateDraft();
+        showStatus();
         rebuildInspector();
         lastSignature = signature(graph);
         lastLayoutSignature = owner.getRoutingLayout().toXmlString();
@@ -68,13 +68,14 @@ public:
     ~RoutingPanel() override { nodeValue.setLookAndFeel(nullptr); }
     void setNeon(bool value) {
         neon = value;
-        for (auto* b : {&add, &undo, &redo, &disconnect, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn}) {
+        for (auto* b : {&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn}) {
             b->setColour(juce::TextButton::buttonColourId, juce::Colour(neon ? 0xff202e47 : 0xff3b413a));
             b->setColour(juce::TextButton::buttonOnColourId, juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b));
             b->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
             b->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
         }
         for (auto& field : fields) field->setNeon(neon);
+        if (tonePanel) tonePanel->setNeon(neon);
         detail::styleSlider(nodeValue, neon);
         repaint(); canvas.repaint();
     }
@@ -84,16 +85,17 @@ public:
         g.drawVerticalLine(inspector.getX() - 8, 46.0f, float(getHeight() - 36));
         g.setColour(juce::Colour(0xffaebaca));
         g.setFont(juce::Font(juce::FontOptions(11.5f)));
-        g.drawText("Drag output pin to input  |  Drag blank space to pan  |  Ctrl+wheel to zoom  |  Select cable to disconnect", 12, 43, getWidth() - 24, 22, juce::Justification::centredLeft);
+        g.drawText("Drag output -> input to connect  |  Drag an input cable end to disconnect / reconnect  |  Ctrl+drag output: move source  |  Ctrl+wheel: zoom", 12, 43, getWidth() - 24, 22, juce::Justification::centredLeft);
     }
     void resized() override {
         auto toolbar = getLocalBounds().reduced(12).removeFromTop(28);
-        for (auto* b : {&add, &undo, &redo, &disconnect, &remove, &bypass, &fit, &zoomOut, &zoomIn}) {
-            const int width = b == &zoomIn || b == &zoomOut ? 30 : b == &disconnect || b == &remove ? 102 : b == &bypass ? 90 : 66;
+        for (auto* b : {&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn}) {
+            const int width = b == &zoomIn || b == &zoomOut ? 30 : b == &remove ? 102 : b == &bypass ? 90 : 66;
             b->setBounds(toolbar.removeFromLeft(width)); toolbar.removeFromLeft(6);
         }
-        canvas.setBounds(12, 70, juce::jmax(100, getWidth() - 278), juce::jmax(100, getHeight() - 112));
-        inspector.setBounds(getWidth() - 250, 76, 238, getHeight() - 118);
+        constexpr int inspectorWidth = 400;
+        canvas.setBounds(12, 70, juce::jmax(100, getWidth() - inspectorWidth - 40), juce::jmax(100, getHeight() - 112));
+        inspector.setBounds(getWidth() - inspectorWidth - 12, 76, inspectorWidth, juce::jmax(100, getHeight() - 118));
         status.setBounds(8, getHeight() - 33, getWidth() - 16, 28);
         layoutInspector();
     }
@@ -105,7 +107,7 @@ private:
                 + juce::String(int(n.enabled)) + ":" + juce::String(n.mix, 6) + ":" + juce::String(n.motion, 6)
                 + ":" + juce::String(int(n.mainControls)) + ":" + juce::String(n.referencePower, 6) + ":" + juce::String(n.latencySamples) + ";";
         s += "|";
-        for (const auto& l : g.links) s += juce::String(l.source) + ">" + juce::String(l.destination) + ":" + juce::String(l.inputPin) + ";";
+        for (const auto& l : g.links) s += juce::String(l.source) + ":" + juce::String(l.sourcePin) + ">" + juce::String(l.destination) + ":" + juce::String(l.inputPin) + ";";
         return s;
     }
     static juce::String title(const RoutingNode& n) {
@@ -113,31 +115,64 @@ private:
         case NodeType::lead: return "LEAD";
         case NodeType::voice: return "VOICE " + juce::String(n.voiceSlot + 1);
         case NodeType::chorale: return n.mainControls ? "CHORALE / MAIN" : "CHORALE " + juce::String(int(n.id) - 98);
-        case NodeType::sum: return "COMPENSATED SUM";
+        case NodeType::sum: return {}; // Legacy nodes are stripped by the processor.
         case NodeType::mix: return n.mainControls ? "MAIN DRY / WET" : "DRY / WET MIX";
         case NodeType::output: return "OUTPUT";
+        case NodeType::waveshaper: return "WAVESHAPER " + juce::String(routingFxSlot(n.id));
+        case NodeType::equalizer: return "EQ8 " + juce::String(routingFxSlot(n.id));
+        case NodeType::crossover: return "MULTIBAND " + juce::String(routingFxSlot(n.id));
         }
         return {};
     }
+    static bool isEffect(NodeType type) {
+        return type == NodeType::chorale || type == NodeType::waveshaper
+            || type == NodeType::equalizer || type == NodeType::crossover;
+    }
     static int inputs(const RoutingNode& n) {
-        return n.type == NodeType::sum ? 16 : n.type == NodeType::mix ? 2
-            : n.type == NodeType::chorale || n.type == NodeType::output ? 1 : 0;
+        return n.type == NodeType::mix ? 2 : isEffect(n.type) || n.type == NodeType::output ? 1 : 0;
+    }
+    int outputPins(const RoutingNode& n) const {
+        if (n.type == NodeType::output || n.type == NodeType::sum) return 0;
+        if (n.type != NodeType::crossover) return 1;
+        const int slot = fxSlot(n);
+        return (slot > 0 ? toneui::value(owner, toneParameterId(size_t(slot), "BandCount"), float(n.bandCount))
+                         : float(n.bandCount)) >= 2.5f ? 3 : 2;
+    }
+    bool effectEnabled(const RoutingNode& n) const {
+        const int slot = fxSlot(n);
+        return slot >= 0 ? toneui::value(owner, fxParameterId(size_t(slot), "On"), n.enabled ? 1.0f : 0.0f) >= 0.5f : n.enabled;
+    }
+    bool inactiveSource(const RoutingLink& link) const {
+        for (const auto& n : graph.nodes) if (n.id == link.source)
+            return link.sourcePin >= outputPins(n) || (n.type == NodeType::crossover && !effectEnabled(n) && link.sourcePin != 0);
+        return false;
+    }
+    bool hasStoredPort(const RoutingNode& n) const {
+        return n.type == NodeType::crossover && outputPins(n) == 2
+            && std::any_of(graph.links.begin(), graph.links.end(), [&n](const auto& l) { return l.source == n.id && l.sourcePin == 2; });
+    }
+    juce::String outputName(const RoutingNode& n, int pin) const {
+        if (n.type != NodeType::crossover) return "Out";
+        if (pin >= outputPins(n)) return "Stored #2 | silent";
+        if (!effectEnabled(n)) return pin == 0 ? "Dry / full-band" : "Silent / bypass";
+        return pin == 0 ? "Low" : outputPins(n) == 3 && pin == 1 ? "Mid" : "High";
     }
     RoutingNode* node(std::uint32_t id) {
         for (auto& n : graph.nodes) if (n.id == id) return &n;
         return nullptr;
     }
     int fxSlot(const RoutingNode& n) const {
-        return n.type == NodeType::chorale ? routingFxSlot(n.id) : -1;
+        return isEffect(n.type) ? routingFxSlot(n.id) : -1;
     }
     juce::Rectangle<float> nodeBounds(const RoutingNode& n) const {
         const auto it = positions.find(n.id);
         const auto p = it == positions.end() ? juce::Point<float>() : it->second;
-        return {p.x, p.y, 156.0f, float(juce::jmax(62, 42 + inputs(n) * 13))};
+        const int rows = juce::jmax(inputs(n), outputPins(n) + (hasStoredPort(n) ? 1 : 0));
+        return {p.x, p.y, 190.0f, float(juce::jmax(64, 40 + rows * 22))};
     }
     juce::Point<float> pinPoint(const RoutingNode& n, int pin, bool output) const {
         const auto b = nodeBounds(n);
-        return output ? juce::Point<float>(b.getRight(), b.getY() + 40) : juce::Point<float>(b.getX(), b.getY() + 40 + float(pin * 13));
+        return {output ? b.getRight() : b.getX(), b.getY() + 42 + float(pin * 22)};
     }
     juce::Point<float> toScreen(juce::Point<float> p) const { return p * zoom + pan; }
     juce::Point<float> toWorld(juce::Point<float> p) const { return (p - pan) / zoom; }
@@ -146,9 +181,8 @@ private:
         const float bend = juce::jmax(35.0f, std::abs(b.x - a.x) * 0.45f);
         juce::Path p; p.startNewSubPath(a); p.cubicTo(a.x + bend, a.y, b.x - bend, b.y, b.x, b.y); return p;
     }
-    bool connected(std::uint32_t id, int pin) const {
-        for (const auto& l : graph.links) if (l.destination == id && l.inputPin == pin) return true;
-        return false;
+    int connectionCount(std::uint32_t id, int pin) const {
+        return int(std::count_if(graph.links.begin(), graph.links.end(), [id, pin](const auto& l) { return l.destination == id && l.inputPin == pin; }));
     }
     void paintCanvas(juce::Graphics& g) {
         g.fillAll(juce::Colour(neon ? 0xff0c1220 : 0xff1c201e));
@@ -158,20 +192,38 @@ private:
         for (float x = std::fmod(pan.x, step); x < float(canvas.getWidth()); x += step)
             for (float y = std::fmod(pan.y, step); y < float(canvas.getHeight()); y += step) g.fillRect(x, y, 1.0f, 1.0f);
         for (size_t i = 0; i < graph.links.size(); ++i) {
+            if (int(i) == rewiringLink) continue;
             const auto& l = graph.links[i];
             auto* a = node(l.source); auto* b = node(l.destination);
             if (!a || !b) continue;
-            g.setColour(int(i) == selectedLink ? juce::Colour(0xffffd477) : valid ? accent.withAlpha(0.7f) : juce::Colour(0xfff58680));
-            g.strokePath(cable(pinPoint(*a, 0, true), pinPoint(*b, l.inputPin, false)), juce::PathStrokeType(int(i) == selectedLink ? 3.5f : 2.0f));
+            const bool inactive = inactiveSource(l);
+            g.setColour(int(i) == selectedLink ? juce::Colour(0xffffd477) : inactive ? juce::Colour(0xff83909b).withAlpha(0.5f) : accent.withAlpha(0.7f));
+            const auto path = cable(pinPoint(*a, l.sourcePin, true), pinPoint(*b, l.inputPin, false));
+            const juce::PathStrokeType stroke(int(i) == selectedLink ? 3.5f : 2.0f);
+            if (inactive) {
+                juce::Path dashed; const float lengths[]{5.0f, 4.0f};
+                stroke.createDashedStroke(dashed, path, lengths, 2);
+                g.fillPath(dashed);
+            } else g.strokePath(path, stroke);
         }
-        if (connecting) if (auto* n = node(connecting)) {
-            g.setColour(accent); g.strokePath(cable(pinPoint(*n, 0, true), toWorld(pointer)), juce::PathStrokeType(2.0f));
+        if (rewiringLink >= 0 && rewiringSource) {
+            const auto& link = graph.links[size_t(rewiringLink)];
+            if (auto* target = node(link.destination)) {
+                g.setColour(accent);
+                g.strokePath(cable(toWorld(pointer), pinPoint(*target, link.inputPin, false)), juce::PathStrokeType(2.0f));
+            }
+        } else if (connecting) if (auto* n = node(connecting)) {
+            g.setColour(accent); g.strokePath(cable(pinPoint(*n, connectingPin, true), toWorld(pointer)), juce::PathStrokeType(2.0f));
         }
         for (const auto& n : graph.nodes) {
+            if (n.type == NodeType::sum) continue;
             const auto b = nodeBounds(n);
             const auto screen = juce::Rectangle<float>(toScreen(b.getTopLeft()), toScreen(b.getBottomRight()));
+            const auto nodeAccent = n.type == NodeType::voice ? VoiceMonitor::voiceColour(size_t(juce::jlimit(0, 7, n.voiceSlot))) : accent;
             g.setColour(juce::Colour(neon ? 0xff172239 : 0xff303730));
             g.fillRoundedRectangle(screen, 4 * zoom);
+            g.setColour(nodeAccent.withAlpha(0.12f));
+            g.fillRect(screen.withHeight(28 * zoom));
             g.setColour(n.id == selectedNode ? accent : juce::Colour(neon ? 0xff465c7c : 0xff65705e));
             g.drawRoundedRectangle(screen, 4 * zoom, n.id == selectedNode ? 2.0f : 1.0f);
             g.setFont(juce::Font(juce::FontOptions(juce::jmax(9.0f, 11.5f * zoom))));
@@ -180,35 +232,61 @@ private:
             g.drawText(title(n), heading, juce::Justification::centredLeft);
             for (int pin = 0; pin < inputs(n); ++pin) {
                 const auto p = toScreen(pinPoint(n, pin, false));
-                const bool wired = connected(n.id, pin);
-                const bool required = n.type != NodeType::sum;
-                g.setColour(wired ? accent : required ? juce::Colour(0xfff58680) : juce::Colour(0xff68788b));
+                const int count = connectionCount(n.id, pin);
+                g.setColour(count > 0 ? accent : juce::Colour(0xff68788b));
+                // Pill-shaped inputs advertise fan-in, rather than a single-link socket.
+                g.fillRoundedRectangle(p.x - 4, p.y - 6, 8, 12, 4);
+                g.setColour(juce::Colour(0xffbcc8d8));
+                const juce::String name = n.type == NodeType::mix ? (pin == 0 ? "Dry" : "Wet") : "In";
+                g.drawText(name + (count > 1 ? " x" + juce::String(count) : juce::String()), int(p.x + 9), int(p.y - 7), 70, 14, juce::Justification::centredLeft);
+            }
+            for (int pin = 0; pin < outputPins(n); ++pin) {
+                const auto p = toScreen(pinPoint(n, pin, true));
+                const bool silent = n.type == NodeType::crossover && !effectEnabled(n) && pin > 0;
+                g.setColour(silent ? juce::Colour(0xff68788b) : nodeAccent);
                 g.fillEllipse(p.x - 4, p.y - 4, 8, 8);
                 g.setColour(juce::Colour(0xffbcc8d8));
-                const auto name = n.type == NodeType::mix ? (pin == 0 ? "Dry" : "Wet") : n.type == NodeType::sum ? juce::String(pin + 1) : "In";
-                g.drawText(name, int(p.x + 9), int(p.y - 7), 66, 14, juce::Justification::centredLeft);
+                g.drawText(outputName(n, pin), int(p.x - 105 * zoom), int(p.y - 7), int(96 * zoom), 14, juce::Justification::centredRight);
             }
-            if (n.type != NodeType::output) {
-                const auto p = toScreen(pinPoint(n, 0, true));
-                g.setColour(accent); g.fillEllipse(p.x - 4, p.y - 4, 8, 8);
+            if (hasStoredPort(n)) {
+                const auto p = toScreen(pinPoint(n, 2, true));
+                g.setColour(juce::Colour(0xff929da6));
+                g.drawText("Stored #2 | silent", int(p.x - 140 * zoom), int(p.y - 7), int(132 * zoom), 14, juce::Justification::centredRight);
             }
-            if (n.type == NodeType::chorale) {
-                const int slot = fxSlot(n);
-                const auto* parameter = slot < 0 ? nullptr : owner.parameters.getRawParameterValue(fxParameterId(size_t(slot), 0));
-                const bool on = parameter ? parameter->load() > 0.5f : n.enabled;
-                g.setColour(on ? accent : juce::Colour(0xffa6aeb9));
-                g.drawText(on ? "ON" : "BYPASSED", screen.toNearestInt().reduced(8, 0).withTrimmedTop(juce::roundToInt(30 * zoom)), juce::Justification::centredRight);
+            if (isEffect(n.type) && !effectEnabled(n)) {
+                g.setColour(juce::Colour(0xffa6aeb9));
+                g.drawText("OFF", heading.removeFromRight(30), juce::Justification::centredRight);
             }
         }
     }
     void canvasDown(const juce::MouseEvent& e) {
         pointer = e.position; dragStart = e.position; startPan = pan;
-        draggingNode = 0; connecting = 0; panning = false;
+        draggingNode = 0; connecting = 0; connectingPin = 0; panning = false; rewiringLink = -1; rewiringSource = false;
         const auto world = toWorld(e.position);
         if (e.mods.isMiddleButtonDown() || e.mods.isAltDown()) { panning = true; return; }
+        const auto pickEnd = [&](int index, bool sourceEnd) {
+            if (index < 0 || index >= int(graph.links.size())) return false;
+            const auto& link = graph.links[size_t(index)];
+            const auto* target = node(sourceEnd ? link.source : link.destination);
+            if (!target || toScreen(pinPoint(*target, sourceEnd ? link.sourcePin : link.inputPin, sourceEnd)).getDistanceFrom(e.position) >= 10) return false;
+            rewiringLink = selectedLink = index; rewiringSource = sourceEnd; selectedNode = 0;
+            if (!sourceEnd) { connecting = link.source; connectingPin = link.sourcePin; }
+            rebuildInspector(); canvas.repaint(); return true;
+        };
+        // A selected cable can be moved from either end. Otherwise dragging an
+        // occupied input detaches its last/selected link, as in Blender.
+        if (!e.mods.isPopupMenu()) {
+            if (pickEnd(selectedLink, true) || pickEnd(selectedLink, false)) return;
+            if (e.mods.isCtrlDown() || e.mods.isCommandDown())
+                for (int i = int(graph.links.size()) - 1; i >= 0; --i) if (pickEnd(i, true)) return;
+            for (int i = int(graph.links.size()) - 1; i >= 0; --i) if (pickEnd(i, false)) return;
+        }
         for (auto it = graph.nodes.rbegin(); it != graph.nodes.rend(); ++it) {
-            if (it->type != NodeType::output && toScreen(pinPoint(*it, 0, true)).getDistanceFrom(e.position) < 10) {
-                connecting = it->id; selectedNode = it->id; selectedLink = -1; rebuildInspector(); canvas.repaint(); return;
+            if (!e.mods.isPopupMenu()) for (int pin = 0; pin < outputPins(*it); ++pin) {
+                if (toScreen(pinPoint(*it, pin, true)).getDistanceFrom(e.position) < 10) {
+                    connecting = it->id; connectingPin = pin; selectedNode = it->id; selectedLink = -1;
+                    rebuildInspector(); canvas.repaint(); return;
+                }
             }
             if (nodeBounds(*it).contains(world)) {
                 selectedNode = it->id; selectedLink = -1;
@@ -225,7 +303,7 @@ private:
             const auto& l = graph.links[size_t(i)]; auto* a = node(l.source); auto* b = node(l.destination);
             if (!a || !b) continue;
             juce::Path hit;
-            juce::PathStrokeType(12.0f).createStrokedPath(hit, cable(pinPoint(*a, 0, true), pinPoint(*b, l.inputPin, false)));
+            juce::PathStrokeType(12.0f).createStrokedPath(hit, cable(pinPoint(*a, l.sourcePin, true), pinPoint(*b, l.inputPin, false)));
             if (hit.contains(e.position)) { selectedLink = i; break; }
         }
         panning = selectedLink < 0;
@@ -239,12 +317,39 @@ private:
         canvas.repaint();
     }
     void canvasUp(const juce::MouseEvent& e) {
-        if (connecting) {
+        const bool cableEdit = connecting != 0 || rewiringLink >= 0;
+        if (rewiringLink >= 0) {
+            if (e.position.getDistanceFrom(dragStart) > 2) {
+                remember();
+                auto moved = graph.links[size_t(rewiringLink)];
+                graph.links.erase(graph.links.begin() + rewiringLink);
+                bool found = false;
+                for (const auto& n : graph.nodes) {
+                    if (rewiringSource) {
+                        for (int pin = 0; pin < outputPins(n); ++pin)
+                            if (toScreen(pinPoint(n, pin, true)).getDistanceFrom(e.position) < 12) {
+                                moved.source = n.id; moved.sourcePin = pin; found = true; break;
+                            }
+                    } else {
+                        for (int pin = 0; pin < inputs(n); ++pin)
+                            if (toScreen(pinPoint(n, pin, false)).getDistanceFrom(e.position) < 12) {
+                                moved.destination = n.id; moved.inputPin = pin; found = true; break;
+                            }
+                    }
+                    if (found) break;
+                }
+                if (found) graph.links.push_back(moved);
+                selectedLink = -1; rewiringLink = -1; publish();
+            }
+        } else if (connecting) {
             bool found = false;
             for (const auto& n : graph.nodes) {
                 for (int pin = 0; pin < inputs(n); ++pin) {
                     if (toScreen(pinPoint(n, pin, false)).getDistanceFrom(e.position) < 12) {
-                        remember(); graph.links.push_back({connecting, n.id, pin}); found = true; break;
+                        // Automation may have changed the active output count mid-drag.
+                        const auto* source = node(connecting);
+                        if (!source || connectingPin >= outputPins(*source)) break;
+                        remember(); graph.links.push_back({connecting, n.id, pin, connectingPin}); found = true; break;
                     }
                 }
                 if (found) break;
@@ -255,7 +360,9 @@ private:
             undoStates.push_back(dragBefore); limitHistory(); redoStates.clear(); saveLayout(); updateButtons();
         }
         if (panning) saveLayout();
-        connecting = 0; draggingNode = 0; panning = false; canvas.repaint();
+        connecting = 0; connectingPin = 0; draggingNode = 0; rewiringLink = -1; rewiringSource = false; panning = false;
+        if (cableEdit) rebuildInspector();
+        canvas.repaint();
     }
     void zoomAt(juce::Point<float> point, float factor) {
         const auto world = toWorld(point);
@@ -298,9 +405,12 @@ private:
             switch (n.type) {
             case NodeType::lead: p = {24, 20}; break;
             case NodeType::voice: p = {24, 100.0f + float(n.voiceSlot * 70)}; break;
-            case NodeType::sum: p = {260, 180}; break;
+            case NodeType::sum: p = {}; break;
             case NodeType::mix: p = {490, 30}; break;
-            case NodeType::chorale: p = {710, 30}; break;
+            case NodeType::chorale:
+            case NodeType::waveshaper:
+            case NodeType::equalizer:
+            case NodeType::crossover: p = {710, 30}; break;
             case NodeType::output: p = {930, 30}; break;
             }
             if (n.id >= 100) p = {270.0f + float(extra % 3) * 200, 460.0f + float(extra / 3) * 100};
@@ -317,6 +427,10 @@ private:
         for (size_t slot = 0; slot < 16; ++slot)
             for (size_t field = 0; field < 3; ++field)
                 if (const auto* p = owner.parameters.getRawParameterValue(fxParameterId(slot, field))) result.fxValues[slot][field] = p->load();
+        for (size_t slot = 1; slot < 16; ++slot)
+            for (size_t field = 0; field < toneParametersPerSlot; ++field)
+                if (const auto* p = owner.parameters.getRawParameterValue(parameterIds[toneParameterIndex(slot, field)]))
+                    result.toneValues[slot - 1][field] = p->load();
         return result;
     }
     void limitHistory() { if (undoStates.size() > 80) undoStates.erase(undoStates.begin()); }
@@ -331,15 +445,15 @@ private:
         current.fxOnUndoMask = s.fxOnUndoMask;
         to.push_back(current);
         graph = s.graph; loadLayout(s.layout); selectedNode = 0; selectedLink = -1;
-        saveLayout(); publish();
+        if (!publish(false)) { from.push_back(s); to.pop_back(); rebuildInspector(); return; }
         for (size_t slot = 0; slot < 16; ++slot) {
             const auto id = slot == 0 ? 12u : unsigned(slot + 99);
             const auto findFx = [id](const Graph& g) -> const RoutingNode* {
-                for (const auto& n : g.nodes) if (n.id == id && n.type == NodeType::chorale) return &n;
+                for (const auto& n : g.nodes) if (n.id == id && isEffect(n.type)) return &n;
                 return nullptr;
             };
             const auto* before = findFx(current.graph); const auto* after = findFx(s.graph);
-            const bool lifecycleChange = (!before != !after);
+            const bool lifecycleChange = (!before != !after) || (before && after && before->type != after->type);
             // Cable/position undo must not rewind unrelated host automation.
             for (size_t field = 0; field < 3; ++field) {
                 const bool changed = lifecycleChange || (field == 0 && (s.fxOnUndoMask & (1u << slot)))
@@ -350,34 +464,42 @@ private:
                 if (const auto* p = owner.parameters.getRawParameterValue(parameter); p && p->load() != s.fxValues[slot][field])
                     setParameter(parameter, s.fxValues[slot][field]);
             }
+            if (slot > 0 && lifecycleChange)
+                for (size_t field = 0; field < toneParametersPerSlot; ++field)
+                    setParameter(parameterIds[toneParameterIndex(slot, field)], s.toneValues[slot - 1][field]);
         }
         rebuildInspector();
     }
-    void validateDraft() {
-        const auto result = RoutingExecutor::validate(graph);
-        valid = result.valid; error = juce::String(result.message);
-        showStatus();
-    }
+
     void showStatus() {
-        status.setText(valid ? "VALID ROUTING  /  Audio follows this graph.  Sources remain stable even when a voice card is removed."
-                             : "DRAFT NOT RUNNING  /  " + error + "  /  Last valid audio graph continues.", juce::dontSendNotification);
+        status.setText(error.isNotEmpty() ? "EDIT REJECTED  /  " + error + "  /  Visible cables remain the running routing."
+            : "LIVE ROUTING  /  Automatic gain compensation at merges. Unconnected inputs and Output are silent.", juce::dontSendNotification);
         status.setTooltip(status.getText());
-        status.setColour(juce::Label::textColourId, juce::Colour(valid ? 0xffa9dec2 : 0xffff9f91));
+        status.setColour(juce::Label::textColourId, juce::Colour(error.isEmpty() ? 0xffa9dec2 : 0xffff9f91));
         updateButtons();
     }
-    void publish() {
+    bool publish(bool discardUndoOnReject = true) {
         ensurePositions();
         juce::String problem;
-        valid = owner.setRoutingGraph(graph, problem); error = problem;
+        const bool accepted = owner.setRoutingGraph(graph, problem);
+        error = problem;
+        graph = owner.getRoutingGraph();
+        if (!accepted) {
+            selectedLink = -1;
+            if (!node(selectedNode)) selectedNode = 0;
+            if (discardUndoOnReject && !undoStates.empty()) undoStates.pop_back();
+        }
         lastSignature = signature(graph);
         saveLayout(); showStatus(); canvas.repaint();
+        return accepted;
     }
     void updateButtons() {
         undo.setEnabled(!undoStates.empty()); redo.setEnabled(!redoStates.empty());
-        disconnect.setEnabled(selectedLink >= 0 && selectedLink < int(graph.links.size()));
+
         const auto* n = node(selectedNode);
         remove.setEnabled(n && n->type != NodeType::output);
-        bypass.setEnabled(n && n->type == NodeType::chorale);
+        bypass.setEnabled(n && isEffect(n->type));
+        bypass.setButtonText(n && isEffect(n->type) && !effectEnabled(*n) ? "Enable FX" : "Bypass FX");
     }
     void deleteSelection() {
         const auto* n = node(selectedNode); if (!n || n->type == NodeType::output) return;
@@ -392,20 +514,21 @@ private:
         }
     }
     void toggleBypass() {
-        auto* n = node(selectedNode); if (!n || n->type != NodeType::chorale) return;
+        auto* n = node(selectedNode); if (!n || !isEffect(n->type)) return;
         const int slot = fxSlot(*n);
         if (slot < 0) return;
         const auto id = fxParameterId(size_t(slot), size_t(0));
         const auto* p = owner.parameters.getRawParameterValue(id);
         const bool enable = !(p ? p->load() > 0.5f : n->enabled);
         remember(1u << unsigned(slot)); n->enabled = enable;
-        publish(); setParameter(id, enable ? 1.0f : 0.0f); rebuildInspector();
+        if (publish()) setParameter(id, enable ? 1.0f : 0.0f);
+        rebuildInspector();
     }
     void showNodeMenu() {
         juce::PopupMenu menu;
         const auto* n = node(selectedNode);
         menu.addItem(1, "Delete node", n && n->type != NodeType::output);
-        menu.addItem(2, "Toggle node bypass", n && n->type == NodeType::chorale);
+        menu.addItem(2, "Toggle FX bypass", n && isEffect(n->type));
         juce::Component::SafePointer<RoutingPanel> safe(this);
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&canvas), [safe](int result) {
             if (!safe) return;
@@ -414,12 +537,18 @@ private:
     }
     void showAddMenu() {
         juce::PopupMenu menu;
-        int effects = 0; for (const auto& n : graph.nodes) if (n.type == NodeType::chorale) ++effects;
+        int effects = 0; for (const auto& n : graph.nodes) if (isEffect(n.type)) ++effects;
         const bool room = graph.nodes.size() < size_t(RoutingExecutor::maxNodes);
         bool freeFxSlot = false;
         for (std::uint32_t id = 100; id <= 114; ++id) if (!node(id)) freeFxSlot = true;
-        menu.addItem(1, "Chorale (independent FX slot)", room && effects < 16 && freeFxSlot);
-        menu.addItem(2, "Compensated Sum", room); menu.addItem(3, "Dry / Wet Mix", room);
+        const bool effectRoom = room && effects < 16 && freeFxSlot;
+        menu.addSectionHeader("Independent FX | shared automation slots");
+        menu.addItem(1, "Chorale", effectRoom);
+        menu.addItem(4, "Waveshaper", effectRoom);
+        menu.addItem(5, "EQ8", effectRoom);
+        menu.addItem(6, "Multiband | 2 / 3 bands", effectRoom);
+        menu.addSeparator();
+        menu.addItem(3, "Dry / Wet Mix", room);
         menu.addSeparator();
         menu.addItem(10, "Restore Lead source", room && !hasSource(-1));
         for (int i = 0; i < 8; ++i) menu.addItem(20 + i, "Restore Voice " + juce::String(i + 1) + " source", room && !hasSource(i));
@@ -435,31 +564,43 @@ private:
     void addNode(int kind) {
         if (graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
         RoutingNode n;
-        if (kind == 1) {
-            n.type = NodeType::chorale;
+        if (kind == 1 || kind == 4 || kind == 5 || kind == 6) {
+            n.type = kind == 1 ? NodeType::chorale : kind == 4 ? NodeType::waveshaper : kind == 5 ? NodeType::equalizer : NodeType::crossover;
             for (std::uint32_t id = 100; id <= 114; ++id) if (!node(id)) { n.id = id; break; }
             if (!n.id) return;
             int effects = 0;
-            for (const auto& existing : graph.nodes) if (existing.type == NodeType::chorale) ++effects;
+            for (const auto& existing : graph.nodes) if (isEffect(existing.type)) ++effects;
             if (effects >= 16) return;
-        } else if (kind == 2 || kind == 3) {
-            n.type = kind == 2 ? NodeType::sum : NodeType::mix;
+        } else if (kind == 3) {
+            n.type = NodeType::mix;
             n.id = 200; while (node(n.id)) ++n.id;
         } else if (kind == 10) { n.id = 1; n.type = NodeType::lead; }
         else if (kind >= 20 && kind < 28) { n.id = std::uint32_t(kind - 18); n.type = NodeType::voice; n.voiceSlot = kind - 20; }
-        else if (kind == 40) { n.id = 12; n.type = NodeType::chorale; n.mainControls = true; }
-        else return;
-        remember();
-        if (kind == 1) {
-            // Explicitly initialise reused stable automation slots, not a hidden shared machine.
-            const auto slot = size_t(int(n.id) - 99);
-            setParameter(fxParameterId(slot, 0), 1); setParameter(fxParameterId(slot, 1), 25); setParameter(fxParameterId(slot, 2), 35);
+        else if (kind == 40) {
+            if (node(12) || std::count_if(graph.nodes.begin(), graph.nodes.end(), [](const auto& item) { return isEffect(item.type); }) >= 16) return;
+            n.id = 12; n.type = NodeType::chorale; n.mainControls = true;
         }
+        else return;
+        if (node(n.id)) return;
+        remember();
         positions[n.id] = toWorld(canvas.getLocalBounds().getCentre().toFloat());
-        graph.nodes.push_back(n); selectedNode = n.id; selectedLink = -1; publish(); rebuildInspector();
+        graph.nodes.push_back(n); selectedNode = n.id; selectedLink = -1;
+        if (publish() && isEffect(n.type) && n.id >= 100 && n.id <= 114) {
+            // Reset a newly allocated/reused machine only after its graph is accepted.
+            const auto slot = size_t(routingFxSlot(n.id));
+            setParameter(fxParameterId(slot, "On"), 1);
+            setParameter(fxParameterId(slot, "Mix"), n.type == NodeType::chorale ? 25.0f : 100.0f);
+            setParameter(fxParameterId(slot, "Motion"), 35);
+            for (size_t field = 0; field < toneParametersPerSlot; ++field) {
+                const auto id = parameterIds[toneParameterIndex(slot, field)];
+                if (const auto* parameter = owner.parameters.getParameter(id))
+                    setParameter(id, parameter->convertFrom0to1(parameter->getDefaultValue()));
+            }
+        }
+        rebuildInspector();
     }
     void rebuildInspector() {
-        fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
+        tonePanel.reset(); fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
         inspector.addAndMakeVisible(inspectorTitle); inspector.addAndMakeVisible(inspectorInfo);
         inspectorTitle.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
         inspectorInfo.setColour(juce::Label::textColourId, juce::Colour(0xffaebaca));
@@ -468,10 +609,10 @@ private:
         nodeValue.setLookAndFeel(&nodeStyle);
         const auto* n = node(selectedNode);
         inspectorTitle.setText(n ? title(*n) : selectedLink >= 0 ? "AUDIO CONNECTION" : "ROUTING INSPECTOR", juce::dontSendNotification);
-        juce::String info = "Select a node to inspect it.\n\nSources expose lead / generated takes. Add an explicit Sum before merging signals.\n\nEmpty inputs and cycles are invalid drafts, not silent audio replacements.";
+        juce::String info = "Select a machine to edit its controls.\n\nConnect multiple voices directly to an input: merge compensation is automatic. Fan out an output to process parallel branches.\n\nDrag an occupied input end to reconnect; drop it on empty space to disconnect. Select a cable first, or Ctrl-drag an output, to move its source.\n\nUnconnected inputs receive silence. Rejected edits never replace the visible running graph.";
         if (n) {
             info = "Node ID " + juce::String(n->id);
-            if (n->type == NodeType::chorale) {
+            if (isEffect(n->type)) {
                 const int slot = fxSlot(*n);
                 info += "\nIndependent FX slot " + juce::String(slot);
                 if (slot >= 0) {
@@ -480,13 +621,21 @@ private:
                     const auto* on = owner.parameters.getRawParameterValue(fxParameterId(size_t(slot), size_t(0)));
                     fxOn.setToggleState(on ? on->load() > 0.5f : n->enabled, juce::dontSendNotification);
                     fxOn.onClick = [this] { toggleBypass(); };
-                    for (int f = 1; f <= 2; ++f) {
-                        fields.push_back(std::make_unique<detail::ParameterSlider>(owner, fxParameterId(size_t(slot), f), f == 1 ? "Mix" : "Motion", "%"));
-                        inspector.addAndMakeVisible(*fields.back());
+                    if (n->type == NodeType::chorale) {
+                        for (int f = 1; f <= 2; ++f) {
+                            fields.push_back(std::make_unique<detail::ParameterSlider>(owner, fxParameterId(size_t(slot), f), f == 1 ? "Mix" : "Motion", "%"));
+                            inspector.addAndMakeVisible(*fields.back());
+                        }
+                        info += "\nOne independent machine; routing chooses its input.\nNew Chorale slots start On / 25% Mix / 35% Motion.";
+                    } else if (slot > 0) {
+                        tonePanel = std::make_unique<ToneEffectPanel>(owner, size_t(slot), n->type);
+                        inspector.addAndMakeVisible(*tonePanel);
+                        info = "Slot " + juce::String(slot) + " | independent host automation";
+                        if (n->type == NodeType::crossover)
+                            info += "\n2 bands: #0 Low / #1 High. 3 bands: #0 Low / #1 Mid / #2 High.\nStored #2 cables are silent in 2-band mode; #1 becomes High.\nBypass: full-band on #0 only; all other outputs silent.";
                     }
-                    info += "\nRouting decides what this effect processes.\nNew added FX deliberately reset the reused slot to On / 25% Mix / 35% Motion.";
                 } else info += "\nNo matching host automation slot.";
-            } else if (n->type == NodeType::sum || n->type == NodeType::mix) {
+            } else if (n->type == NodeType::mix) {
                 inspector.addAndMakeVisible(nodeValue);
                 nodeValue.setSliderStyle(juce::Slider::LinearHorizontal);
                 nodeValue.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 100, 24);
@@ -495,16 +644,15 @@ private:
                     nodeValueLink = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner.parameters, "double", nodeValue);
                     info += "\nMain Mix (%)\nDry pin 0 / Wet pin 1";
                 } else {
-                    const bool sum = n->type == NodeType::sum;
-                    nodeValue.setRange(sum ? 1 : 0, sum ? 16 : 100, sum ? 0.01 : 0.1);
-                    nodeValue.setValue(sum ? n->referencePower : n->mix * 100, juce::dontSendNotification);
-                    info += sum ? "\nReference power budget (1..16).\nCompensation preserves relative voice gains; not an auto-leveler.\nInput pins 1..16 map to backend 0..15." : "\nMix (%)\nDry pin 0 / Wet pin 1";
+                    nodeValue.setRange(0, 100, 0.1);
+                    nodeValue.setValue(n->mix * 100, juce::dontSendNotification);
+                    info += "\nMix (%)\nDry pin 0 / Wet pin 1. Each pin accepts multiple sources.";
                     nodeValue.onDragStart = [this] { remember(); inspectorDragging = true; };
                     nodeValue.onDragEnd = [this] { inspectorDragging = false; };
-                    nodeValue.onValueChange = [this, sum] {
+                    nodeValue.onValueChange = [this] {
                         if (!inspectorDragging) remember();
                         if (auto* current = node(selectedNode)) {
-                            if (sum) current->referencePower = float(nodeValue.getValue()); else current->mix = float(nodeValue.getValue() / 100);
+                            current->mix = float(nodeValue.getValue() / 100);
                             publish();
                         }
                     };
@@ -514,7 +662,14 @@ private:
             else info += "\nProcessed lead source. Fan out this source rather than adding duplicates.";
         } else if (selectedLink >= 0 && selectedLink < int(graph.links.size())) {
             const auto& l = graph.links[size_t(selectedLink)];
-            info = "Source " + juce::String(l.source) + " -> Node " + juce::String(l.destination) + "\nInput pin " + juce::String(l.inputPin) + " (zero-based)\n\nUse Disconnect to remove this cable.";
+            const auto* source = node(l.source);
+            const auto* destination = node(l.destination);
+            info = (source ? title(*source) : juce::String(l.source)) + " / "
+                + (source ? outputName(*source, l.sourcePin) : juce::String(l.sourcePin))
+                + " -> " + (destination ? title(*destination) : juce::String(l.destination))
+                + "\nOutput #" + juce::String(l.sourcePin) + " -> Input #" + juce::String(l.inputPin)
+                + "\n\nDrag either end of this selected cable to reconnect it, or drop on empty space to disconnect.";
+            if (inactiveSource(l)) info += "\n\nINACTIVE / SILENT: this cable remains stored. Re-enable the splitter or return to 3 bands to restore its source port.";
         }
         inspectorInfo.setText(info, juce::dontSendNotification);
         inspectorInfo.setJustificationType(juce::Justification::topLeft);
@@ -522,15 +677,30 @@ private:
     }
     void layoutInspector() {
         inspectorTitle.setBounds(0, 0, inspector.getWidth(), 30);
-        fxOn.setBounds(4, 40, 220, 26);
+        fxOn.setBounds(4, 34, 160, 26);
+        if (tonePanel) {
+            const bool crossover = node(selectedNode) && node(selectedNode)->type == NodeType::crossover;
+            const int footerHeight = crossover ? 79 : 28;
+            const int available = juce::jmax(0, inspector.getHeight() - 68 - footerHeight);
+            tonePanel->setBounds(0, 68, inspector.getWidth(), juce::jmin(available, ToneEffectPanel::preferredHeight));
+            inspectorInfo.setFont(juce::Font(juce::FontOptions(11.0f)));
+            inspectorInfo.setBounds(0, 68 + juce::jmin(available, ToneEffectPanel::preferredHeight) + 4, inspector.getWidth(), footerHeight - 4);
+            return;
+        }
         int y = 76;
         for (auto& field : fields) { field->setBounds(0, y, inspector.getWidth(), 34); y += 40; }
         nodeValue.setBounds(0, 40, inspector.getWidth(), 64);
         const int infoY = fields.empty() ? (nodeValue.getParentComponent() == &inspector ? 118 : 40) : y + 12;
         inspectorInfo.setBounds(0, infoY, inspector.getWidth(), juce::jmax(20, inspector.getHeight() - infoY));
     }
+    juce::String portSignature() const {
+        juce::String result;
+        for (const auto& n : graph.nodes) if (n.type == NodeType::crossover)
+            result += juce::String(n.id) + ":" + juce::String(outputPins(n)) + ":" + juce::String(int(effectEnabled(n))) + ";";
+        return result;
+    }
     void timerCallback() override {
-        if (draggingNode || connecting || inspectorDragging) return;
+        if (draggingNode || connecting || rewiringLink >= 0 || inspectorDragging) return;
         auto latest = owner.getRoutingGraph();
         const auto next = signature(latest);
         const auto savedLayout = owner.getRoutingLayout();
@@ -539,12 +709,19 @@ private:
             graph = std::move(latest); lastSignature = next;
             undoStates.clear(); redoStates.clear(); selectedLink = -1;
             loadLayout(savedLayout); lastLayoutSignature = layoutSignature;
-            ensurePositions(); validateDraft(); rebuildInspector();
+            ensurePositions(); error.clear(); showStatus(); rebuildInspector();
         }
-        if (const auto* n = node(selectedNode); n && n->type == NodeType::chorale && fxSlot(*n) >= 0) {
+        if (const auto* n = node(selectedNode); n && isEffect(n->type) && fxSlot(*n) >= 0) {
             const auto* on = owner.parameters.getRawParameterValue(fxParameterId(size_t(fxSlot(*n)), size_t(0)));
             fxOn.setToggleState(on ? on->load() > 0.5f : n->enabled, juce::dontSendNotification);
         }
+        const auto ports = portSignature();
+        if (ports != lastPortSignature) {
+            lastPortSignature = ports;
+            if (selectedLink >= 0 && !tonePanel) rebuildInspector();
+        }
+        updateButtons();
+        // Port counts and bypass come from host parameters, not serialized nodes.
         canvas.repaint();
     }
     Processor& owner;
@@ -553,12 +730,13 @@ private:
     float zoom = 0.72f;
     juce::Point<float> pan{20, 18}, pointer, dragStart, startPan, startNode;
     std::uint32_t selectedNode = 0, draggingNode = 0, connecting = 0;
-    int selectedLink = -1;
-    bool neon = false, valid = true, panning = false, inspectorDragging = false;
-    juce::String error, lastSignature, lastLayoutSignature;
+    int selectedLink = -1, rewiringLink = -1, connectingPin = 0;
+    bool rewiringSource = false;
+    bool neon = false, panning = false, inspectorDragging = false;
+    juce::String error, lastSignature, lastLayoutSignature, lastPortSignature;
     std::vector<EditState> undoStates, redoStates;
     EditState dragBefore;
-    juce::TextButton add, undo, redo, disconnect, remove, bypass, fit, zoomOut, zoomIn, fxOn;
+    juce::TextButton add, undo, redo, remove, bypass, fit, zoomOut, zoomIn, fxOn;
     juce::Component inspector;
     juce::Label inspectorTitle, inspectorInfo, status;
     detail::ParameterLookAndFeel nodeStyle;
@@ -566,6 +744,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> nodeValueLink;
 
     std::vector<std::unique_ptr<detail::ParameterSlider>> fields;
+    std::unique_ptr<ToneEffectPanel> tonePanel;
 };
 
 class RoutingWindow final : public juce::DocumentWindow {
@@ -575,10 +754,10 @@ public:
         setUsingNativeTitleBar(true);
         setContentNonOwned(&panel, true);
         setResizable(true, false);
-        setResizeLimits(900, 540, 1800, 1200);
+        setResizeLimits(1000, 740, 1800, 1200);
         setWantsKeyboardFocus(false);
         setMouseClickGrabsKeyboardFocus(false);
-        centreWithSize(1120, 700);
+        centreWithSize(1280, 800);
     }
     ~RoutingWindow() override { clearContentComponent(); }
     void closeButtonPressed() override { setVisible(false); }

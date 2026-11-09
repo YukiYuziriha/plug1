@@ -3,6 +3,8 @@
 #include "DoublerPanel.h"
 #include "RoutingPanel.h"
 #include "ProcessorRoutingState.h"
+#include "ToneProcessorTests.h"
+#include "ToneUiTests.h"
 
 #include <array>
 #include <cmath>
@@ -48,7 +50,7 @@ void advancedParameterContract() {
     Processor owner;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 139, "Expected 139 host parameters");
+    expect(owner.getParameters().size() == 874, "Expected 139 original + 735 appended tone host parameters");
     constexpr std::array<const char*, 46> originalIds{
         "level", "double", "human", "width", "formant", "levelOn", "doubleOn", "formantOn", "bypass", "outputGain",
         "advancedOn",
@@ -258,7 +260,7 @@ void legacyStateDefaults() {
         }
         child = next;
     }
-    expect(removed == 130, "Expected Output plus all appended PARAM children");
+    expect(removed == int(vocalstack::parameterIds.size() - 9), "Expected Output plus all appended PARAM children");
     for (const auto* type : {"RoutingGraph", "ActiveRoutingGraph", "RoutingLayout"})
         if (auto* graph = xml->getChildByName(type)) xml->removeChildElement(graph, true);
     xml->removeAttribute("advancedVisible");
@@ -619,7 +621,7 @@ void editorSkin(bool neon) {
             checkDrawerControls(owner, *child, advancedSliders, advancedButtons);
     expect(advancedSliders == 64 && advancedButtons == 9, "Eight complete stable voice cards missing");
     expectPassiveControls(*editor);
-    auto* advanced = findButton(*editor, "ADVANCED DOUBLER");
+    auto* advanced = findButton(*editor, "Voice stack");
     expect(advanced != nullptr, "Missing Advanced activation switch");
     advanced->setToggleState(false, juce::dontSendNotification);
     advanced->onClick();
@@ -660,7 +662,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 18> tests{{
+    const std::array<Test, 21> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -676,6 +678,9 @@ int main() {
         {"Musical pitch host bridge", musicalPitchParameters},
         {"Routing drafts, active fallback and layout state", routingStateRegression},
         {"Fixed FX automation slots", fxAutomationRegression},
+        {"Tone FX parameters, recall and rendered automation", vocalstack::toneProcessorTests::run},
+        {"Tone FX UI, EQ gestures and multiband cable endpoints", vocalstack::toneUiTests::run},
+        {"Voice 1 FX alters only Voice 1 with automatic merging", perVoiceFxSignalPath},
         {"Routing mouse edits, history, focus and both skins", routingUiRegression},
         {"Device editor and PNG", deviceEditor},
         {"Neon editor and PNG", neonEditor}
