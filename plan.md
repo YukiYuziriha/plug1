@@ -238,6 +238,30 @@ References:
 
 ## Scope boundary
 
-The first routing release includes **Chorale**. Follow-up modules are **waveshaper, XP-style Filter, and EQ+-style EQ**; their exact delivery order can be chosen after the routing milestone. Adding an effect should require its DSP module, parameter definition, and controls, not changes throughout the voice engine.
+The first routing release includes **Chorale**. Follow-up modules are **waveshaper, XP-style Filter, and EQ+-style EQ**; their exact delivery order can be chosen after the routing milestone. A switchable **2-/3-band routing split and recombine** is also requested, as specified below. Adding an effect should require its DSP module, parameter definition, and controls, not changes throughout the voice engine.
 
-Delay, reverb, multiband crossovers, and a Thermal-like multiband distortion system remain later possibilities, not committed scope in this plan.
+Delay, reverb, and a full Thermal-like multiband distortion/macro system remain later possibilities, not committed scope in this plan. The 2-/3-band audio routing feature below is committed planning scope, not merely a future possibility.
+
+## 9. Two-/three-band processing
+
+- Add a multiband routing facility with selectable **2-band** and **3-band** modes.
+- Two-band mode exposes **Low / High**, with one crossover frequency.
+- Three-band mode exposes **Low / Mid / High**, with two ordered crossover frequencies.
+- These are actual audio branches, not merely EQ bands: each band can feed its own independent FX chain, then return to a matching recombine node.
+- Example: clean lows, saturated mids, and Chorale on highs. FX modules remain unaware of which band or voice feeds them.
+- Permit the split on an individual voice, a grouped stack, or the whole signal through ordinary routing; no special per-location DSP implementations.
+- This is a focused band splitter/recombiner, not a full Thermal-style distortion environment or arbitrary modulation system.
+
+### Crossover and recombination contract
+
+- Choose and document a complementary crossover design, including slopes, phase response, and latency, before implementation. Do not assume arbitrary low/high-pass filters will recombine correctly.
+- Test two- and three-band recombination with all band chains neutral: document the expected magnitude, phase, and latency response. Flat magnitude does not automatically imply sample-identical dry audio.
+- **Band recombination is not voice stacking.** Do not apply count-based voice attenuation when recombining complementary frequency bands; that would incorrectly reduce the reconstructed signal.
+- Use a distinct, explicit band-recombine operation with the appropriate unity reconstruction gains. Preserve intentional per-band level changes.
+- Account for different FX latency on each band using the executor's latency handling; reject unsupported arrangements rather than silently misaligning branches.
+- Smooth crossover movement, handle frequency ordering and sample-rate limits, and switch 2-/3-band modes without unstable coefficients or abrupt clicks.
+- Define how inactive Mid-band wiring/settings are preserved when changing modes. Do not silently delete FX chains or repurpose stable automation identities.
+- Cover neutral reconstruction, isolated bands, crossover extremes/movement, mode changes, stereo/mono, irregular blocks, bypass/reset, silence, and independent per-band processing.
+- Validate the added CPU cost with eight voices and the existing bounded FX instance budget. The splitter/recombiner adds no permission for graph cycles or audio-thread rebuilding.
+
+**Scope note:** EQ covers ordinary tonal filtering. The separate XP-style Filter remains a requested character-filter follow-up, not a prerequisite for multiband splitting; prioritize EQ and useful routing before duplicating basic filtering functionality.
