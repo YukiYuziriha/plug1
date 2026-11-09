@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -149,12 +150,22 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
     const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
-    expect(params.count(instance.plugin) == 46, "Expected 46 host parameters");
+    expect(params.count(instance.plugin) == 139, "Expected 139 host parameters");
     for (uint32_t i = 0; i < params.count(instance.plugin); ++i) {
         clap_param_info_t info{};
         expect(params.get_info(instance.plugin, i, &info), "Host parameter metadata missing");
         expect((info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0, "Appended host parameter cannot be automated");
         if (i < names.size()) expect(names[i] == info.name, "Original parameter index/name changed");
+        if (i == 10) expect(std::string_view(info.name) == "Advanced Doubler", "Legacy Advanced index changed");
+        if (i >= 11 && i < 43) {
+            constexpr std::array<std::string_view, 8> fields{"Active", "Gain", "Pan", "Delay", "Detune", "Formant", "Depth", "Rate"};
+            const auto expected = "Voice " + std::to_string(1 + (i - 11) / 8) + " " + std::string(fields[(i - 11) % 8]);
+            expect(expected == info.name, "Original per-voice parameter index/name changed");
+        }
+        if (i >= 43 && i < 46) {
+            constexpr std::array<std::string_view, 3> choraleNames{"Chorale Active", "Chorale Mix", "Chorale Motion"};
+            expect(choraleNames[i - 43] == info.name, "Original Chorale index/name changed");
+        }
     }
     const auto advanced = getParameter(instance, "Advanced Doubler");
     const auto chorale = getParameter(instance, "Chorale Active");
@@ -178,7 +189,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
            "Output remote controls are mapped incorrectly");
     for (size_t i = 2; i < CLAP_REMOTE_CONTROLS_COUNT; ++i)
         expect(page.param_ids[i] == CLAP_INVALID_ID, "An unused Output remote slot is not empty");
-    std::cout << "46 automatable parameters and two remote pages verified; original ten indices unchanged\n";
+    std::cout << "139 automatable parameters and two remote pages verified; original 46 indices unchanged\n";
 }
 
 void checkState(const clap_plugin_factory_t& factory) {

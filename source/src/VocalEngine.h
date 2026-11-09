@@ -2,7 +2,8 @@
 
 #include "Metering.h"
 #include "DoublerSettings.h"
-#include "Chorale.h"
+#include "Routing.h"
+#include "HarmonyShifter.h"
 #include <signalsmith-stretch/signalsmith-stretch.h>
 #include <array>
 #include <cstdint>
@@ -22,22 +23,46 @@ struct Settings {
     bool bypass = false;
     float outputGainDb = 0.0f;
     bool advanced = false;
-    std::array<VoiceSettings, 4> voiceSettings = basicVoiceSettings(0.35f);
+    std::array<VoiceSettings, 8> voiceSettings = basicVoiceSettings(0.35f);
     bool choraleOn = false;
     float choraleMix = 0.25f, choraleMotion = 0.35f;
+    std::array<FxSettings, 16> fxSettings{};
+    // Opt-in processor bridge. Slot 0 always uses the legacy Chorale fields;
+    // slots 1..15 drive nodes 100..114 without touching graph/state publication.
+    bool fxAutomation = false;
+};
+
+// Audio-thread value snapshot. The processor must publish copies via its own
+// atomic bridge; UI/control threads must not read a running engine directly.
+// Pan includes Width; detune includes Human motion; delay excludes algorithmic
+// latency. gainDb is the smoothed user gain before internal level matching;
+// activity is measured post-envelope linear RMS, not a normalized UI brightness.
+struct VoiceSnapshot {
+    bool present = false, enabled = false;
+    float pan = 0, pitchSemitones = 0, detuneCents = 0, delayMs = 0;
+    float formantSemitones = 0, gainDb = 0, activity = 0;
 };
 
 class VocalEngine {
 public:
     static constexpr int defaultLatency = 1344;
+    // Quiescent audio required. prepare installs defaultGraph(); restore a saved
+    // graph with requestGraph AFTER prepare. reset preserves the active graph.
     void prepare(double sampleRate, int inputChannels, int outputChannels, const Settings&);
     void reset(const Settings&);
     void process(const float* const* input, float* const* output, int count,
                  const Settings&, bool hostBypass = false);
     int latency() const noexcept { return latencySamples; }
-    double tailSeconds() const noexcept { return (latencySamples + maxDoubleDelay) / rate + 0.040; }
+    // Conservative bound includes the maximum supported serial FX chain.
+    double tailSeconds() const noexcept {
+        return (latencySamples + maxDoubleDelay) / rate + RoutingExecutor::maximumTailSeconds;
+    }
     Meters meters() const noexcept;
     void resetMeters() noexcept;
+    // Off audio, one serialized control caller. prepare must have completed.
+    RoutingValidation requestGraph(const Graph& graph) { return routing.requestGraph(graph); }
+    void collectRetiredGraphs() { routing.collectRetired(); }
+    std::array<VoiceSnapshot, 8> voiceSnapshots() const noexcept { return snapshots; }
 
 private:
     static constexpr int quantum = 64;
@@ -62,6 +87,7 @@ private:
         void advance(float seconds, float human);
         float uniform();
         Stretch stretch;
+        HarmonyShifter harmony;
         DelayLine delay;
         LevelMatch levelMatch;
         Buffer rendered{};
@@ -70,11 +96,15 @@ private:
         float time = 0, pitch = 0, tone = 0, remaining = 0;
         VoiceSettings controls{};
         float amplitude = 0, presence = 0, delaySamples = 0;
+        float appliedPitch = 0, appliedDetune = 0, appliedFormant = 0, measuredEnergy = 0;
+        bool running = false, harmonyRunning = false;
+        float harmonyBlend = 0;
+        int harmonyWarmup = 0;
     };
 
     struct Motion {
         float level, doubles, human, width, formant, formantMix, bypass;
-                float advanced;
+        float advanced;
         double outputGainDb;
     };
 
@@ -97,8 +127,10 @@ private:
     bool active = false;
     LevelMatch leadMatch;
     Stretch lead{421};
-    std::array<Voice, 4> voices{Voice{1471}, Voice{5417}, Voice{7919}, Voice{104729}};
-    Chorale chorale;
+    std::array<Voice, 8> voices{Voice{1471}, Voice{5417}, Voice{7919}, Voice{104729},
+                              Voice{130363}, Voice{155921}, Voice{196613}, Voice{262147}};
+    RoutingExecutor routing;
+    std::array<VoiceSnapshot, 8> snapshots{};
     std::array<DelayLine, 2> dryDelay, levelDelay;
     std::array<Buffer, 2> leadInput{}, leadRendered{};
     Buffer monoInput{}, articulationInput{};

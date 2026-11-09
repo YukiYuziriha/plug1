@@ -1,4 +1,4 @@
-# Vocal Stack 1.2.0
+# Vocal Stack 1.3.0
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
@@ -29,8 +29,8 @@ and [VST3](https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical%2BDo
 | Formant | 0.0 st | Moves vocal resonances at the original lead pitch |
 | Output | 0.0 dB | Final output trim, −24 to +12 dB; double-click for unity |
 
-Bitwig's **Plug-in Parameters** button exposes all 46 parameters, including the
-advanced voice controls and Chorale, for automation. The original **Vocal Stack**
+Bitwig's **Plug-in Parameters** button exposes all 139 parameters, including eight
+voices, musical Pitch, presence, and 16 fixed Chorale automation slots. The original **Vocal Stack**
 CLAP Remote Controls page retains its five knobs and three module switches. A
 second **Output** page supplies output trim and bypass. Original parameter IDs,
 indices and remote assignments are unchanged; new parameters are appended.
@@ -87,7 +87,12 @@ Use Output for manual trim. Other modules can still change final output level.
 
 **Show Advanced / Hide Advanced** only changes editor size, never sound. The
 separate **ADVANCED DOUBLER** switch selects the saved custom stack instead of
-Basic's two voices. Four independent voice cards provide:
+Basic's two voices. Fresh configurations show two voice cards and **+ Add voice**.
+Add up to eight generated voices (the lead is separate), in a horizontally scrollable
+card area. **On** mutes without removing the card; **Remove** hides/disconnects an
+added slot without renumbering the others or erasing its settings. Re-adding uses
+the first absent slot and its retained settings. The first two cards cannot be
+removed through the UI. Independent voice controls provide:
 
 ![Advanced editor with illustrative meter readings](VocalStack-Advanced.png)
 
@@ -97,8 +102,9 @@ Basic's two voices. Four independent voice cards provide:
 | Gain | −60 to +12 dB | Relative voice gain, not erased by automatic normalization |
 | Pan | −1 to +1 | Left to right; shared Width scales the spread |
 | Delay | 0–100 ms | Base timing offset; large changes slew rather than jump |
-| Detune | −100 to +100 ct | Base pitch offset in cents |
-| Formant | −12 to +12 st | Independent voice resonance offset |
+| Pitch | −36 to +36 st | Actual musical transposition; default 0 st, fractional intervals supported |
+| Fine detune | −100 to +100 ct | Separate subtle static pitch offset |
+| Formant | −24 to +24 st | Independent voice resonance offset |
 | Depth | 0–2× | Scale this voice's timing, pitch and formant motion |
 | Rate | 0–8 Hz | Approximate irregular motion rate, not a repeating chorus LFO |
 
@@ -113,20 +119,80 @@ the lead preserves the input stereo image.
 First UI activation initializes voices from current Human unless you have already
 edited or restored custom voices. Later toggles preserve custom edits. Host
 automation of Advanced uses stored voice settings without rewriting parameters.
-**Reset to Basic** restores current Human-derived two-voice settings and disables
-voices 3/4, without changing activation, Mix, Width, Leveler, Chorale or Output.
+**Reset to Basic** restores current Human-derived two-voice settings and removes
+extra cards/connections, without changing activation, Mix, Width, Leveler, Chorale
+or Output. Stable routing source identities and dormant FX settings remain.
 With matching settings and shared Formant enabled, Basic and Advanced produce the
 same audio. Disabling Advanced uses Basic processing and retains your custom stack.
 
-Three/four enabled voices receive smoothed count-based power compensation relative
-to the two-voice reference. It does not normalize away individual Gain settings,
-and cannot remove signal-dependent phase interactions. Enable any combination of
-voices; there is no second voice-count selector fighting the On switches.
+The default wet Sum compensates additional active voices relative to the original
+two-voice power budget. Explicit Sum nodes use a one-source budget by default.
+Source-lineage compensation also accounts for duplicated branches; intentional
+Gain and Pan settings are not normalized away. This is not a loudness rider or
+limiter and cannot eliminate correlation/phase-dependent loudness differences.
+
+The main Formant knob now spans **−24 to +24 st**. Shared and independent voice
+Formant add together, allowing **±48 st** before additional Human motion; there
+is no ±24 combined cap. Pitch does not perform scale detection or pitch correction.
+Large pitch/formant shifts are creative processing, with source-dependent artifacts.
+Signed sliders fill from zero; Gain fills from its 0 dB marker, not the midpoint
+of its asymmetric range.
+
+### Voice Motion
+
+The monitor shows measured DSP snapshots: effective pan horizontally and live fine
+detune (±150 ct) vertically. Musical Pitch is shown separately in the selected
+voice readout so octave intervals do not obscure fine movement. Dot numbers/colors
+are stable, brightness follows measured voice activity, and trails follow actual
+modulation. Click a dot to reveal its card; click a card to select its dot. The
+readout includes extra delay (not algorithmic latency), effective formant and gain.
+Until audio is processed, no live voice measurements are available.
+
+### Optional FX routing
+
+Click **Routing...** to open the independent native node canvas. Drag output pins
+to input pins, drag nodes to arrange them, and drag blank space to pan. Ctrl+wheel
+or the +/- buttons zoom; **Fit** frames the patch. Select a cable and press
+**Disconnect**, or select a node to inspect/delete/bypass it. Toolbar **Undo/Redo**
+restores graph edits; ordinary controls leave transport shortcuts to the DAW.
+
+Available nodes: Lead, Voice sources, Chorale, Compensated Sum, Dry/Wet Mix, Output.
+One Chorale node is one independent machine; routing chooses whether it processes
+one voice, a group, or the whole result. Use explicit Sum nodes for multiple inputs;
+Mix has separate Dry and Wet pins. The default path is:
+
+```text
+Lead ---------------------> Main Mix Dry
+Voices -> Compensated Sum -> Main Mix Wet
+Main Mix -> Chorale -> Output trim / meters
+```
+
+The main Mix knob controls the main Mix node; other Mix nodes have local blends.
+DOUBLE off selects the dry input of that main node, not an unconditional lead
+shortcut through custom routing. A custom graph may omit it entirely. Global
+bypass always returns latency-aligned original input, ignoring graph and trim.
+
+At most 16 Chorale instances are supported: the original main slot plus 15 fixed
+additional automation slots. FX inspector controls are host parameters; topology
+and positions are saved separately, not automated. An incomplete/invalid sketch
+is retained visibly, with a diagnostic, while the **last valid graph keeps playing**.
+Reconnect required inputs to apply it. Cycles, occupied input pins, invalid links,
+and unsupported additional branch latency are rejected. Per-voice Delay is intentional
+timing, not latency to be compensated away.
+
+Graph plans are validated/prepared off audio and handed off lock-free. Unchanged
+FX identities retain their history. A 10 ms output-offset ramp de-clicks topology
+splices without running shared processors twice; this is not a spectral old/new
+crossfade. Node limits are 48 nodes and 128 links. Reusing a deleted FX automation
+slot intentionally reuses its host automation identity.
+
+EQ, multiband, XP-style Filter and waveshaper are **not included in 1.3.0**; see
+[the staged plan](plan.md) for those follow-ups.
 
 ### Chorale
 
-A separate three-tap stereo chorus follows the doubler and precedes Output and
-global bypass. **CHORALE** enables it (default off), **Mix** blends the delayed
+An independent three-tap stereo chorus follows the doubler and precedes Output and
+global bypass in the default graph; routing can place instances elsewhere. **CHORALE** enables it (default off), **Mix** blends the delayed
 ensemble with the incoming stack, and **Motion** increases coordinated modulation
 depth and speed. This is deliberately smoother/more synthetic than Human's
 independent irregular drift. It has no feedback or extra reported dry-path latency.
@@ -134,6 +200,18 @@ Controls and switching are smoothed; delay history stays warm while disabled.
 Wet level and peaks vary with material (coherent taps can add up to about +3.5 dB);
 leave headroom and use the output meters. Inspiration is coordinated ensemble
 chorus behavior, not copied proprietary DSP, assets or presets.
+
+### 1.3.0 compatibility note
+
+The original 46 parameter IDs and indices are preserved; new parameters append.
+Existing four-voice sessions retain all four cards, including muted ones. Missing
+Pitch defaults to 0 st; legacy fine-detune values remain cents. The default Basic
+path is regression-tested against the pinned 1.2.0 engine, including latency.
+
+**Formant range expansion changes normalized host-automation mapping** for main
+and per-voice Formant. Raw saved semitone values are retained, but previously
+recorded normalized automation may recall differently. Save important renders and
+check automated Formant tracks before replacing an older version.
 
 ### 1.2.0 compatibility note
 
@@ -179,8 +257,11 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The first configure fetches pinned dependencies. Four test suites cover DSP,
-Chorale, CLAP hosting, and editor/state. The plugins appear under
+The first configure fetches pinned dependencies. Nine test suites cover DSP,
+Chorale, routing, voices, FX automation, pitch spectra, stacked formant spectra,
+CLAP hosting, and editor/state. Optionally configure with
+`-DVOCALSTACK_TEST_BASELINE=ON` to add a tenth comparison suite; this requires
+Python and the pinned pre-routing revision in local Git history. The plugins appear under
 `build/VocalStack_artefacts/Release/`. To build just the portable DSP tests,
 configure with `-DVOCALSTACK_BUILD_PLUGIN=OFF`.
 
@@ -195,6 +276,12 @@ and rejects invalid binary XML state.
 - `VocalEngine`: JUCE-independent signal path and smoothed controls.
 - `DoublerSettings.h`: shared Basic/Advanced voice configuration contract.
 - `Chorale.h`: isolated, allocation-free-in-processing chorus module.
+- `HarmonyShifter.h`: fixed-latency STFT musical pitch/formant processor.
+- `Routing.h`: bounded DAG model, validation, explicit mixers, independent FX
+  instances, execution-plan publication and off-audio reclamation.
+- `ProcessorRoutingState.h`: graph serialization and fixed FX automation mapping.
+- `VoiceBridge.h` / `VoiceMonitor.h`: atomic snapshots and snapshot-only motion UI.
+- `RoutingPanel.h`: native node canvas, inspectors, layout and edit history.
 - `DoublerPanel.h`: dedicated voice-card editor and Chorale controls.
 - `Metering.h`: reusable per-channel RMS, sample-peak and hold detectors.
 - `MeterBridge.h`: lock-free, best-effort audio-to-UI display snapshots.
@@ -206,6 +293,15 @@ Keep future effects as small DSP modules called by the engine, rather than
 putting signal processing in the editor. See `AGENTS.md` for project conventions.
 
 ## Verification
+
+- 1.3.0 Release CLAP/VST3 built with MSVC 2026. All ten suites passed before
+  the final UI/state-bridge cleanup. On the final build, the other nine suites
+  passed again; the unchanged long DSP suite rerun was interrupted and not repeated.
+- Packaged and installed CLAP smoke tests passed; both installed formats were
+  byte-compared against the refreshed packages. Both skins and graph interactions
+  have automated UI coverage. Actual listening/transport checks in Bitwig remain
+  user validation.
+
 
 - Version 1.1.1 Windows x64 binaries were built natively with MSVC 2026 and
   Ninja. All three CTest suites (DSP, CLAP host, editor/state) passed.

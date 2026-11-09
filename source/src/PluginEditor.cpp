@@ -8,7 +8,7 @@ Font font(float height, bool bold = false) {
     return Font(FontOptions(height, bold ? Font::bold : Font::plain));
 }
 
-constexpr int editorWidth = 940, editorHeight = 430, drawerHeight = 330;
+constexpr int editorWidth = 940, editorHeight = 430, drawerHeight = 442;
 const std::array<Rectangle<int>, 4> controlPlates{{
     {18, 76, 104, 214}, {132, 76, 306, 214},
     {448, 76, 104, 214}, {562, 76, 104, 214}
@@ -24,7 +24,7 @@ constexpr std::array<const char*, knobParameterIds.size()> knobTips{
     "True Mix: 0% processed lead only; 100% generated doubles only; blend between them",
     "How far the doubles vary in timing, pitch and tone",
     "How widely the generated takes are panned",
-    "Move the vocal resonances while keeping the lead pitch. Double-click for 0 st",
+    "Shared formant -24 to +24 st, added to each voice formant. Double-click for 0 st",
     "Final output trim: -24 to +12 dB. Double-click for unity (0 dB). Separate from leveler correction"
 };
 constexpr std::array<const char*, switchParameterIds.size()> switchNames{"LEVEL", "DOUBLE", "FORMANT", "BYPASS"};
@@ -104,6 +104,15 @@ Editor::Editor(Processor& processor)
     drawer.setTooltip("Show or hide voice controls without changing Advanced Doubler activation or sound");
     drawer.onClick = [this] { owner.setAdvancedVisible(!owner.isAdvancedVisible()); syncDrawer(); };
     addAndMakeVisible(drawer);
+    routing.setButtonText("Routing...");
+    routing.setTooltip("Open the native audio graph and independent FX inspector");
+    routing.onClick = [this] {
+        if (!routingWindow) routingWindow = std::make_unique<RoutingWindow>(owner);
+        routingWindow->setNeon(style.flash);
+        routingWindow->setVisible(true);
+        routingWindow->toFront(false);
+    };
+    addAndMakeVisible(routing);
     addChildComponent(advancedPanel);
     addAndMakeVisible(choralePanel);
     addAndMakeVisible(meterPanel);
@@ -114,13 +123,17 @@ Editor::Editor(Processor& processor)
     startTimerHz(30);
 }
 
-Editor::~Editor() { setLookAndFeel(nullptr); }
+Editor::~Editor() {
+    routingWindow.reset();
+    setLookAndFeel(nullptr);
+}
 
 void Editor::applyTheme() {
     style.flash = owner.isFlash();
     meterPanel.setNeon(style.flash);
     advancedPanel.setNeon(style.flash);
     choralePanel.setNeon(style.flash);
+        if (routingWindow) routingWindow->setNeon(style.flash);
     const auto foreground = style.flash ? rgb(nightText) : rgb(0xe4e4df);
     const auto muted = style.flash ? rgb(nightMuted) : rgb(0xaeb1a9);
     theme.setButtonText(style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
@@ -135,7 +148,7 @@ void Editor::applyTheme() {
         knob.setColour(Slider::textBoxHighlightColourId, rgb(style.flash ? 0x34496a : 0x4b5175));
         knob.repaint();
     }
-    for (auto* button : {&theme, &reset, &copy, &paste, &drawer}) {
+    for (auto* button : {&theme, &reset, &copy, &paste, &drawer, &routing}) {
         button->setColour(TextButton::textColourOffId, foreground);
         button->repaint();
     }
@@ -165,7 +178,8 @@ void Editor::resized() {
     copy.setBounds(100, 306, 105, 23);
     paste.setBounds(215, 306, 64, 23);
     meterPanel.setBounds(678, 76, 244, 246);
-    drawer.setBounds(300, 306, 156, 23);
+    drawer.setBounds(300, 306, 144, 23);
+        routing.setBounds(450, 306, 88, 23);
     choralePanel.setBounds(18, 344, 904, 64);
     advancedPanel.setBounds(18, editorHeight, 904, drawerHeight - 12);
 }
@@ -224,7 +238,7 @@ void Editor::drawDevice(Graphics& g) {
     for (size_t i = 0; i < controlPlates.size(); ++i)
         text(g, captions[i], {controlPlates[i].getX(), 269, controlPlates[i].getWidth(), 15},
              rgb(0xaeb1a9), 9.5f, false, Justification::centred);
-    text(g, "TRUE MIX", {474, 306, 192, 23},
+    text(g, "TRUE MIX", {542, 306, 124, 23},
          rgb(0x9b9f96), 10.0f, true, Justification::centredRight);
 }
 
@@ -271,7 +285,7 @@ void Editor::drawFlash(Graphics& g) {
         g.drawVerticalLine(x, 121.0f, 260.0f);
     g.drawHorizontalLine(298, 18.0f, 666.0f);
 
-    text(g, "NIGHT SIGNAL / TRUE MIX", {474, 306, 192, 23},
+    text(g, "TRUE MIX", {542, 306, 124, 23},
          rgb(nightMuted), 11.0f, true, Justification::centredRight);
 }
 
@@ -296,6 +310,11 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
                             std::min(angle, origin), std::max(angle, origin), true);
         g.setColour(accent);
         g.strokePath(value, PathStrokeType(3.2f, PathStrokeType::curved, PathStrokeType::rounded));
+    }
+    if (name == "Formant" || name == "Output") {
+        g.setColour(accent.withAlpha(0.8f));
+        g.drawLine({centre.getPointOnCircumference(radius + 3.0f, origin),
+                    centre.getPointOnCircumference(radius + 7.0f, origin)}, 1.2f);
     }
     const float inner = radius - 5.3f;
     const auto face = Rectangle<float>(inner * 2, inner * 2).withCentre(centre);

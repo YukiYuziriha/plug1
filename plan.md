@@ -2,7 +2,22 @@
 
 ## Status and scope
 
-This document records the staged implementation plan and the subsequent control-design decisions. Creating this plan does not begin implementation of the plugin changes.
+This document records the staged implementation plan and the subsequent control-design decisions.
+
+### Core implementation checkpoint: 1.3.0
+
+The user authorized the core through nodes and Voice Motion, excluding follow-up effects. This checkpoint implements eight stable voice slots, musical Pitch/Fine Detune, stacked formants, neutral-origin controls, routing/execution, independent Chorale slots, draft/active graph persistence, native node editing and snapshots.
+
+Implementation choices and limits:
+
+- Bounded JUCE-independent executor rather than AudioProcessorGraph; explicit pins/mixers and off-audio reclamation are tested directly. A separate AudioProcessorGraph prototype was not added.
+- All current routing FX add zero dry-path latency. Nonzero additional branch latency is rejected; general latency compensation awaits a module that needs it.
+- Topology switching uses a 10 ms output-offset de-click ramp, not simultaneous old/new graph rendering or a spectral crossfade. Retained FX histories are advanced only once.
+- Original 46 host IDs/indices remain, with 139 total parameters including fixed FX slots. Wider Formant ranges change normalized host automation mapping; raw saved semitone values are retained.
+- Voice Motion plots fine detune vertically and shows musical Pitch separately in the readout.
+- Nine core suites plus an optional pinned-history baseline comparison cover automated validation. Listening and transport behavior in the user's Bitwig session remain manual validation.
+
+The remaining sections retain the design requirements. EQ, XP-style Filter, multiband and waveshaper are follow-up work, not included in the core checkpoint.
 
 Keep Basic mode quick to use. Advanced adds **up to eight generated voices, a live voice monitor, and an optional FX-routing editor**, backed by separate processing modules.
 

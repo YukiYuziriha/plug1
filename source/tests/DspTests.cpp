@@ -778,7 +778,13 @@ void voiceCountCompensation() {
     auto settings = neutral();
     settings.advanced = true;
     settings.doubles = 1;
-    for (auto& voice : settings.voiceSettings) voice.enabled = true;
+    for (auto& voice : settings.voiceSettings) {
+        voice.present = true;
+        voice.enabled = true;
+    }
+    const auto activeCount = std::count_if(settings.voiceSettings.begin(), settings.voiceSettings.end(),
+        [](const auto& voice) { return voice.present && voice.enabled; });
+    const float compensation = std::sqrt(2.0f / static_cast<float>(activeCount));
     const auto stack = render(input, nullptr, rate, 2, settings);
     Track sumLeft(input.size()), sumRight(input.size());
     for (size_t voice = 0; voice < settings.voiceSettings.size(); ++voice) {
@@ -792,9 +798,9 @@ void voiceCountCompensation() {
         }
     }
     for (size_t i = 0; i < input.size(); ++i)
-        expect(std::abs(stack.left[i] - sumLeft[i] * std::sqrt(0.5f)) < 1.0e-6f &&
-               std::abs(stack.right[i] - sumRight[i] * std::sqrt(0.5f)) < 1.0e-6f,
-               "Four voices did not share the two-voice power budget");
+        expect(std::abs(stack.left[i] - sumLeft[i] * compensation) < 1.0e-6f &&
+               std::abs(stack.right[i] - sumRight[i] * compensation) < 1.0e-6f,
+               "Present enabled voices did not share the two-voice power budget");
 }
 
 void mixEndpoints() {
@@ -867,8 +873,9 @@ void advancedVoices() {
     settings.doubles = settings.width = 1;
     settings.formantOn = false;
     for (auto& voice : settings.voiceSettings)
-        voice = {false, 0, -1, 10, 0, 0, 0, 1};
+        voice = {false, 0, -1, 10, 0, 0, 0, 1, 0, true};
     for (size_t index = 0; index < settings.voiceSettings.size(); ++index) {
+        settings.voiceSettings[index].present = true;
         settings.voiceSettings[index].enabled = true;
         const auto isolated = render(input, nullptr, rate, 2, settings);
         expect(rms(isolated.left, rate, 3 * rate) > 0.01f && rms(isolated.right, 0, 3 * rate) == 0,
@@ -981,7 +988,7 @@ void advancedAutomation() {
                         for (size_t v = 0; v < settings.voiceSettings.size(); ++v)
                             settings.voiceSettings[v] = {true, -6, v % 2 ? 1.0f : -1.0f,
                                 v % 2 ? 0.0f : 100.0f, v % 2 ? -100.0f : 100.0f,
-                                v % 2 ? -7.0f : 7.0f, 2, 8};
+                                v % 2 ? -7.0f : 7.0f, 2, 8, 0, true};
                     } else if (event == 1) {
                         settings.width = 0;
                         settings.human = 1;

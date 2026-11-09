@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 
 namespace vocalstack {
 namespace {
@@ -17,10 +19,22 @@ VoiceSettings bounded(VoiceSettings v) {
     v.pan = limit(v.pan, -1, 1, 0);
     v.delayMs = limit(v.delayMs, 0, 100, 20);
     v.detuneCents = limit(v.detuneCents, -100, 100, 0);
-    v.formantSemitones = limit(v.formantSemitones, -12, 12, 0);
+    v.formantSemitones = limit(v.formantSemitones, -24, 24, 0);
+    v.pitchSemitones = limit(v.pitchSemitones, -36, 36, 0);
     v.depth = limit(v.depth, 0, 2, 1);
     v.rateHz = limit(v.rateHz, 0, 8, 1);
     return v;
+}
+
+Settings boundedSettings(Settings s) {
+    const auto unit = [](float x, float fallback) {
+        return std::isfinite(x) ? std::clamp(x, 0.0f, 1.0f) : fallback;
+    };
+    s.level = unit(s.level, 0.5f); s.doubles = unit(s.doubles, 0.35f);
+    s.human = unit(s.human, 0.35f); s.width = unit(s.width, 0.65f);
+    s.formant = std::isfinite(s.formant) ? std::clamp(s.formant, -24.0f, 24.0f) : 0;
+    s.outputGainDb = std::isfinite(s.outputGainDb) ? s.outputGainDb : 0;
+    return s;
 }
 
 float sampleAt(const float* input, int index) {
@@ -81,12 +95,16 @@ float VocalEngine::coefficient(double seconds) const {
 }
 
 void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChannels, const Settings& settings) {
+    if (!std::isfinite(sampleRate) || sampleRate <= 0 || sampleRate > std::numeric_limits<int>::max()
+        || inputChannels < 1 || inputChannels > 2 || outputChannels < 1 || outputChannels > 2)
+        throw std::invalid_argument("invalid engine sample rate or channel layout");
+    // Use the same sample latency at both standard session rates.
+    const auto window = sampleRate == 44100.0 || sampleRate == 48000.0 ? defaultLatency
+        : static_cast<int>(std::lround(sampleRate * defaultLatency / 48000.0));
+    if (window < 127) throw std::invalid_argument("sample rate is too low for the harmony window");
     rate = sampleRate;
     inChannels = inputChannels;
     outChannels = outputChannels;
-    // Use the same sample latency at both standard session rates.
-    const auto window = rate == 44100.0 || rate == 48000.0 ? defaultLatency
-        : static_cast<int>(std::lround(rate * defaultLatency / 48000.0));
     const auto hop = static_cast<int>(std::lround(rate * 0.010));
     lead.configure(inChannels, window, hop);
     for (auto& voice : voices)
@@ -94,8 +112,10 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     latencySamples = lead.inputLatency() + lead.outputLatency();
     // 100 ms user delay plus up to 14 ms of Human motion.
     maxDoubleDelay = static_cast<int>(std::ceil(rate * 0.115));
-    for (auto& voice : voices)
+    for (auto& voice : voices) {
         voice.delay.prepare(maxDoubleDelay + 2);
+        voice.harmony.prepare(rate, latencySamples);
+    }
     for (auto* delays : {&dryDelay, &levelDelay})
         for (auto& delay : *delays)
             delay.prepare(latencySamples + 2);
@@ -117,19 +137,27 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     bodyStep = coefficient(0.045);
     articulationStep = coefficient(0.009);
     longStep = coefficient(3.0);
-    chorale.prepare(rate);
+    routing.prepare(rate);
     reset(settings);
 }
 
-void VocalEngine::reset(const Settings& settings) {
+void VocalEngine::reset(const Settings& requested) {
+    const auto settings = boundedSettings(requested);
     lead.reset();
     lead.setFormantBase(static_cast<float>(150.0 / rate));
     const auto initialVoices = settings.advanced ? settings.voiceSettings : basicVoiceSettings(settings.human);
     for (size_t index = 0; index < voices.size(); ++index) {
         auto& voice = voices[index];
         voice.controls = bounded(initialVoices[index]);
-        voice.presence = voice.controls.enabled ? 1.0f : 0.0f;
-                voice.amplitude = voice.presence * dbToGain(voice.controls.gainDb);
+        voice.presence = voice.controls.present && voice.controls.enabled ? 1.0f : 0.0f;
+        voice.running = voice.controls.present;
+        voice.harmony.reset();
+        voice.harmonyRunning = voice.controls.pitchSemitones != 0;
+        voice.harmonyBlend = voice.harmonyRunning ? 1.0f : 0.0f;
+        voice.harmonyWarmup = 0;
+        voice.measuredEnergy = 0;
+        voice.appliedPitch = voice.appliedDetune = voice.appliedFormant = 0;
+        voice.amplitude = voice.presence * dbToGain(voice.controls.gainDb);
         voice.delaySamples = static_cast<float>(rate * 0.001) * voice.controls.delayMs;
         voice.stretch.reset();
         voice.stretch.setFormantBase(static_cast<float>(150.0 / rate));
@@ -142,7 +170,8 @@ void VocalEngine::reset(const Settings& settings) {
         for (auto& delay : *delays)
             delay.clear();
     articulationDelay.clear();
-    chorale.reset();
+    routing.reset();
+    snapshots = {};
     longInputEnergy = longOutputEnergy = longWeight = 0;
     normalizationDb = 0;
     leadMatch = {};
@@ -182,7 +211,7 @@ void VocalEngine::resetMeters() noexcept {
 }
 
 void VocalEngine::updateControls(const Settings& settings, bool hostBypass) {
-    targets = settings;
+    targets = boundedSettings(settings);
     targets.bypass = targets.bypass || hostBypass;
 }
 
@@ -258,13 +287,21 @@ void VocalEngine::process(const float* const* input, float* const* output, int c
                 auto& voice = voices[index];
                 const auto& v = voice.controls;
                 voice.advance(seconds * v.rateHz, controls.human);
-                const float pitch = v.detuneCents * 0.01f
+                const float finePitch = v.detuneCents * 0.01f
                     + voice.pitch * 0.245f * controls.human * v.depth;
+                const float detune = finePitch * 100.0f;
+                const float pitch = v.pitchSemitones + finePitch;
                 const float color = v.formantSemitones
                     + voice.tone * 0.36f * controls.human * v.depth;
-                voice.stretch.setTransposeSemitones(pitch);
+                // Preserve the original doubler at musical zero. Its predictive
+                // peak mapping is not accurate enough for three-octave harmonies.
+                voice.stretch.setTransposeSemitones(finePitch);
                 const float independent = controls.formantMix + controls.advanced * (1.0f - controls.formantMix);
-                                voice.stretch.setFormantSemitones(controls.formantMix * controls.formant + independent * color, true);
+                voice.appliedPitch = v.pitchSemitones;
+                voice.appliedDetune = detune;
+                voice.appliedFormant = controls.formantMix * controls.formant + independent * color;
+                voice.stretch.setFormantSemitones(voice.appliedFormant, true);
+                voice.harmony.setSemitones(pitch, voice.appliedFormant);
             }
             untilUpdate = quantum;
         }
@@ -304,18 +341,61 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
     float* leadOut[] = {leadRendered[0].data(), leadRendered[1].data()};
     lead.process(leadIn, count, leadOut, count);
     const float* voiceIn[] = {monoInput.data()};
-    for (auto& voice : voices) {
+    const auto chunkTargets = targets.advanced ? targets.voiceSettings : basicVoiceSettings(controls.human);
+    for (size_t index = 0; index < voices.size(); ++index) {
+        auto& voice = voices[index];
+        if (!chunkTargets[index].present && voice.amplitude == 0 && voice.presence < 0.000001f) {
+            voice.running = false;
+            voice.rendered.fill(0);
+            continue;
+        }
+        if (!voice.running) {
+            // reset() clears preallocated storage only; never reconfigure on audio.
+            voice.stretch.reset();
+            voice.stretch.setFormantBase(static_cast<float>(150.0 / rate));
+            voice.delay.clear();
+            voice.levelMatch = {};
+            voice.harmony.reset();
+            voice.harmonyRunning = false;
+            voice.harmonyBlend = 0;
+            voice.running = true;
+        }
         float* voiceOut[] = {voice.rendered.data()};
         voice.stretch.process(voiceIn, count, voiceOut, count);
+        const bool musical = std::abs(voice.controls.pitchSemitones) > 0.00001f;
+        if (musical && !voice.harmonyRunning) {
+            voice.harmony.reset();
+            voice.harmonyRunning = true;
+            voice.harmonyWarmup = latencySamples;
+        }
+        if (voice.harmonyRunning) {
+            voice.harmony.setSemitones(voice.appliedPitch + voice.appliedDetune * 0.01f,
+                                      voice.appliedFormant);
+            for (int i = 0; i < count; ++i) {
+                const float shifted = voice.harmony.process(monoInput[i]);
+                if (voice.harmonyWarmup) --voice.harmonyWarmup;
+                else voice.harmonyBlend = mix(voice.harmonyBlend, musical ? 1.0f : 0.0f, parameterStep);
+                if (std::abs(voice.harmonyBlend - (musical ? 1.0f : 0.0f)) < 0.00001f)
+                    voice.harmonyBlend = musical ? 1.0f : 0.0f;
+                voice.rendered[i] = mix(voice.rendered[i], shifted, voice.harmonyBlend);
+            }
+            if (!musical && voice.harmonyBlend == 0) voice.harmonyRunning = false;
+        }
     }
 
+    RoutingControls routingControls;
+    routingControls.choraleOn = targets.choraleOn;
+    routingControls.choraleMix = targets.choraleMix;
+    routingControls.choraleMotion = targets.choraleMotion;
+    routingControls.fxSettings = targets.fxSettings;
+    routingControls.fxAutomation = targets.fxAutomation;
     for (int i = 0; i < count; ++i) {
         const float mixTarget = targets.doubleOn ? std::clamp(targets.doubles, 0.0f, 1.0f) : 0.0f;
         controls.doubles = mix(controls.doubles, mixTarget, parameterStep);
         if (std::abs(controls.doubles - mixTarget) < 0.00001f)
             controls.doubles = mixTarget;
         controls.advanced = mix(controls.advanced, targets.advanced ? 1.0f : 0.0f, parameterStep);
-                controls.human = mix(controls.human, targets.human, parameterStep);
+        controls.human = mix(controls.human, targets.human, parameterStep);
         controls.width = mix(controls.width, targets.width, parameterStep);
         controls.formant = mix(controls.formant, targets.formant, parameterStep);
         controls.formantMix = mix(controls.formantMix, targets.formantOn ? 1.0f : 0.0f, parameterStep);
@@ -342,7 +422,8 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         const float referenceMono = 0.5f * (referenceLeft + referenceRight);
         const float timeStep = (6.0f + 5.0f * controls.human) / static_cast<float>(rate);
         const auto voiceTargets = targets.advanced ? targets.voiceSettings : basicVoiceSettings(controls.human);
-        float doublesLeft = 0, doublesRight = 0, enabledVoices = 0;
+        RoutingSources sources;
+        sources.lead = {leadLeft, leadRight};
         for (size_t index = 0; index < voices.size(); ++index) {
             auto& voice = voices[index];
             const auto target = bounded(voiceTargets[index]);
@@ -350,11 +431,12 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
             for (auto member : {&VoiceSettings::gainDb, &VoiceSettings::pan,
                                 &VoiceSettings::delayMs, &VoiceSettings::detuneCents,
                                 &VoiceSettings::formantSemitones, &VoiceSettings::depth,
-                                &VoiceSettings::rateHz})
+                                &VoiceSettings::rateHz, &VoiceSettings::pitchSemitones})
                 v.*member = mix(v.*member, target.*member, parameterStep);
-            voice.presence = mix(voice.presence, target.enabled ? 1.0f : 0.0f, parameterStep);
-                        enabledVoices += voice.presence;
-                        const float amplitudeTarget = target.enabled ? dbToGain(v.gainDb) : 0.0f;
+            const bool sounding = target.present && target.enabled;
+            v.present = target.present; v.enabled = target.enabled;
+            voice.presence = mix(voice.presence, sounding ? 1.0f : 0.0f, parameterStep);
+            const float amplitudeTarget = sounding ? dbToGain(v.gainDb) : 0.0f;
             voice.amplitude = mix(voice.amplitude, amplitudeTarget, parameterStep);
             if (std::abs(voice.amplitude - amplitudeTarget) < 0.000001f)
                 voice.amplitude = amplitudeTarget;
@@ -376,22 +458,17 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
             // Linear pan preserves each voice's contribution in mono. The
             // fixed scale gives two hard-panned decorrelated voices unity
             // stereo power; user voice gains are never normalized away.
-            doublesLeft += sample * (1.0f - pan) * 0.5f;
-            doublesRight += sample * (1.0f + pan) * 0.5f;
+            sources.voices[index] = {sample * (1.0f - pan) * 0.5f, sample * (1.0f + pan) * 0.5f};
+            sources.activity[index] = voice.presence;
+            voice.measuredEnergy = mix(voice.measuredEnergy, sample * sample, activityStep);
+            snapshots[index] = {target.present, target.enabled, pan, voice.appliedPitch,
+                voice.appliedDetune, delaySamples * static_cast<float>(1000.0 / rate),
+                voice.appliedFormant, v.gainDb, std::sqrt(std::max(0.0f, voice.measuredEnergy))};
         }
 
-        // Count compensation acts on enabled voices, not their gain knobs: relative
-                // voice gains remain meaningful. The original two-voice wet level is the
-                // reference; extra independent voices share that power budget.
-                const float voiceScale = std::sqrt(2.0f / std::max(2.0f, enabledVoices));
-                doublesLeft *= voiceScale;
-                doublesRight *= voiceScale;
-
-                // True linear dry/wet: no lead survives at 100%, no doubles at 0%.
-        // Endpoint branches avoid residual cancellation/rounding at exact 1.
-        float left = controls.doubles == 1.0f ? doublesLeft : mix(leadLeft, doublesLeft, controls.doubles);
-        float right = controls.doubles == 1.0f ? doublesRight : mix(leadRight, doublesRight, controls.doubles);
-        chorale.process(left, right, targets.choraleOn, targets.choraleMix, targets.choraleMotion);
+        routingControls.mix = controls.doubles;
+        const auto routed = routing.process(sources, routingControls);
+        const float left = routed.left, right = routed.right;
         // Trim only the wet path; select dry directly at full bypass for bit-exact identity.
         const float finalLeft = controls.bypass == 1.0f ? alignedDry[0][i]
             : mix(left * outputGain, alignedDry[0][i], controls.bypass);
