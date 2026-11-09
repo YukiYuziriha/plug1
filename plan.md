@@ -6,7 +6,7 @@ This document records the staged implementation plan and the subsequent control-
 
 Keep Basic mode quick to use. Advanced adds **up to eight generated voices, a live voice monitor, and an optional FX-routing editor**, backed by separate processing modules.
 
-Implement in stages, with a working, tested plugin after each stage. This release includes routing with Chorale, not a collection of new effects. A waveshaper comes afterward as the first proof of extensibility.
+Implement in stages, with a working, tested plugin after each stage. The first routing release includes Chorale, not a collection of new effects. Follow-up effects include a waveshaper, an XP-style Filter, and an EQ targeting Bitwig EQ+'s UI and editing workflow, as specified below.
 
 **Architecture goal:** adding an effect must not require teaching it what a voice is.
 
@@ -191,6 +191,53 @@ At useful implementation milestones:
 
 Documentation-only changes do not require rebuilding or reinstalling unchanged plugin binaries.
 
+## 8. Follow-up effects after nodes
+
+The user requested two additional independent FX modules: a **Filter modeled on Bitwig's XP** and an **EQ targeting Bitwig EQ+'s UI and editing workflow**, not merely a generic filter and basic tone control. For EQ, "behavior" means interaction/UI, not identical DSP or sound. These follow the working routing release; they do not block its initial delivery.
+
+Each module processes incoming audio without knowing whether it belongs to one voice, a group, or the whole stack. Each node owns independent settings/state and uses the same module interface, automation-slot scheme, inspector, and real-time requirements as Chorale. No special voice/master implementations.
+
+### Filter: Bitwig XP as the reference
+
+- Target the XP filter's controls, configurations, response, resonance, drive behavior, and interaction as closely as an independently developed implementation can support.
+- Bitwig's official Grid documentation describes XP as inspired by Oberheim, related to Ladder, and offering **15 filter configurations**. XP is also available in Filter+ and Sweep. The target is XP itself, not the entire Filter+ device, its shaper, or its modulation environment.
+- Before DSP implementation, inventory all 15 configurations, parameter ranges, defaults, and interactions in the user's Bitwig version. Documentation alone does not specify the complete algorithm or mode list.
+- Characterize frequency/phase response, cutoff mapping, resonance, input-level dependence, saturation, and mode switching against reference renders. Test parameter movement as well as static settings.
+- Preserve resonant/drive character rather than adding a hidden loudness rider that cancels it. Provide intentional output trim where needed; graph stacking compensation remains the mixer's responsibility.
+- Verify numerical stability, silence/reset, extreme cutoff/resonance/drive, sample-rate behavior, and aliasing/oversampling needs.
+
+### EQ: Bitwig EQ+ UI and editing workflow as the target
+
+- The user specifically means **EQ+'s UI and interaction behavior**, not an exact sonic clone. Use independent, well-tested EQ DSP; matching Bitwig's proprietary coefficients or nulling against EQ+ is not a requirement.
+- Preserve the EQ+ graph-editing workflow rather than substituting a simplified two- or three-band UI.
+- Verified documented feature baseline: up to **eight bands**, **14 modes per band**, global frequency **Shift** and **Gain**, **Adaptive-Q**, and a spectrum display with a **Reference** track option.
+- Match the documented editing gestures:
+  - Double-click to add a peak at the cursor.
+  - Drag the left/right ends of the curve to add low/high shelves.
+  - Drag the left/right graph edges away from the curve to add low/high cuts.
+  - Drag the lower graph edge to add a notch.
+  - Give clear cursor/interaction feedback for each operation.
+- Inventory the complete mode list, slopes, ranges, defaults, Q/bandwidth conventions, global control semantics, band enable/delete behavior, and remaining interaction gestures in the reference version before implementing. Do not invent undocumented details.
+- Validate our EQ's magnitude/phase response across modes and sample rates, Q/gain interaction including Adaptive-Q, global Shift/Gain behavior, high-frequency response, automation smoothing, and bypass behavior. These are correctness tests of our DSP, not requirements to match EQ+'s sound.
+- Draw the response of the actual implemented filters, not a decorative curve. Publish analyzer snapshots without GUI access to DSP state or audio-thread allocation.
+- Band gain and global EQ Gain use neutral-origin bipolar rendering around 0 dB. Frequency is logarithmic; Q and other positive-only controls remain unipolar. Confirm the reference meaning/units of Shift before choosing its mapping.
+- EQ+'s Reference spectrum feature needs an explicit reference-audio source. Resolve whether the plugin will use a host sidechain/reference input before promising full parity; graph audio cables alone do not provide an external Bitwig track automatically.
+- Keep the native plugin skins and keyboard-focus policy. Reproduce useful interactions with original UI code/artwork rather than copying Bitwig assets.
+
+### Reference fidelity and implementation boundary
+
+- **EQ target: UI/workflow parity, not sonic equivalence. Filter target: XP-style controls and sonic character.** Keep these requirements distinct. Use independent DSP/UI implementations; do not copy proprietary code, assets, or presets.
+- Record the Bitwig reference version and interaction checklist for UI comparisons. Record reference renders, settings, and comparison tolerances where testing XP's sonic character. Report differences explicitly; do not label an unmeasured approximation an exact clone.
+- Public documentation does not reveal proprietary coefficients, nonlinear models, or all interaction details. Resolve missing UI details through observation and user confirmation; use reference measurements where needed for the XP filter. EQ does not require reconstructing proprietary coefficients.
+- Reference recording/comparison for XP requires access to Bitwig and suitable test renders; automated tests of our implementation alone cannot establish sonic equivalence.
+
+References:
+
+- EQ+: https://www.bitwig.com/userguide/latest/eq/
+- XP: https://www.bitwig.com/userguide/latest/grid_modules#tdq_5cf_t4b
+
 ## Scope boundary
 
-This release includes the routing system with **Chorale**, not a collection of new effects. A waveshaper follows afterward as the first demonstration that adding an effect requires only its DSP module, parameter definition, and controls, not changes throughout the voice engine.
+The first routing release includes **Chorale**. Follow-up modules are **waveshaper, XP-style Filter, and EQ+-style EQ**; their exact delivery order can be chosen after the routing milestone. Adding an effect should require its DSP module, parameter definition, and controls, not changes throughout the voice engine.
+
+Delay, reverb, multiband crossovers, and a Thermal-like multiband distortion system remain later possibilities, not committed scope in this plan.
