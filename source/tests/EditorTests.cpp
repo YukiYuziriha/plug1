@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "MeterPanel.h"
+#include "DoublerPanel.h"
 
 #include <array>
 #include <cmath>
@@ -39,6 +40,152 @@ float parameterValue(Processor& owner, const juce::String& id) {
     const auto* value = owner.parameters.getRawParameterValue(id);
     expect(value != nullptr, "Missing raw parameter: " + id);
     return value->load();
+}
+
+void advancedParameterContract() {
+    Processor owner;
+    const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
+        "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
+    expect(owner.getParameters().size() == 46, "Expected 46 host parameters");
+    for (size_t i = 0; i < vocalstack::parameterIds.size(); ++i) {
+        auto& p = parameter(owner, vocalstack::parameterIds[i]);
+        expect(owner.getParameters()[static_cast<int>(i)] == &p, "Parameter index changed: " + p.paramID);
+        if (i < originalNames.size())
+            expect(p.getName(64) == originalNames[i], "Original host name changed");
+        expect(p.isAutomatable(), "Parameter is not automatable: " + p.paramID);
+    }
+    expect(!owner.settings().advanced && !owner.settings().choraleOn, "New modules must default off");
+    expectNear(owner.settings().choraleMix, 0.25, "Default Chorale Mix");
+    expectNear(owner.settings().choraleMotion, 0.35, "Default Chorale Motion");
+    const std::array<float, 7> low{-60, -1, 0, -100, -12, 0, 0};
+    const std::array<float, 7> high{12, 1, 100, 100, 12, 2, 8};
+    for (size_t v = 0; v < 4; ++v) {
+        for (size_t f = 0; f < low.size(); ++f) {
+            auto& p = parameter(owner, vocalstack::parameterIds[12 + v * 8 + f]);
+            expectNear(p.getNormalisableRange().start, low[f], "Voice field minimum");
+            expectNear(p.getNormalisableRange().end, high[f], "Voice field maximum");
+            p.setValueNotifyingHost(1.0f);
+        }
+        const auto voice = owner.settings().voiceSettings[v];
+        const std::array<float, 7> fields{voice.gainDb, voice.pan, voice.delayMs, voice.detuneCents,
+            voice.formantSemitones, voice.depth, voice.rateHz};
+        for (size_t f = 0; f < high.size(); ++f)
+            expectNear(fields[f], high[f], "Voice Settings bridge maximum");
+    }
+    setParameter(owner, "double", 0);
+    expectNear(owner.settings().doubles, 0, "Lead-only Mix mapping");
+    setParameter(owner, "double", 100);
+    expectNear(owner.settings().doubles, 1, "Doubles-only Mix mapping");
+    setParameter(owner, "formantOn", 0);
+    setParameter(owner, "voice1Formant", 3.5f);
+    expectNear(owner.settings().voiceSettings[0].formantSemitones, 3.5, "Global formant switch erased voice offset");
+    expect(!owner.settings().formantOn, "Voice offset changed global formant switch");
+    setParameter(owner, "choraleOn", 1);
+    setParameter(owner, "choraleMix", 100);
+    setParameter(owner, "choraleMotion", 0);
+    expect(owner.settings().choraleOn, "Chorale activation mapping");
+    expectNear(owner.settings().choraleMix, 1, "Chorale Mix endpoint");
+    expectNear(owner.settings().choraleMotion, 0, "Chorale Motion endpoint");
+}
+
+void expectBasicVoices(const Processor& owner, float human) {
+    const auto expected = vocalstack::basicVoiceSettings(human);
+    const auto actual = owner.settings().voiceSettings;
+    for (size_t v = 0; v < actual.size(); ++v) {
+        expect(actual[v].enabled == expected[v].enabled, "Basic voice enable mismatch");
+        const std::array<float, 7> a{actual[v].gainDb, actual[v].pan, actual[v].delayMs, actual[v].detuneCents,
+            actual[v].formantSemitones, actual[v].depth, actual[v].rateHz};
+        const std::array<float, 7> b{expected[v].gainDb, expected[v].pan, expected[v].delayMs, expected[v].detuneCents,
+            expected[v].formantSemitones, expected[v].depth, expected[v].rateHz};
+        for (size_t f = 0; f < a.size(); ++f)
+            expectNear(a[f], b[f], "Basic voice field mismatch");
+    }
+}
+
+void advancedActivationAndReset() {
+    Processor owner;
+    setParameter(owner, "human", 80);
+    owner.setAdvancedEnabled(true);
+    expect(owner.settings().advanced, "UI activation failed");
+    expectBasicVoices(owner, 0.8f);
+    setParameter(owner, "voice1Delay", 67.5f);
+    setParameter(owner, "voice3On", 1);
+    owner.setAdvancedEnabled(false);
+    setParameter(owner, "human", 10);
+    owner.setAdvancedEnabled(true);
+    expectNear(owner.settings().voiceSettings[0].delayMs, 67.5, "UI reactivation lost custom settings");
+    expect(owner.settings().voiceSettings[2].enabled, "UI reactivation lost extra voice");
+    for (size_t i = 0; i < 10; ++i) {
+        if (i == 2) continue;
+        auto& p = parameter(owner, vocalstack::parameterIds[i]);
+        p.setValueNotifyingHost(0.7f);
+    }
+    setParameter(owner, "choraleOn", 1);
+    setParameter(owner, "choraleMix", 73);
+    setParameter(owner, "choraleMotion", 62);
+    std::array<float, 10> unrelated{};
+    for (size_t i = 0; i < unrelated.size(); ++i)
+        unrelated[i] = parameterValue(owner, vocalstack::parameterIds[i]);
+    owner.resetVoicesToBasic();
+    expectBasicVoices(owner, 0.1f);
+    expect(owner.settings().advanced, "Reset to Basic disabled Advanced");
+    for (size_t i = 0; i < unrelated.size(); ++i)
+        expectNear(parameterValue(owner, vocalstack::parameterIds[i]), unrelated[i], "Voice reset changed unrelated parameter");
+    expectNear(owner.settings().choraleMix, 0.73, "Voice reset changed Chorale Mix");
+    expectNear(owner.settings().choraleMotion, 0.62, "Voice reset changed Chorale Motion");
+    expect(owner.settings().choraleOn, "Voice reset disabled Chorale");
+
+    Processor automated;
+    setParameter(automated, "human", 90);
+    setParameter(automated, "advancedOn", 1);
+    expectBasicVoices(automated, 0.35f); // Host activation uses safe stored baseline, not message-thread rewrites.
+    setParameter(automated, "advancedOn", 0);
+    automated.setAdvancedEnabled(true);
+    expectBasicVoices(automated, 0.35f);
+}
+
+void advancedStateRoundTrips() {
+    Processor source;
+    source.setAdvancedEnabled(true);
+    source.setAdvancedVisible(true);
+    source.setFlash(true);
+    for (size_t i = 11; i < vocalstack::parameterIds.size(); ++i)
+        parameter(source, vocalstack::parameterIds[i]).setValueNotifyingHost(i % 2 == 0 ? 0.0f : 1.0f);
+    juce::MemoryBlock saved;
+    source.getStateInformation(saved);
+    Processor restored;
+    restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    for (size_t i = 10; i < vocalstack::parameterIds.size(); ++i)
+        expectNear(parameterValue(restored, vocalstack::parameterIds[i]), parameterValue(source, vocalstack::parameterIds[i]),
+                   "Appended parameter did not roundtrip");
+    expect(restored.isFlash() && restored.isAdvancedVisible(), "Editor properties did not roundtrip");
+    restored.setAdvancedEnabled(false);
+    setParameter(restored, "human", 100);
+    restored.setAdvancedEnabled(true);
+    expectNear(parameterValue(restored, "voice1Gain"), -60, "Restored activation overwrote custom voice");
+    Processor pasted;
+    expect(pasted.pasteSettings(source.settingsText()), "Appended settings paste failed");
+    for (size_t i = 10; i < vocalstack::parameterIds.size(); ++i)
+        expectNear(parameterValue(pasted, vocalstack::parameterIds[i]), parameterValue(source, vocalstack::parameterIds[i]),
+                   "Appended parameter did not paste");
+    source.resetParameters();
+    for (const auto* id : vocalstack::parameterIds) {
+        const auto& p = parameter(source, id);
+        expectNear(parameterValue(source, id), p.convertFrom0to1(p.getDefaultValue()), "Full reset missed parameter");
+    }
+    setParameter(source, "human", 60);
+    source.setAdvancedEnabled(true);
+    expectBasicVoices(source, 0.6f);
+
+    Processor partial;
+    setParameter(partial, "level", 99);
+    setParameter(partial, "bypass", 1);
+    expect(partial.pasteSettings("<VocalStack><PARAM id=\"voice3Formant\" value=\"-4\"/></VocalStack>"),
+           "Partial voice settings were rejected");
+    expectNear(parameterValue(partial, "level"), 50, "Partial state inherited stale Leveler");
+    expectNear(parameterValue(partial, "bypass"), 0, "Partial state inherited stale bypass");
+    partial.setAdvancedEnabled(true);
+    expectNear(parameterValue(partial, "voice3Formant"), -4, "First activation discarded restored dormant voice edit");
 }
 
 void outputParameterContract() {
@@ -86,13 +233,21 @@ void legacyStateDefaults() {
     int removed = 0;
     for (auto* child = xml->getFirstChildElement(); child != nullptr;) {
         auto* next = child->getNextElement();
-        if (child->hasTagName("PARAM") && child->getStringAttribute("id") == "outputGain") {
+        bool appended = false;
+        for (size_t i = 9; i < vocalstack::parameterIds.size(); ++i)
+            appended = appended || child->getStringAttribute("id") == vocalstack::parameterIds[i];
+        if (child->hasTagName("PARAM") && appended) {
             xml->removeChildElement(child, true);
             ++removed;
         }
         child = next;
     }
-    expect(removed == 1, "Expected exactly one PARAM child with id outputGain in saved settings");
+    expect(removed == 37, "Expected Output plus all appended PARAM children");
+    xml->removeAttribute("advancedVisible");
+    xml->removeAttribute("advancedInitialized");
+    for (size_t i = 10; i < vocalstack::parameterIds.size(); ++i)
+        parameter(owner, vocalstack::parameterIds[i]).setValueNotifyingHost(0.93f);
+    owner.setAdvancedVisible(true);
 
     setParameter(owner, "level", 87.0f);
     setParameter(owner, "outputGain", 6.0f);
@@ -100,6 +255,14 @@ void legacyStateDefaults() {
     expect(owner.pasteSettings(xml->toString()), "Legacy settings without Output were rejected");
     expectNear(parameterValue(owner, "outputGain"), 0.0, "Legacy settings retained the previous Output gain");
     expectNear(parameterValue(owner, "level"), 23.0, "Legacy settings did not restore an existing parameter");
+    for (size_t i = 10; i < vocalstack::parameterIds.size(); ++i) {
+        const auto* id = vocalstack::parameterIds[i];
+        const auto& p = parameter(owner, id);
+        expectNear(parameterValue(owner, id), p.convertFrom0to1(p.getDefaultValue()), "Legacy state inherited appended parameter");
+    }
+    expect(!owner.isAdvancedVisible(), "Legacy state retained drawer visibility");
+    owner.setAdvancedEnabled(true);
+    expectBasicVoices(owner, 0.35f);
 }
 
 void bypassBinding() {
@@ -215,6 +378,7 @@ void expectPassiveControls(juce::Component& component) {
 
 void editorTransportAndTextEntry() {
     Processor owner;
+    owner.setAdvancedVisible(true);
     std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
     editor->addToDesktop(0); // Keep the native peer hidden; do not activate a test window.
     auto* peer = editor->getPeer();
@@ -251,6 +415,49 @@ void editorTransportAndTextEntry() {
     output->hideTextBox(true);
     expectNear(parameterValue(owner, "outputGain"), -6.5, "Cancelling numeric entry changed the parameter");
     expectTransport();
+}
+
+juce::Button* findButton(juce::Component& parent, const juce::String& text) {
+    for (auto* child : parent.getChildren()) {
+        if (auto* button = dynamic_cast<juce::Button*>(child); button && button->getButtonText() == text)
+            return button;
+        if (auto* found = findButton(*child, text)) return found;
+    }
+    return nullptr;
+}
+
+void checkDrawerControls(Processor& owner, juce::Component& parent, int& sliders, int& buttons) {
+    for (auto* child : parent.getChildren()) {
+        expect(parent.getLocalBounds().contains(child->getBounds()), "Drawer child outside parent: " + child->getName());
+        if (auto* slider = dynamic_cast<juce::Slider*>(child)) {
+            ++sliders;
+            const auto id = slider->getComponentID();
+            auto& p = parameter(owner, id);
+            slider->setValue(p.getNormalisableRange().end, juce::sendNotificationSync);
+            expectNear(parameterValue(owner, id), p.getNormalisableRange().end, "Drawer slider binding: " + id);
+            expect(slider->isTextBoxEditable(), "Drawer numeric entry disabled");
+            slider->showTextBox();
+            juce::TextEditor* entry = nullptr;
+            for (auto* nested : slider->getChildren())
+                if (auto* label = dynamic_cast<juce::Label*>(nested))
+                    if (auto* text = label->getCurrentTextEditor()) entry = text;
+            expect(entry != nullptr && entry->getWantsKeyboardFocus(), "Drawer numeric entry cannot own keys");
+            entry->setText(juce::String(p.getNormalisableRange().start, 4), false);
+            slider->hideTextBox(false);
+            expectNear(parameterValue(owner, id), p.getNormalisableRange().start, "Drawer numeric commit: " + id);
+            slider->showTextBox();
+            slider->hideTextBox(true);
+            expectNear(parameterValue(owner, id), p.getNormalisableRange().start, "Drawer numeric cancel: " + id);
+            continue; // Slider internals have transient text editors and their own layout.
+        }
+        if (auto* button = dynamic_cast<juce::Button*>(child); button && button->getComponentID().isNotEmpty()) {
+            ++buttons;
+            const auto id = button->getComponentID();
+            setParameter(owner, id, 1);
+            if (id != "advancedOn") expect(button->getToggleState(), "Voice/Chorale switch did not follow host");
+        }
+        checkDrawerControls(owner, *child, sliders, buttons);
+    }
 }
 
 juce::String componentName(juce::Component& component) {
@@ -295,8 +502,8 @@ void editorSkin(bool neon) {
     int sliderCount = 0;
     for (int i = 0; i < editor->getNumChildComponents(); ++i) {
         auto* child = editor->getChildComponent(i);
-        if (dynamic_cast<juce::TooltipWindow*>(child) != nullptr)
-            continue; // JUCE's transient tooltip has no layout bounds until shown.
+        if (!child->isVisible() || dynamic_cast<juce::TooltipWindow*>(child) != nullptr)
+            continue; // Hidden drawer and transient tooltip do not participate in collapsed layout.
         const auto description = skin + " / " + componentName(*child);
         expect(!child->getBounds().isEmpty(), description + " has empty bounds");
         expect(editor->getLocalBounds().contains(child->getBounds()), description + " lies outside the editor");
@@ -357,6 +564,44 @@ void editorSkin(bool neon) {
     // Keep injection and capture synchronous so the editor's timer cannot replace the synthetic snapshot.
     meters->setMeters(syntheticMeters());
     saveSnapshot(*editor, neon ? "editor-neon.png" : "editor-device.png");
+    const int collapsedHeight = editor->getHeight();
+    auto* show = findButton(*editor, "Show Advanced");
+    expect(show != nullptr, "Missing drawer visibility control");
+    show->onClick();
+    expect(owner.isAdvancedVisible() && !owner.settings().advanced, "Showing drawer changed activation");
+    expect(editor->getWidth() == 940 && editor->getHeight() == collapsedHeight + 330, "Drawer did not expand editor");
+    int advancedSliders = 0, advancedButtons = 0, choraleSliders = 0, choraleButtons = 0;
+    for (auto* child : editor->getChildren()) {
+        if (dynamic_cast<vocalstack::DoublerPanel*>(child))
+            checkDrawerControls(owner, *child, advancedSliders, advancedButtons);
+        if (dynamic_cast<vocalstack::ChoralePanel*>(child))
+            checkDrawerControls(owner, *child, choraleSliders, choraleButtons);
+    }
+    expect(advancedSliders == 28 && advancedButtons == 5, "Four complete voice cards missing");
+    expect(choraleSliders == 2 && choraleButtons == 1, "Chorale controls missing");
+    expectPassiveControls(*editor);
+    auto* advanced = findButton(*editor, "ADVANCED DOUBLER");
+    expect(advanced != nullptr, "Missing Advanced activation switch");
+    advanced->setToggleState(false, juce::dontSendNotification);
+    advanced->onClick();
+    advanced->setToggleState(true, juce::dontSendNotification);
+    advanced->onClick();
+    expect(owner.settings().advanced, "Advanced UI activation failed");
+    auto* basic = findButton(*editor, "Reset to Basic");
+    expect(basic != nullptr, "Missing Reset to Basic");
+    basic->onClick();
+    expectBasicVoices(owner, owner.settings().human);
+    expect(owner.settings().advanced, "UI Reset to Basic disabled Advanced");
+    expectPassiveControls(*editor);
+    saveSnapshot(*editor, neon ? "editor-neon-advanced.png" : "editor-device-advanced.png");
+    show->onClick();
+    expect(!owner.isAdvancedVisible() && owner.settings().advanced, "Hiding drawer changed activation");
+    expect(editor->getHeight() == collapsedHeight, "Drawer did not collapse editor");
+    show->onClick();
+    editor.reset();
+    editor.reset(owner.createEditor());
+    expect(editor->getHeight() == collapsedHeight + 330, "Editor reopen lost drawer visibility");
+    expectPassiveControls(*editor);
 }
 
 void deviceEditor() { editorSkin(false); }
@@ -369,7 +614,10 @@ int main() {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 9> tests{{
+    const std::array<Test, 12> tests{{
+        {"Advanced and Chorale host contract", advancedParameterContract},
+        {"Advanced activation and isolated reset", advancedActivationAndReset},
+        {"Advanced and Chorale state", advancedStateRoundTrips},
         {"Output parameter contract", outputParameterContract},
         {"Output save/copy/paste/reset", outputStateRoundTrips},
         {"Legacy state Output fallback", legacyStateDefaults},

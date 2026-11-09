@@ -124,8 +124,8 @@ void leveler() {
     const float lower = compare(loud, lowered);
     const float floor = compare(noise, silent);
     std::cout << "Leveler dB change, quiet/loud/below gate: " << raise << " / " << lower << " / " << floor << '\n';
-    expect(raise > 6.0f && raise <= 8.01f, "Quiet phrase gain out of bounds");
-    expect(lower < -8.0f && lower >= -10.01f, "Loud phrase gain out of bounds");
+    expect(std::abs(raise) < 0.15f, "Steady quiet input no longer retains its own RMS");
+    expect(std::abs(lower) < 0.15f, "Steady loud input no longer retains its own RMS");
     expect(std::abs(floor) < 0.005f, "Below-gate input was amplified");
 
     // Isolate the rider from the doubles and formant paths when checking unity.
@@ -137,8 +137,8 @@ void leveler() {
             rms(probe, 2 * rate - result.latency, 3 * rate - result.latency));
         std::cout << "Leveler at " << strength * 100 << "% with -15 dBFS RMS input: "
                   << change << " dB\n";
-        expect(std::abs(change + 5.0f * strength) < 0.12f,
-               "Leveler no longer follows its fixed RMS target or zero-strength unity");
+        expect(std::abs(change) < 0.12f,
+               "Leveler imposed a fixed RMS target or lost zero-strength unity");
         if (strength == 0.0f) {
             for (size_t i = result.latency; i < probe.size(); ++i)
                 expect(result.left[i] == probe[i - result.latency],
@@ -208,7 +208,10 @@ void doubles() {
     std::cout << "Double stereo/mono RMS change: " << stereo << " / " << folded
               << " dB; side/lead ratio " << sideRatio << '\n';
     expect(sideRatio > 0.20f, "Doubles lack independent stereo content");
-    expect(std::abs(stereo) < 1.3f && std::abs(folded) < 1.3f, "Excessive double loudness change");
+    // A true linear dry/wet blend can dip with decorrelated voices; unlike
+    // the old additive bus it must not auto-normalize user gains away.
+    expect(stereo > -7.0f && stereo < 1.3f && folded > -9.0f && folded < 1.3f,
+           "Excessive double loudness change for a linear dry/wet crossfade");
     expect(rms(difference, rate, 3 * rate) < 1.0e-5f, "Render depends on host block size");
 }
 
@@ -696,6 +699,345 @@ void meterRoutingAndReset() {
            sameReading(silent.meters.output[1], {}), "Silent engine meters were nonzero");
 }
 
+void levelerDynamics() {
+    constexpr int rate = 48000;
+    auto input = tone(rate, 1, 125, 40);
+    for (size_t i = 0; i < input.size(); ++i)
+        input[i] *= (i / (2 * rate)) % 2 == 0 ? 0.04f : 0.32f;
+    for (const float strength : {0.0f, 0.5f, 1.0f}) {
+        auto settings = neutral();
+        settings.level = strength;
+        const auto output = render(input, nullptr, rate, 1, settings, 509);
+        const int start = 8 * rate, end = 38 * rate;
+        const float delta = ratioDb(rms(output.left, start + output.latency, end + output.latency),
+                                    rms(input, start, end));
+        std::cout << "Leveler dynamic long-term RMS, strength " << strength << ": " << delta << " dB\n";
+        expect(std::abs(delta) < 0.8f, "Leveler failed bounded long-term RMS normalization");
+        if (strength > 0) {
+            const auto gainAt = [&](int second) {
+                return ratioDb(rms(output.left, second * rate + output.latency,
+                                   (second + 1) * rate + output.latency),
+                               rms(input, second * rate, (second + 1) * rate));
+            };
+            expect(gainAt(33) > 1.0f && gainAt(35) < -0.1f,
+                   "RMS preservation bypassed the leveler's dynamic riding");
+        }
+        for (size_t i = output.latency; i < input.size(); ++i) {
+            const float source = std::abs(input[i - output.latency]);
+            expect(std::isfinite(output.left[i]) &&
+                   std::abs(output.left[i]) <= source * std::pow(10.0f, 8.0f / 20) + 1.0e-6f &&
+                   std::abs(output.left[i]) + 1.0e-6f >= source * std::pow(10.0f, -10.0f / 20),
+                   "Leveler exceeded its total gain bounds");
+        }
+    }
+    const auto quiet = tone(rate, 0.0008f, 125, 4);
+    auto settings = neutral();
+    settings.level = 1;
+    const auto belowGate = render(quiet, nullptr, rate, 1, settings);
+    for (size_t i = belowGate.latency; i < quiet.size(); ++i)
+        expect(belowGate.left[i] == quiet[i - belowGate.latency], "Below-gate leveler is not exact unity");
+}
+
+void levelerDisableTransition() {
+    constexpr int rate = 48000, duration = 12;
+    auto input = tone(rate, 1, 125, duration);
+    for (size_t i = 0; i < input.size(); ++i)
+        input[i] *= (i / rate) % 2 ? 0.32f : 0.04f;
+    auto settings = neutral();
+    settings.level = 1;
+    VocalEngine engine;
+    engine.prepare(rate, 1, 1, settings);
+    Track output(input.size());
+    constexpr int event = 9 * rate + rate / 2;
+    for (int position = 0; position < duration * rate;) {
+        if (position == event) settings.levelOn = false;
+        const int end = position < event ? event : duration * rate;
+        const int count = std::min(137, end - position);
+        const float* in[] = {input.data() + position};
+        float* out[] = {output.data() + position};
+        engine.process(in, out, count, settings);
+        position += count;
+    }
+    float previousGain = 0;
+    for (int i = event + engine.latency(); i < event + engine.latency() + rate; ++i) {
+        const float source = input[i - engine.latency()];
+        if (std::abs(source) < 0.01f) continue;
+        const float gain = output[i] / source;
+        if (previousGain > 0)
+            expect(std::abs(gain - previousGain) < 0.002f,
+                   "Disabling a dynamically normalized Leveler stepped the gain");
+        previousGain = gain;
+    }
+    for (int i = 11 * rate; i < duration * rate; ++i)
+        expect(output[i] == input[i - engine.latency()], "Disabled Leveler retained normalization gain");
+}
+
+void voiceCountCompensation() {
+    constexpr int rate = 48000;
+    const auto input = vowel(rate, 2);
+    auto settings = neutral();
+    settings.advanced = true;
+    settings.doubles = 1;
+    for (auto& voice : settings.voiceSettings) voice.enabled = true;
+    const auto stack = render(input, nullptr, rate, 2, settings);
+    Track sumLeft(input.size()), sumRight(input.size());
+    for (size_t voice = 0; voice < settings.voiceSettings.size(); ++voice) {
+        auto isolated = settings;
+        for (size_t other = 0; other < isolated.voiceSettings.size(); ++other)
+            isolated.voiceSettings[other].enabled = voice == other;
+        const auto single = render(input, nullptr, rate, 2, isolated);
+        for (size_t i = 0; i < input.size(); ++i) {
+            sumLeft[i] += single.left[i];
+            sumRight[i] += single.right[i];
+        }
+    }
+    for (size_t i = 0; i < input.size(); ++i)
+        expect(std::abs(stack.left[i] - sumLeft[i] * std::sqrt(0.5f)) < 1.0e-6f &&
+               std::abs(stack.right[i] - sumRight[i] * std::sqrt(0.5f)) < 1.0e-6f,
+               "Four voices did not share the two-voice power budget");
+}
+
+void mixEndpoints() {
+    for (const int rate : {44100, 48000, 96000, 192000}) {
+        const auto input = vowel(rate, 2);
+        auto settings = neutral();
+        const auto dry = render(input, nullptr, rate, 2, settings, 1);
+        settings.doubles = 1;
+        const auto wet = render(input, nullptr, rate, 2, settings, 509);
+        for (const float amount : {0.25f, 0.5f, 0.75f}) {
+            settings.doubles = amount;
+            const auto blended = render(input, nullptr, rate, 2, settings, 137);
+            for (size_t i = 0; i < input.size(); ++i)
+                expect(std::abs(blended.left[i] - (dry.left[i] + amount * (wet.left[i] - dry.left[i]))) < 1.0e-6f &&
+                       std::abs(blended.right[i] - (dry.right[i] + amount * (wet.right[i] - dry.right[i]))) < 1.0e-6f,
+                       "Mix is not a linear lead/doubles-only crossfade");
+        }
+        settings.doubles = 1;
+        settings.advanced = true;
+        for (auto& voice : settings.voiceSettings)
+            voice.enabled = false;
+        const auto empty = render(input, nullptr, rate, 2, settings);
+        expect(rms(empty.left, 0, static_cast<int>(input.size())) == 0 &&
+               rms(empty.right, 0, static_cast<int>(input.size())) == 0,
+               "Full-wet Mix leaked the lead with all voices disabled");
+        settings.doubleOn = false;
+        const auto off = render(input, nullptr, rate, 2, settings);
+        expect(off.left == dry.left && off.right == dry.right, "Doubler off did not restore lead-only audio");
+    }
+}
+
+void advancedVoices() {
+    const Settings defaults;
+    expect(!defaults.advanced && !defaults.choraleOn && defaults.choraleMix == 0.25f &&
+           defaults.choraleMotion == 0.35f, "Appended Settings defaults are not legacy-safe");
+    const auto contract = vocalstack::basicVoiceSettings(0.35f);
+    expect(contract[0].enabled && contract[1].enabled && !contract[2].enabled && !contract[3].enabled &&
+           contract[0].gainDb == 0 && contract[1].gainDb == 0 &&
+           contract[0].pan == -1 && contract[1].pan == 1 &&
+           contract[0].delayMs == 13 && contract[1].delayMs == 24 &&
+           contract[2].delayMs == 19 && contract[3].delayMs == 31 &&
+           contract[2].pan == -0.4f && contract[3].pan == 0.4f &&
+           std::abs(contract[0].detuneCents + 7.3f) < 1.0e-6f &&
+           std::abs(contract[1].formantSemitones - 0.4925f) < 1.0e-6f,
+           "Shared basic voice contract changed");
+    for (size_t i = 0; i < contract.size(); ++i)
+        expect(defaults.voiceSettings[i].detuneCents == contract[i].detuneCents &&
+               defaults.voiceSettings[i].depth == 1 && defaults.voiceSettings[i].rateHz == 1,
+               "Settings voice defaults differ from Basic reset settings");
+    constexpr int rate = 48000;
+    const auto input = vowel(rate, 3);
+    auto basic = neutral();
+    basic.doubles = basic.width = 1;
+    for (const float human : {0.0f, 0.35f, 1.0f}) {
+        basic.human = human;
+        const auto reference = render(input, nullptr, rate, 2, basic);
+        auto advanced = basic;
+        advanced.advanced = true;
+        advanced.voiceSettings = vocalstack::basicVoiceSettings(human);
+        const auto equivalent = render(input, nullptr, rate, 2, advanced);
+        expect(reference.left == equivalent.left && reference.right == equivalent.right,
+               "Advanced defaults double-counted Human or failed to reproduce Basic");
+        basic.voiceSettings[0] = {false, 12, 0.3f, 100, 70, 8, 2, 8};
+        const auto ignored = render(input, nullptr, rate, 2, basic);
+        expect(reference.left == ignored.left && reference.right == ignored.right,
+               "Basic mode used dormant advanced settings");
+    }
+    auto settings = neutral();
+    settings.advanced = true;
+    settings.doubles = settings.width = 1;
+    settings.formantOn = false;
+    for (auto& voice : settings.voiceSettings)
+        voice = {false, 0, -1, 10, 0, 0, 0, 1};
+    for (size_t index = 0; index < settings.voiceSettings.size(); ++index) {
+        settings.voiceSettings[index].enabled = true;
+        const auto isolated = render(input, nullptr, rate, 2, settings);
+        expect(rms(isolated.left, rate, 3 * rate) > 0.01f && rms(isolated.right, 0, 3 * rate) == 0,
+               "An advanced voice was silent or ignored its hard pan");
+        auto changed = settings;
+        changed.voiceSettings[index].gainDb = -6;
+        const auto quieter = render(input, nullptr, rate, 2, changed);
+        expect(std::abs(ratioDb(rms(quieter.left, rate, 3 * rate),
+                               rms(isolated.left, rate, 3 * rate)) + 6) < 0.01f,
+               "Per-voice gain was normalized away");
+        changed = settings;
+        changed.width = 0;
+        const auto centered = render(input, nullptr, rate, 2, changed);
+        for (size_t i = 0; i < input.size(); ++i)
+            expect(centered.left[i] == centered.right[i] &&
+                   std::abs(2 * centered.left[i] - isolated.left[i]) < 1.0e-6f,
+                   "Width did not scale per-voice pan");
+        changed = settings;
+        changed.voiceSettings[index].delayMs = 30;
+        const auto delayed = render(input, nullptr, rate, 2, changed);
+        for (int i = rate; i < 3 * rate; ++i)
+            expect(std::abs(delayed.left[i] - isolated.left[i - rate / 50]) < 1.0e-5f,
+                   "Per-voice delay did not change the read position");
+        changed = settings;
+        changed.voiceSettings[index].detuneCents = 50;
+        const auto detuned = render(input, nullptr, rate, 2, changed);
+        const float hz = 125 * std::exp2(0.5f / 12);
+        expect(amplitudeAt(detuned.left, rate, rate, rate, hz) >
+               5 * amplitudeAt(detuned.left, rate, rate, rate, 125), "Per-voice detune is not audible");
+        settings.voiceSettings[index].enabled = false;
+    }
+    settings.voiceSettings[2].enabled = true;
+    settings.voiceSettings[2].formantSemitones = 5;
+    settings.formantOn = true;
+    const auto colored = render(input, nullptr, rate, 2, settings);
+    settings.formant = -7;
+    const auto independent = render(input, nullptr, rate, 2, settings);
+    Track difference(input.size());
+    for (size_t i = 0; i < difference.size(); ++i)
+        difference[i] = colored.left[i] - independent.left[i];
+    expect(rms(difference, rate, 3 * rate) > 0.005f,
+           "Shared Formant did not add to the voice offset");
+    settings.formantOn = false;
+    const auto uncolored = render(input, nullptr, rate, 2, settings);
+    expect(colored.left == uncolored.left,
+           "Shared Formant off disabled an independent advanced voice formant");
+    settings.voiceSettings[2].formantSemitones = 0;
+    const auto flat = render(input, nullptr, rate, 2, settings);
+    for (size_t i = 0; i < difference.size(); ++i)
+        difference[i] = flat.left[i] - uncolored.left[i];
+    expect(rms(difference, rate, 3 * rate) > 0.005f,
+           "Advanced voice formant is inaudible with the shared switch off");
+    settings.voiceSettings[2].formantSemitones = 5;
+    settings.formantOn = true;
+    settings.formant = 0;
+    settings.voiceSettings[2].depth = 1;
+    settings.voiceSettings[2].rateHz = 0;
+    const auto frozen = render(input, nullptr, rate, 2, settings);
+    settings.voiceSettings[2].rateHz = 4;
+    const auto moving = render(input, nullptr, rate, 2, settings);
+    for (size_t i = 0; i < difference.size(); ++i)
+        difference[i] = frozen.left[i] - moving.left[i];
+    expect(rms(difference, rate, 3 * rate) > 0.001f, "Per-voice rate/depth did not affect motion");
+
+    // Reset must restore advanced control, random, delay and normalization state,
+    // not just the audio buffers. Start voiced to avoid testing the dependency's
+    // separate silence-first scheduling path (see formantTransitions).
+    VocalEngine engine;
+    engine.prepare(rate, 1, 2, settings);
+    Track replayLeft(input.size()), replayRight(input.size());
+    for (int pass = 0; pass < 2; ++pass) {
+        if (pass == 1)
+            engine.reset(settings);
+        for (int position = 0; position < static_cast<int>(input.size()); position += 137) {
+            const float* in[] = {input.data() + position};
+            float* out[] = {replayLeft.data() + position, replayRight.data() + position};
+            engine.process(in, out, std::min(137, static_cast<int>(input.size()) - position), settings);
+        }
+    }
+    expect(replayLeft == moving.left && replayRight == moving.right,
+           "Advanced reset failed deterministic replay");
+    engine.reset(settings);
+    const Track silence(rate, 0);
+    for (int position = 0; position < rate; position += 137) {
+        const float* in[] = {silence.data() + position};
+        float* out[] = {replayLeft.data() + position, replayRight.data() + position};
+        engine.process(in, out, std::min(137, rate - position), settings);
+    }
+    expect(rms(replayLeft, 0, rate) == 0 && rms(replayRight, 0, rate) == 0,
+           "Advanced reset retained an audible tail on silence");
+}
+
+void advancedAutomation() {
+    for (const int rate : {44100, 48000, 96000, 192000}) {
+        const auto input = tone(rate, 0.07f, 125, 3);
+        const auto run = [&](int block, bool stereo, int outputChannels) {
+            auto settings = neutral();
+            settings.doubles = 0.5f;
+            VocalEngine engine;
+            engine.prepare(rate, stereo ? 2 : 1, outputChannels, settings);
+            Render result{Track(input.size()), Track(input.size()), engine.latency(), {}};
+            const std::array<int, 5> events{rate / 2, rate, 3 * rate / 2, 2 * rate, 5 * rate / 2};
+            size_t event = 0;
+            int position = 0;
+            while (position < static_cast<int>(input.size())) {
+                if (event < events.size() && position == events[event]) {
+                    if (event == 0) {
+                        settings.advanced = true;
+                        settings.doubles = 1;
+                        for (size_t v = 0; v < settings.voiceSettings.size(); ++v)
+                            settings.voiceSettings[v] = {true, -6, v % 2 ? 1.0f : -1.0f,
+                                v % 2 ? 0.0f : 100.0f, v % 2 ? -100.0f : 100.0f,
+                                v % 2 ? -7.0f : 7.0f, 2, 8};
+                    } else if (event == 1) {
+                        settings.width = 0;
+                        settings.human = 1;
+                        for (auto& v : settings.voiceSettings) {
+                            v.enabled = false;
+                            v.delayMs = 50;
+                        }
+                    } else if (event == 2) {
+                        settings.advanced = false;
+                        settings.doubles = 0;
+                        settings.formantOn = false;
+                    } else if (event == 3) {
+                        settings.bypass = true;
+                        settings.outputGainDb = 12;
+                        settings.choraleOn = true;
+                    } else {
+                        // Reset while all DSP state is dirty; bypass remains exact.
+                        engine.reset(settings);
+                    }
+                    ++event;
+                }
+                const int end = event < events.size() ? events[event] : static_cast<int>(input.size());
+                const int count = std::min(block, end - position);
+                const float* in[] = {input.data() + position, stereo ? input.data() + position : nullptr};
+                float* out[] = {result.left.data() + position, result.right.data() + position};
+                engine.process(in, out, count, settings);
+                position += count;
+            }
+            return result;
+        };
+        for (const bool stereo : {false, true}) {
+            for (const int outputChannels : {1, 2}) {
+                const auto single = run(1, stereo, outputChannels);
+                const auto blocked = run(509, stereo, outputChannels);
+                for (size_t i = 0; i < input.size(); ++i) {
+                    expect(std::isfinite(single.left[i]) && std::isfinite(single.right[i]),
+                           "Advanced automation emitted non-finite audio");
+                    expect(std::abs(single.left[i] - blocked.left[i]) < 1.0e-5f &&
+                           std::abs(single.right[i] - blocked.right[i]) < 1.0e-5f,
+                           "Advanced automation depends on host block size");
+                    if (i > 0)
+                        expect(std::abs(single.left[i] - single.left[i - 1]) < 0.08f,
+                               "Advanced delay/enable/mode automation produced a discontinuity");
+                    if (i >= static_cast<size_t>(rate * 5 / 2)) {
+                        const auto sinceReset = static_cast<int>(i) - rate * 5 / 2;
+                        const float expected = sinceReset >= single.latency ? input[i - single.latency] : 0;
+                        expect(single.left[i] == expected &&
+                               (outputChannels == 1 || single.right[i] == expected),
+                               "Advanced/Chorale bypass or reset broke latency-aligned dry identity");
+                    }
+                }
+            }
+        }
+    }
+}
+
 void benchmark() {
     constexpr int rate = 48000, duration = 6;
     const auto input = vowel(rate, duration);
@@ -714,6 +1056,12 @@ int main() {
         const auto started = std::chrono::steady_clock::now();
         alignment();
         leveler();
+        levelerDynamics();
+        levelerDisableTransition();
+        voiceCountCompensation();
+        mixEndpoints();
+        advancedVoices();
+        advancedAutomation();
         formant();
         doubles();
         automation();

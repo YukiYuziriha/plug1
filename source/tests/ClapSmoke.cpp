@@ -148,6 +148,18 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         "Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
+    const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
+    expect(params.count(instance.plugin) == 46, "Expected 46 host parameters");
+    for (uint32_t i = 0; i < params.count(instance.plugin); ++i) {
+        clap_param_info_t info{};
+        expect(params.get_info(instance.plugin, i, &info), "Host parameter metadata missing");
+        expect((info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0, "Appended host parameter cannot be automated");
+        if (i < names.size()) expect(names[i] == info.name, "Original parameter index/name changed");
+    }
+    const auto advanced = getParameter(instance, "Advanced Doubler");
+    const auto chorale = getParameter(instance, "Chorale Active");
+    expect(advanced.default_value == advanced.min_value && chorale.default_value == chorale.min_value,
+           "Advanced and Chorale must default off");
     const auto& remote = instance.get<clap_plugin_remote_controls_t>(CLAP_EXT_REMOTE_CONTROLS);
     expect(remote.count(instance.plugin) == 2, "Expected Main and Output remote controls pages");
     clap_remote_controls_page_t page{};
@@ -166,7 +178,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
            "Output remote controls are mapped incorrectly");
     for (size_t i = 2; i < CLAP_REMOTE_CONTROLS_COUNT; ++i)
         expect(page.param_ids[i] == CLAP_INVALID_ID, "An unused Output remote slot is not empty");
-    std::cout << "Ten automatable parameters and two remote pages verified; original mappings unchanged\n";
+    std::cout << "46 automatable parameters and two remote pages verified; original ten indices unchanged\n";
 }
 
 void checkState(const clap_plugin_factory_t& factory) {
@@ -177,6 +189,12 @@ void checkState(const clap_plugin_factory_t& factory) {
     events.set(formant.id, value);
     const auto output = getParameter(source, "Output");
     events.set(output.id, output.max_value);
+    const auto& params = source.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
+    for (uint32_t i = 10; i < params.count(source.plugin); ++i) {
+        clap_param_info_t info{};
+        expect(params.get_info(source.plugin, i, &info), "Missing appended state parameter");
+        events.set(info.id, i % 2 == 0 ? info.max_value : info.min_value);
+    }
     source.get<clap_plugin_params_t>(CLAP_EXT_PARAMS).flush(source.plugin, &events.input, &events.output);
     expect(std::abs(currentValue(source, formant.id) - formant.default_value) > 0.1,
            "Host parameter change was ignored");
@@ -187,6 +205,12 @@ void checkState(const clap_plugin_factory_t& factory) {
     expect(targetState.load(target.plugin, &state.input), "State load failed");
     expect(currentValue(source, formant.id) == currentValue(target, formant.id), "State parameter did not roundtrip");
     expect(currentValue(source, output.id) == currentValue(target, output.id), "Output gain state did not roundtrip");
+    for (uint32_t i = 10; i < params.count(source.plugin); ++i) {
+        clap_param_info_t info{};
+        expect(params.get_info(source.plugin, i, &info), "Missing appended state metadata");
+        expect(std::abs(currentValue(source, info.id) - currentValue(target, info.id)) < 0.0001,
+               "Advanced/Chorale state did not roundtrip");
+    }
     Stream invalid;
     invalid.bytes.assign(10, 41);
     expect(!targetState.load(target.plugin, &invalid.input), "Invalid state was accepted");
@@ -252,6 +276,12 @@ void checkLayout(const clap_plugin_factory_t& factory, clap_id configId, double 
 
     const auto formant = getParameter(instance, "Formant");
     events.set(bypass.id, bypass.min_value, 19);
+    const auto advanced = getParameter(instance, "Advanced Doubler");
+    const auto chorale = getParameter(instance, "Chorale Active");
+    const auto voiceFormant = getParameter(instance, "Voice 1 Formant");
+    events.set(advanced.id, advanced.max_value, 37);
+    events.set(chorale.id, chorale.max_value, 49);
+    events.set(voiceFormant.id, voiceFormant.max_value, 63);
     events.set(formant.id, formant.max_value, 76);
     events.set(outputGain.id, outputGain.min_value, 98);
     process.steady_time = position;
@@ -259,6 +289,10 @@ void checkLayout(const clap_plugin_factory_t& factory, clap_id configId, double 
     plug->stop_processing(plug);
     plug->deactivate(plug);
     expect(std::abs(currentValue(instance, formant.id) - formant.max_value) < 0.001, "Automation did not apply");
+    expect(currentValue(instance, advanced.id) == advanced.max_value, "Advanced automation did not apply");
+    expect(currentValue(instance, chorale.id) == chorale.max_value, "Chorale automation did not apply");
+    expect(std::abs(currentValue(instance, voiceFormant.id) - voiceFormant.max_value) < 0.001,
+           "Per-voice formant automation did not apply");
     expect(std::abs(currentValue(instance, outputGain.id) - outputGain.min_value) < 0.001,
            "Output gain automation did not apply");
     std::cout << config.name << ", " << sampleRate << " Hz, latency " << latency << " samples\n";

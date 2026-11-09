@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Metering.h"
+#include "DoublerSettings.h"
+#include "Chorale.h"
 #include <signalsmith-stretch/signalsmith-stretch.h>
 #include <array>
 #include <cstdint>
@@ -10,7 +12,7 @@ namespace vocalstack {
 
 struct Settings {
     float level = 0.50f;
-    float doubles = 0.35f;
+    float doubles = 0.35f; // True Mix: 0 = processed lead, 1 = doubles only.
     float human = 0.35f;
     float width = 0.65f;
     float formant = 0.0f;
@@ -19,6 +21,10 @@ struct Settings {
     bool formantOn = true;
     bool bypass = false;
     float outputGainDb = 0.0f;
+    bool advanced = false;
+    std::array<VoiceSettings, 4> voiceSettings = basicVoiceSettings(0.35f);
+    bool choraleOn = false;
+    float choraleMix = 0.25f, choraleMotion = 0.35f;
 };
 
 class VocalEngine {
@@ -29,7 +35,7 @@ public:
     void process(const float* const* input, float* const* output, int count,
                  const Settings&, bool hostBypass = false);
     int latency() const noexcept { return latencySamples; }
-    double tailSeconds() const noexcept { return (latencySamples + maxDoubleDelay) / rate; }
+    double tailSeconds() const noexcept { return (latencySamples + maxDoubleDelay) / rate + 0.040; }
     Meters meters() const noexcept;
     void resetMeters() noexcept;
 
@@ -62,10 +68,13 @@ private:
         std::uint32_t random, initialSeed;
         float targetTime = 0, targetPitch = 0, targetTone = 0;
         float time = 0, pitch = 0, tone = 0, remaining = 0;
+        VoiceSettings controls{};
+        float amplitude = 0, presence = 0, delaySamples = 0;
     };
 
     struct Motion {
         float level, doubles, human, width, formant, formantMix, bypass;
+                float advanced;
         double outputGainDb;
     };
 
@@ -83,17 +92,21 @@ private:
     float parameterStep = 0, rmsStep = 0, gainDownStep = 0, gainUpStep = 0;
     float activityStep = 0, energyStep = 0, matchDownStep = 0, matchUpStep = 0;
     float lowPassStep = 0, edgeStep = 0, bodyStep = 0, articulationStep = 0;
-    float rms = 0, activity = 0, gainDb = 0, gain = 1, match = 1;
-    float leadEnergy = 0, mixEnergy = 0, lowPass = 0, edgeEnergy = 0, bodyEnergy = 0, articulation = 1;
+    float rms = 0, activity = 0, gainDb = 0, gain = 1;
+    float lowPass = 0, edgeEnergy = 0, bodyEnergy = 0, articulation = 1;
     bool active = false;
     LevelMatch leadMatch;
     Stretch lead{421};
-    std::array<Voice, 2> voices{Voice{1471}, Voice{5417}};
+    std::array<Voice, 4> voices{Voice{1471}, Voice{5417}, Voice{7919}, Voice{104729}};
+    Chorale chorale;
     std::array<DelayLine, 2> dryDelay, levelDelay;
     std::array<Buffer, 2> leadInput{}, leadRendered{};
     Buffer monoInput{}, articulationInput{};
     DelayLine articulationDelay;
     std::array<MeterDetector, 2> inputMeters{}, outputMeters{};
+    // Bounded RMS normalization is not a limiter: individual peaks can change.
+    double longInputEnergy = 0, longOutputEnergy = 0, longWeight = 0;
+    float longStep = 0, normalizationDb = 0;
     float correctionDb = 0;
 };
 

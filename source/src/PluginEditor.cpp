@@ -8,7 +8,7 @@ Font font(float height, bool bold = false) {
     return Font(FontOptions(height, bold ? Font::bold : Font::plain));
 }
 
-constexpr int editorWidth = 940, editorHeight = 340;
+constexpr int editorWidth = 940, editorHeight = 430, drawerHeight = 330;
 const std::array<Rectangle<int>, 4> controlPlates{{
     {18, 76, 104, 214}, {132, 76, 306, 214},
     {448, 76, 104, 214}, {562, 76, 104, 214}
@@ -20,8 +20,8 @@ constexpr std::array<const char*, knobParameterIds.size()> knobNames{
     "Leveler", "Mix", "Human", "Width", "Formant", "Output"
 };
 constexpr std::array<const char*, knobParameterIds.size()> knobTips{
-    "Automatic gain riding toward -20 dBFS RMS: 0% off, 100% full correction (-10 to +8 dB). Not output volume",
-    "Amount of generated doubles added to the lead, with level compensation. 0% lead only; 100% maximum doubles, not wet-only",
+    "Even out vocal phrases while matching long-term input RMS. 0% off, 100% full riding; not a limiter or output volume",
+    "True Mix: 0% processed lead only; 100% generated doubles only; blend between them",
     "How far the doubles vary in timing, pitch and tone",
     "How widely the generated takes are panned",
     "Move the vocal resonances while keeping the lead pitch. Double-click for 0 st",
@@ -47,7 +47,8 @@ void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
 }
 }
 
-Editor::Editor(Processor& processor) : AudioProcessorEditor(processor), owner(processor) {
+Editor::Editor(Processor& processor)
+    : AudioProcessorEditor(processor), owner(processor), advancedPanel(processor), choralePanel(processor) {
     setLookAndFeel(&style);
     for (size_t i = 0; i < knobs.size(); ++i) {
         auto& knob = knobs[i];
@@ -99,10 +100,16 @@ Editor::Editor(Processor& processor) : AudioProcessorEditor(processor), owner(pr
         paste.setButtonText(owner.pasteSettings(SystemClipboard::getTextFromClipboard()) ? "Pasted" : "Invalid");
         feedbackTicks = 48;
     };
+    drawer.setName("Show Advanced");
+    drawer.setTooltip("Show or hide voice controls without changing Advanced Doubler activation or sound");
+    drawer.onClick = [this] { owner.setAdvancedVisible(!owner.isAdvancedVisible()); syncDrawer(); };
+    addAndMakeVisible(drawer);
+    addChildComponent(advancedPanel);
+    addAndMakeVisible(choralePanel);
     addAndMakeVisible(meterPanel);
     meterPanel.onReset = [this] { owner.requestMeterReset(); };
     meterPanel.setMeters(owner.getMeters());
-    setSize(editorWidth, editorHeight);
+    syncDrawer();
     applyTheme();
     startTimerHz(30);
 }
@@ -112,6 +119,8 @@ Editor::~Editor() { setLookAndFeel(nullptr); }
 void Editor::applyTheme() {
     style.flash = owner.isFlash();
     meterPanel.setNeon(style.flash);
+    advancedPanel.setNeon(style.flash);
+    choralePanel.setNeon(style.flash);
     const auto foreground = style.flash ? rgb(nightText) : rgb(0xe4e4df);
     const auto muted = style.flash ? rgb(nightMuted) : rgb(0xaeb1a9);
     theme.setButtonText(style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
@@ -126,7 +135,7 @@ void Editor::applyTheme() {
         knob.setColour(Slider::textBoxHighlightColourId, rgb(style.flash ? 0x34496a : 0x4b5175));
         knob.repaint();
     }
-    for (auto* button : {&theme, &reset, &copy, &paste}) {
+    for (auto* button : {&theme, &reset, &copy, &paste, &drawer}) {
         button->setColour(TextButton::textColourOffId, foreground);
         button->repaint();
     }
@@ -156,9 +165,24 @@ void Editor::resized() {
     copy.setBounds(100, 306, 105, 23);
     paste.setBounds(215, 306, 64, 23);
     meterPanel.setBounds(678, 76, 244, 246);
+    drawer.setBounds(300, 306, 156, 23);
+    choralePanel.setBounds(18, 344, 904, 64);
+    advancedPanel.setBounds(18, editorHeight, 904, drawerHeight - 12);
+}
+
+void Editor::syncDrawer() {
+    const bool visible = owner.isAdvancedVisible();
+    advancedPanel.setVisible(visible);
+    drawer.setButtonText(visible ? "Hide Advanced" : "Show Advanced");
+    setSize(editorWidth, editorHeight + (visible ? drawerHeight : 0));
+    advancedPanel.sync();
+    leaveKeyboardToHost(*this);
 }
 
 void Editor::timerCallback() {
+    if (advancedPanel.isVisible() != owner.isAdvancedVisible())
+        syncDrawer();
+    advancedPanel.sync();
     if (owner.isFlash() != style.flash)
         applyTheme();
     if (feedbackTicks > 0 && --feedbackTicks == 0) {
@@ -195,12 +219,12 @@ void Editor::drawDevice(Graphics& g) {
     }
     text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(0xaeb1a9), 11.0f, true, Justification::centred);
     const std::array<const char*, 4> captions{
-        "PHRASE CONTROL", "TWO GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
+        "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
     };
     for (size_t i = 0; i < controlPlates.size(); ++i)
         text(g, captions[i], {controlPlates[i].getX(), 269, controlPlates[i].getWidth(), 15},
              rgb(0xaeb1a9), 9.5f, false, Justification::centred);
-    text(g, "LEVELER  /  DOUBLER  /  FORMANT  /  OUTPUT", {300, 306, 366, 23},
+    text(g, "TRUE MIX", {474, 306, 192, 23},
          rgb(0x9b9f96), 10.0f, true, Justification::centredRight);
 }
 
@@ -232,7 +256,7 @@ void Editor::drawFlash(Graphics& g) {
 
     constexpr std::array<uint32_t, 4> accents{signYellow, signPink, signCyan, signYellow};
     const std::array<const char*, 4> captions{
-        "PHRASE CONTROL", "TWO GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
+        "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
     };
     for (size_t i = 0; i < accents.size(); ++i) {
         const auto& plate = controlPlates[i];
@@ -247,10 +271,7 @@ void Editor::drawFlash(Graphics& g) {
         g.drawVerticalLine(x, 121.0f, 260.0f);
     g.drawHorizontalLine(298, 18.0f, 666.0f);
 
-    g.setColour(rgb(signPink));
-    for (int x = 399; x <= 423; x += 6)
-        g.drawLine(static_cast<float>(x), 323.0f, static_cast<float>(x + 7), 312.0f, 1.7f);
-    text(g, "NIGHT SIGNAL  /  THREE VOICES", {442, 306, 224, 23},
+    text(g, "NIGHT SIGNAL / TRUE MIX", {474, 306, 192, 23},
          rgb(nightMuted), 11.0f, true, Justification::centredRight);
 }
 

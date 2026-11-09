@@ -17,6 +17,13 @@
   branding, or presets. Explain which parts are inspiration versus verified facts.
 - Propose options before implementing speculative effects. A request for a plan
   is not permission to implement the effect.
+- Mix means a true dry/wet blend, not an additive voice amount. Leveler should
+  even phrase dynamics without imposing a fixed output RMS target; distinguish
+  long-term RMS preservation from identical peaks or perceived loudness.
+- Keep Advanced activation separate from panel visibility. Preserve dormant
+  per-voice edits across toggles; Reset to Basic derives from current basic
+  controls without resetting unrelated modules. Independent Advanced formants
+  remain active when the shared Formant switch is off.
 
 ## Architecture
 

@@ -1,4 +1,4 @@
-# Vocal Stack 1.1.2
+# Vocal Stack 1.2.0
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
@@ -22,18 +22,19 @@ and [VST3](https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical%2BDo
 
 | Control | Default | Effect |
 | --- | --- | --- |
-| Leveler | 50% | Automatic gain riding toward −20 dBFS RMS; 0% off, 100% full correction |
-| Mix | 35% | Generated doubles added to the lead; 0% lead only, 100% maximum doubles, not wet-only |
+| Leveler | 50% | Smooth phrase dynamics while approximately preserving long-term input RMS; 0% off |
+| Mix | 35% | True dry/wet doubler blend: 0% processed lead, 100% generated voices only |
 | Human | 35% | Variation in the doubles' timing, pitch, and tone |
 | Width | 65% | Stereo spread of the doubles |
 | Formant | 0.0 st | Moves vocal resonances at the original lead pitch |
 | Output | 0.0 dB | Final output trim, −24 to +12 dB; double-click for unity |
 
-Bitwig's **Plug-in Parameters** button exposes all six knobs, the three module
-switches, and bypass for automation. The original **Vocal Stack** CLAP Remote
-Controls page retains its five knobs and three module switches. A second
-**Output** page supplies output trim and bypass. Existing parameter IDs and
-indices are unchanged; older sessions restore Output to 0 dB.
+Bitwig's **Plug-in Parameters** button exposes all 46 parameters, including the
+advanced voice controls and Chorale, for automation. The original **Vocal Stack**
+CLAP Remote Controls page retains its five knobs and three module switches. A
+second **Output** page supplies output trim and bypass. Original parameter IDs,
+indices and remote assignments are unchanged; new parameters are appended.
+Older sessions default Advanced and Chorale to off and Output to 0 dB when absent.
 
 Click **SKIN / DEVICE** or **SKIN / NEON** to switch the editor. Neon uses a
 flat Shibuya-at-night palette. The project
@@ -65,19 +66,83 @@ Meters keep their history independently of the editor's 30 Hz refresh.
 
 The preview uses synthetic readings to demonstrate peak hold and clip indication.
 
-Mix is an additive doubles amount with smoothed stack-level compensation, not a
-conventional dry/wet crossfade. The lead remains present at 100%. Leveler is not
-output gain: above its −20 dBFS RMS target it attenuates, and below it boosts active
-phrases. At 0% it applies unity gain; other modules can still change output level.
-Use Output for manual trim. Version 1.1.2 clarifies these names without changing DSP
-or parameter IDs, so existing automation and saved sessions retain their sound.
+### Mix and Leveler
 
-The leveler detects active phrases from smoothed input RMS and limits correction
-to −10 to +8 dB at full strength. The doubles use separate Signalsmith
-processors, drifting timing and pitch, subtle formant offsets, and reduced
-level on consonants. The mix estimates loudness from the actual combined
-signal. The Formant module switch controls formant processing for all three
-voices. Width affects the doubles. The lead retains the stereo input image.
+**Mix is now a true linear dry/wet crossfade for the doubler.** Dry means the lead
+after Leveler and shared Formant processing, not a whole-plugin bypass. At 100%,
+no lead remains; with all advanced voices disabled the wet bus is silent. Turning
+DOUBLE off restores the processed lead regardless of Mix. Chorale and Output
+remain downstream. A linear blend of decorrelated voices can dip in RMS near the
+middle; neither a fixed perceived loudness nor identical peaks are guaranteed.
+
+**Leveler is not output gain.** It compares short-term phrase RMS against the
+recording's own slower energy envelope instead of forcing −20 dBFS RMS. Bounded,
+smoothed normalization approximately preserves long-term input RMS as strength
+changes. It needs audio history to settle; attacks and individual peaks can change.
+It is not a limiter or LUFS matcher. Total correction is bounded to −10/+8 dB,
+with gating to avoid lifting room tone. At 0% or off it settles to exact unity.
+Use Output for manual trim. Other modules can still change final output level.
+
+### Advanced Doubler
+
+**Show Advanced / Hide Advanced** only changes editor size, never sound. The
+separate **ADVANCED DOUBLER** switch selects the saved custom stack instead of
+Basic's two voices. Four independent voice cards provide:
+
+![Advanced editor with illustrative meter readings](VocalStack-Advanced.png)
+
+| Voice control | Range | Meaning |
+| --- | --- | --- |
+| On | Off / On | Smoothly include this generated voice |
+| Gain | −60 to +12 dB | Relative voice gain, not erased by automatic normalization |
+| Pan | −1 to +1 | Left to right; shared Width scales the spread |
+| Delay | 0–100 ms | Base timing offset; large changes slew rather than jump |
+| Detune | −100 to +100 ct | Base pitch offset in cents |
+| Formant | −12 to +12 st | Independent voice resonance offset |
+| Depth | 0–2× | Scale this voice's timing, pitch and formant motion |
+| Rate | 0–8 Hz | Approximate irregular motion rate, not a repeating chorus LFO |
+
+Human scales movement for all voices; it does not overwrite your stored offsets.
+Human or Depth at zero removes movement while retaining fixed offsets. Rate zero
+freezes the motion state. Shared Formant adds to voice offsets when enabled;
+turning it off leaves Advanced's independent formants active. Basic's subtle voice
+coloration still follows the shared Formant switch. Consonant suppression keeps
+the generated stack behind the lead. Stereo input doubles use its mono mid;
+the lead preserves the input stereo image.
+
+First UI activation initializes voices from current Human unless you have already
+edited or restored custom voices. Later toggles preserve custom edits. Host
+automation of Advanced uses stored voice settings without rewriting parameters.
+**Reset to Basic** restores current Human-derived two-voice settings and disables
+voices 3/4, without changing activation, Mix, Width, Leveler, Chorale or Output.
+With matching settings and shared Formant enabled, Basic and Advanced produce the
+same audio. Disabling Advanced uses Basic processing and retains your custom stack.
+
+Three/four enabled voices receive smoothed count-based power compensation relative
+to the two-voice reference. It does not normalize away individual Gain settings,
+and cannot remove signal-dependent phase interactions. Enable any combination of
+voices; there is no second voice-count selector fighting the On switches.
+
+### Chorale
+
+A separate three-tap stereo chorus follows the doubler and precedes Output and
+global bypass. **CHORALE** enables it (default off), **Mix** blends the delayed
+ensemble with the incoming stack, and **Motion** increases coordinated modulation
+depth and speed. This is deliberately smoother/more synthetic than Human's
+independent irregular drift. It has no feedback or extra reported dry-path latency.
+Controls and switching are smoothed; delay history stays warm while disabled.
+Wet level and peaks vary with material (coherent taps can add up to about +3.5 dB);
+leave headroom and use the output meters. Inspiration is coordinated ensemble
+chorus behavior, not copied proprietary DSP, assets or presets.
+
+### 1.2.0 compatibility note
+
+This release intentionally changes the sound of existing sessions: the original
+Mix value now means a true dry/wet blend, Leveler no longer targets a fixed RMS,
+and Human zero now stops random movement. Saved values and automation IDs remain
+readable, but this is not a sound-identical upgrade. New Advanced/Chorale features
+start disabled for older sessions. Save important old renders before upgrading.
+Full bypass remains the exact latency-aligned input, unaffected by Output trim.
 
 The plugin reports 1,344 samples of latency at 44.1 and 48 kHz, about 30.5 and
 28 ms respectively. Version 1.0.0 reported 2,496 samples at those rates. Bitwig can compensate during playback. This latency is
@@ -114,7 +179,8 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The first configure fetches pinned dependencies. The plugins appear under
+The first configure fetches pinned dependencies. Four test suites cover DSP,
+Chorale, CLAP hosting, and editor/state. The plugins appear under
 `build/VocalStack_artefacts/Release/`. To build just the portable DSP tests,
 configure with `-DVOCALSTACK_BUILD_PLUGIN=OFF`.
 
@@ -127,6 +193,9 @@ and rejects invalid binary XML state.
 ## Architecture
 
 - `VocalEngine`: JUCE-independent signal path and smoothed controls.
+- `DoublerSettings.h`: shared Basic/Advanced voice configuration contract.
+- `Chorale.h`: isolated, allocation-free-in-processing chorus module.
+- `DoublerPanel.h`: dedicated voice-card editor and Chorale controls.
 - `Metering.h`: reusable per-channel RMS, sample-peak and hold detectors.
 - `MeterBridge.h`: lock-free, best-effort audio-to-UI display snapshots.
 - `PluginProcessor`: host parameters, state compatibility and audio-thread meter

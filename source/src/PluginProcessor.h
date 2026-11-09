@@ -8,9 +8,15 @@
 namespace vocalstack {
 
 // Append host parameters: existing IDs and indices are part of session compatibility.
-inline constexpr std::array<const char*, 10> parameterIds{
+inline constexpr std::array<const char*, 46> parameterIds{
     "level", "double", "human", "width", "formant",
-    "levelOn", "doubleOn", "formantOn", "bypass", "outputGain"
+    "levelOn", "doubleOn", "formantOn", "bypass", "outputGain",
+    "advancedOn",
+    "voice1On", "voice1Gain", "voice1Pan", "voice1Delay", "voice1Detune", "voice1Formant", "voice1Depth", "voice1Rate",
+    "voice2On", "voice2Gain", "voice2Pan", "voice2Delay", "voice2Detune", "voice2Formant", "voice2Depth", "voice2Rate",
+    "voice3On", "voice3Gain", "voice3Pan", "voice3Delay", "voice3Detune", "voice3Formant", "voice3Depth", "voice3Rate",
+    "voice4On", "voice4Gain", "voice4Pan", "voice4Delay", "voice4Detune", "voice4Formant", "voice4Depth", "voice4Rate",
+    "choraleOn", "choraleMix", "choraleMotion"
 };
 inline constexpr std::array<const char*, 6> knobParameterIds{
     "level", "double", "human", "width", "formant", "outputGain"
@@ -20,9 +26,11 @@ inline constexpr std::array<const char*, 4> switchParameterIds{
 };
 
 class Processor final : public juce::AudioProcessor,
-                        public clap_juce_extensions::clap_juce_audio_processor_capabilities {
+                        public clap_juce_extensions::clap_juce_audio_processor_capabilities,
+                        private juce::AudioProcessorValueTreeState::Listener {
 public:
     Processor();
+    ~Processor() override;
 
     void prepareToPlay(double, int) override;
     void releaseResources() override {}
@@ -56,6 +64,12 @@ public:
     juce::String settingsText();
     bool pasteSettings(const juce::String&);
     void resetParameters();
+    // UI requests only: host automation of advancedOn never rewrites voice parameters.
+    void setAdvancedEnabled(bool);
+    void resetVoicesToBasic();
+    bool isAdvancedVisible() const { return advancedVisible.load(std::memory_order_relaxed); }
+    void setAdvancedVisible(bool);
+    Settings settings() const;
 
     bool isFlash() const { return flash.load(std::memory_order_relaxed); }
     void setFlash(bool enabled);
@@ -65,13 +79,14 @@ public:
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout makeParameters();
-    Settings settings() const;
+    void parameterChanged(const juce::String&, float) override;
+    void setParameterValue(const char* id, float value);
     juce::ValueTree copyState();
     bool restoreState(const juce::XmlElement&);
     void render(juce::AudioBuffer<float>&, bool hostBypass);
 
     std::array<std::atomic<float>*, parameterIds.size()> values{};
-    std::atomic<bool> flash{false};
+    std::atomic<bool> flash{false}, advancedVisible{false}, advancedInitialized{false};
     MeterBridge metering;
     std::atomic<bool> meterResetRequested{false};
     VocalEngine engine;
