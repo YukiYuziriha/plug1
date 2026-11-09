@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
+#include "MeterPanel.h"
 
 namespace vocalstack {
 
@@ -23,20 +24,19 @@ private:
 
     void timerCallback() override;
     void applyTheme();
-    void drawMeters(juce::Graphics&);
     void drawDevice(juce::Graphics&);
     void drawFlash(juce::Graphics&);
 
     Processor& owner;
     Style style;
-    std::array<juce::Slider, 5> knobs;
-    std::array<juce::Label, 5> labels;
-    std::array<juce::TextButton, 4> switches;
+    std::array<juce::Slider, knobParameterIds.size()> knobs;
+    std::array<juce::Label, knobParameterIds.size()> labels;
+    std::array<juce::TextButton, switchParameterIds.size()> switches;
     juce::TextButton theme, reset, copy, paste;
-    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 5> knobLinks;
-    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, 4> switchLinks;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, knobParameterIds.size()> knobLinks;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, switchParameterIds.size()> switchLinks;
     juce::TooltipWindow tips{this, 530};
-    Meters meters{};
+    MeterPanel meterPanel;
     int feedbackTicks = 0;
 };
 

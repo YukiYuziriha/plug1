@@ -42,13 +42,28 @@ State::ParameterLayout Processor::makeParameters() {
     for (size_t i = 0; i < names.size(); ++i)
         layout.add(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{parameterIds[i + 5], 1}, names[i], i != 3));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{"outputGain", 1}, "Output",
+        juce::NormalisableRange<float>{-24.0f, 12.0f, 0.1f}, 0.0f,
+        juce::AudioParameterFloatAttributes{}.withLabel("dB").withStringFromValueFunction(
+            [](float value, int) { return (value > 0 ? "+" : "") + juce::String(value, 1) + " dB"; })));
     return layout;
 }
 
 Settings Processor::settings() const {
     const auto value = [&](size_t i) { return values[i]->load(std::memory_order_relaxed); };
-    return {value(0) * 0.01f, value(1) * 0.01f, value(2) * 0.01f, value(3) * 0.01f,
-            value(4), value(5) >= 0.5f, value(6) >= 0.5f, value(7) >= 0.5f, value(8) >= 0.5f};
+    Settings result;
+    result.level = value(0) * 0.01f;
+    result.doubles = value(1) * 0.01f;
+    result.human = value(2) * 0.01f;
+    result.width = value(3) * 0.01f;
+    result.formant = value(4);
+    result.levelOn = value(5) >= 0.5f;
+    result.doubleOn = value(6) >= 0.5f;
+    result.formantOn = value(7) >= 0.5f;
+    result.bypass = value(8) >= 0.5f;
+    result.outputGainDb = value(9);
+    return result;
 }
 
 bool Processor::isBusesLayoutSupported(const BusesLayout& layout) const {
@@ -61,12 +76,15 @@ bool Processor::isBusesLayoutSupported(const BusesLayout& layout) const {
 void Processor::prepareToPlay(double sampleRate, int) {
     engine.prepare(sampleRate, getTotalNumInputChannels(), getTotalNumOutputChannels(), settings());
     setLatencySamples(engine.latency());
+    metering.publish(engine.meters());
     prepared = true;
 }
 
 void Processor::reset() {
-    if (prepared)
+    if (prepared) {
         engine.reset(settings());
+        metering.publish(engine.meters());
+    }
 }
 
 void Processor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer&) { render(audio, false); }
@@ -77,35 +95,41 @@ void Processor::render(juce::AudioBuffer<float>& audio, bool hostBypass) {
     juce::ScopedNoDenormals noDenormals;
     if (!prepared)
         return;
+    if (meterResetRequested.exchange(false, std::memory_order_relaxed))
+        engine.resetMeters();
     engine.process(audio.getArrayOfReadPointers(), audio.getArrayOfWritePointers(),
                    audio.getNumSamples(), settings(), hostBypass);
-    const auto meters = engine.meters();
-    metering[0].store(meters.input, std::memory_order_relaxed);
-    metering[1].store(meters.output, std::memory_order_relaxed);
-    metering[2].store(meters.correctionDb, std::memory_order_relaxed);
+    metering.publish(engine.meters());
 }
 
 Meters Processor::getMeters() const {
-    return {metering[0].load(std::memory_order_relaxed), metering[1].load(std::memory_order_relaxed),
-            metering[2].load(std::memory_order_relaxed)};
+    return metering.snapshot();
 }
 
 juce::AudioProcessorParameter* Processor::getBypassParameter() const {
-    return parameters.getParameter(parameterIds.back());
+    return parameters.getParameter("bypass");
 }
 
 bool Processor::remoteControlsPageFill(uint32_t index, juce::String& section, uint32_t& id,
                                        juce::String& name,
                                        std::array<juce::AudioProcessorParameter*, CLAP_REMOTE_CONTROLS_COUNT>& slots) noexcept {
-    if (index != 0)
+    slots.fill(nullptr);
+    if (index == 0) {
+        section = "Main";
+        name = "Vocal Stack";
+        id = 1;
+        // Keep the original eight controller assignments unchanged.
+        for (size_t i = 0; i < slots.size(); ++i)
+            slots[i] = parameters.getParameter(parameterIds[i]);
+    } else if (index == 1) {
+        section = "Output";
+        name = "Output";
+        id = 2;
+        slots[0] = parameters.getParameter("outputGain");
+        slots[1] = parameters.getParameter("bypass");
+    } else {
         return false;
-
-    section = "Main";
-    name = "Vocal Stack";
-    id = 1;
-    static_assert(CLAP_REMOTE_CONTROLS_COUNT + 1 == parameterIds.size());
-    for (size_t i = 0; i < slots.size(); ++i)
-        slots[i] = parameters.getParameter(parameterIds[i]);
+    }
     return true;
 }
 
@@ -124,6 +148,13 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
     if (!xml.hasTagName(stateType))
         return false;
     auto restored = juce::ValueTree::fromXml(xml);
+    if (!restored.getChildWithProperty("id", "outputGain").isValid()) {
+        // Old sessions must restore unity, not inherit the current instance's trim.
+        juce::ValueTree outputGain("PARAM");
+        outputGain.setProperty("id", "outputGain", nullptr);
+        outputGain.setProperty("value", 0.0f, nullptr);
+        restored.addChild(outputGain, -1, nullptr);
+    }
     flash.store(static_cast<bool>(restored.getProperty(themeProperty, false)), std::memory_order_relaxed);
     parameters.replaceState(restored);
     return true;

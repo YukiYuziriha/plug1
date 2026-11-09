@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Metering.h"
 #include <signalsmith-stretch/signalsmith-stretch.h>
 #include <array>
 #include <cstdint>
@@ -17,12 +18,7 @@ struct Settings {
     bool doubleOn = true;
     bool formantOn = true;
     bool bypass = false;
-};
-
-struct Meters {
-    float input = 0.0f;
-    float output = 0.0f;
-    float correctionDb = 0.0f;
+    float outputGainDb = 0.0f;
 };
 
 class VocalEngine {
@@ -34,7 +30,8 @@ public:
                  const Settings&, bool hostBypass = false);
     int latency() const noexcept { return latencySamples; }
     double tailSeconds() const noexcept { return (latencySamples + maxDoubleDelay) / rate; }
-    Meters meters() const noexcept { return lastMeters; }
+    Meters meters() const noexcept;
+    void resetMeters() noexcept;
 
 private:
     static constexpr int quantum = 64;
@@ -50,12 +47,17 @@ private:
         int next = 0;
     };
 
+    struct LevelMatch {
+        float referenceEnergy = 0, renderedEnergy = 0, gain = 1;
+    };
+
     struct Voice {
         explicit Voice(unsigned seed) : stretch(seed), random(seed), initialSeed(seed) {}
         void advance(float seconds, float human);
         float uniform();
         Stretch stretch;
         DelayLine delay;
+        LevelMatch levelMatch;
         Buffer rendered{};
         std::uint32_t random, initialSeed;
         float targetTime = 0, targetPitch = 0, targetTone = 0;
@@ -64,11 +66,13 @@ private:
 
     struct Motion {
         float level, doubles, human, width, formant, formantMix, bypass;
+        double outputGainDb;
     };
 
     void updateControls(const Settings&, bool hostBypass);
     float leveler(float power);
     float consonantWeight(float sample);
+    float matchedGain(LevelMatch&, float referencePower, float renderedPower);
     void processChunk(const float* const* input, float* const* output, int offset, int count);
     float coefficient(double seconds) const;
 
@@ -77,18 +81,20 @@ private:
     Settings targets{};
     Motion controls{};
     float parameterStep = 0, rmsStep = 0, gainDownStep = 0, gainUpStep = 0;
-    float activityStep = 0, meterDecay = 0, energyStep = 0, matchDownStep = 0, matchUpStep = 0;
+    float activityStep = 0, energyStep = 0, matchDownStep = 0, matchUpStep = 0;
     float lowPassStep = 0, edgeStep = 0, bodyStep = 0, articulationStep = 0;
     float rms = 0, activity = 0, gainDb = 0, gain = 1, match = 1;
     float leadEnergy = 0, mixEnergy = 0, lowPass = 0, edgeEnergy = 0, bodyEnergy = 0, articulation = 1;
     bool active = false;
+    LevelMatch leadMatch;
     Stretch lead{421};
     std::array<Voice, 2> voices{Voice{1471}, Voice{5417}};
     std::array<DelayLine, 2> dryDelay, levelDelay;
     std::array<Buffer, 2> leadInput{}, leadRendered{};
     Buffer monoInput{}, articulationInput{};
     DelayLine articulationDelay;
-    Meters lastMeters{};
+    std::array<MeterDetector, 2> inputMeters{}, outputMeters{};
+    float correctionDb = 0;
 };
 
 } // namespace vocalstack

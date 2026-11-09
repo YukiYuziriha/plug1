@@ -144,12 +144,12 @@ double currentValue(const Instance& instance, clap_id id) {
 
 void checkHostControls(const clap_plugin_factory_t& factory) {
     Instance instance(factory);
-    constexpr std::array<std::string_view, 9> names{
+    constexpr std::array<std::string_view, 10> names{
         "Level", "Double", "Human", "Width", "Formant",
-        "Leveler Active", "Doubler Active", "Formant Active", "Bypass"
+        "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
     const auto& remote = instance.get<clap_plugin_remote_controls_t>(CLAP_EXT_REMOTE_CONTROLS);
-    expect(remote.count(instance.plugin) == 1, "Expected one remote controls page");
+    expect(remote.count(instance.plugin) == 2, "Expected Main and Output remote controls pages");
     clap_remote_controls_page_t page{};
     expect(remote.get(instance.plugin, 0, &page) && !page.is_for_preset &&
            std::string_view(page.page_name) == "Vocal Stack", "Remote controls page was not advertised");
@@ -159,7 +159,14 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         if (i < CLAP_REMOTE_CONTROLS_COUNT)
             expect(page.param_ids[i] == info.id, "Remote control maps to the wrong host parameter");
     }
-    std::cout << "Nine automatable parameters and eight remote controls verified\n";
+    expect(remote.get(instance.plugin, 1, &page) && std::string_view(page.page_name) == "Output",
+           "Output remote controls page is missing");
+    expect(page.param_ids[0] == getParameter(instance, "Output").id &&
+           page.param_ids[1] == getParameter(instance, "Bypass").id,
+           "Output remote controls are mapped incorrectly");
+    for (size_t i = 2; i < CLAP_REMOTE_CONTROLS_COUNT; ++i)
+        expect(page.param_ids[i] == CLAP_INVALID_ID, "An unused Output remote slot is not empty");
+    std::cout << "Ten automatable parameters and two remote pages verified; original mappings unchanged\n";
 }
 
 void checkState(const clap_plugin_factory_t& factory) {
@@ -168,6 +175,8 @@ void checkState(const clap_plugin_factory_t& factory) {
     Events events;
     const double value = formant.min_value + 0.75 * (formant.max_value - formant.min_value);
     events.set(formant.id, value);
+    const auto output = getParameter(source, "Output");
+    events.set(output.id, output.max_value);
     source.get<clap_plugin_params_t>(CLAP_EXT_PARAMS).flush(source.plugin, &events.input, &events.output);
     expect(std::abs(currentValue(source, formant.id) - formant.default_value) > 0.1,
            "Host parameter change was ignored");
@@ -177,6 +186,7 @@ void checkState(const clap_plugin_factory_t& factory) {
     const auto& targetState = target.get<clap_plugin_state_t>(CLAP_EXT_STATE);
     expect(targetState.load(target.plugin, &state.input), "State load failed");
     expect(currentValue(source, formant.id) == currentValue(target, formant.id), "State parameter did not roundtrip");
+    expect(currentValue(source, output.id) == currentValue(target, output.id), "Output gain state did not roundtrip");
     Stream invalid;
     invalid.bytes.assign(10, 41);
     expect(!targetState.load(target.plugin, &invalid.input), "Invalid state was accepted");
@@ -201,6 +211,8 @@ void checkLayout(const clap_plugin_factory_t& factory, clap_id configId, double 
     expect((bypass.flags & CLAP_PARAM_IS_BYPASS) != 0, "Missing CLAP bypass flag");
     Events events;
     events.set(bypass.id, bypass.max_value);
+    const auto outputGain = getParameter(instance, "Output");
+    events.set(outputGain.id, outputGain.max_value);
     const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
     params.flush(plug, &events.input, &events.output);
     events.items.clear();
@@ -241,11 +253,14 @@ void checkLayout(const clap_plugin_factory_t& factory, clap_id configId, double 
     const auto formant = getParameter(instance, "Formant");
     events.set(bypass.id, bypass.min_value, 19);
     events.set(formant.id, formant.max_value, 76);
+    events.set(outputGain.id, outputGain.min_value, 98);
     process.steady_time = position;
     expect(plug->process(plug, &process) != CLAP_PROCESS_ERROR, "Host automation processing failed");
     plug->stop_processing(plug);
     plug->deactivate(plug);
     expect(std::abs(currentValue(instance, formant.id) - formant.max_value) < 0.001, "Automation did not apply");
+    expect(std::abs(currentValue(instance, outputGain.id) - outputGain.min_value) < 0.001,
+           "Output gain automation did not apply");
     std::cout << config.name << ", " << sampleRate << " Hz, latency " << latency << " samples\n";
 }
 } // namespace

@@ -8,19 +8,26 @@ Font font(float height, bool bold = false) {
     return Font(FontOptions(height, bold ? Font::bold : Font::plain));
 }
 
-constexpr int editorWidth = 748, editorHeight = 294;
+constexpr int editorWidth = 940, editorHeight = 340;
+const std::array<Rectangle<int>, 4> controlPlates{{
+    {18, 76, 104, 214}, {132, 76, 306, 214},
+    {448, 76, 104, 214}, {562, 76, 104, 214}
+}};
 constexpr uint32_t night = 0x090d17, panel = 0x111827, outline = 0x2b3a53;
 constexpr uint32_t signPink = 0xff4ca0, signCyan = 0x64f5e3, signYellow = 0xf8de6b;
 constexpr uint32_t nightText = 0xf1f5ff, nightMuted = 0x9eafc8;
-constexpr std::array<const char*, 5> knobNames{"Level", "Double", "Human", "Width", "Formant"};
-constexpr std::array<const char*, 5> knobTips{
+constexpr std::array<const char*, knobParameterIds.size()> knobNames{
+    "Level", "Double", "Human", "Width", "Formant", "Output"
+};
+constexpr std::array<const char*, knobParameterIds.size()> knobTips{
     "How strongly active phrases are leveled",
     "How much of the two generated takes is mixed in",
     "How far the doubles vary in timing, pitch and tone",
     "How widely the generated takes are panned",
-    "Move the vocal resonances while keeping the lead pitch"
+    "Move the vocal resonances while keeping the lead pitch. Double-click for 0 st",
+    "Final output trim: -24 to +12 dB. Double-click for unity (0 dB). Separate from leveler correction"
 };
-constexpr std::array<const char*, 4> switchNames{"LEVEL", "DOUBLE", "FORMANT", "BYPASS"};
+constexpr std::array<const char*, switchParameterIds.size()> switchNames{"LEVEL", "DOUBLE", "FORMANT", "BYPASS"};
 
 void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
           float size, bool bold = false, Justification align = Justification::centredLeft) {
@@ -38,11 +45,14 @@ Editor::Editor(Processor& processor) : AudioProcessorEditor(processor), owner(pr
         knob.setTitle(knobNames[i]);
         knob.setTooltip(knobTips[i]);
         knob.setSliderStyle(Slider::RotaryHorizontalVerticalDrag);
-        knob.setTextBoxStyle(Slider::TextBoxBelow, false, 67, 20);
+        knob.setTextBoxStyle(Slider::TextBoxBelow, false, 82, 22);
         knob.setScrollWheelEnabled(false);
         addAndMakeVisible(knob);
         knobLinks[i] = std::make_unique<AudioProcessorValueTreeState::SliderAttachment>(
-            owner.parameters, parameterIds[i], knob);
+            owner.parameters, knobParameterIds[i], knob);
+        if (const auto* parameter = owner.parameters.getParameter(knobParameterIds[i]))
+            knob.setDoubleClickReturnValue(true, i == 4 || i == 5 ? 0.0
+                : parameter->convertFrom0to1(parameter->getDefaultValue()));
         labels[i].setText(knobNames[i], dontSendNotification);
         labels[i].setJustificationType(Justification::centred);
         labels[i].setInterceptsMouseClicks(false, false);
@@ -56,12 +66,12 @@ Editor::Editor(Processor& processor) : AudioProcessorEditor(processor), owner(pr
                                  : "Toggle this module on or off");
         addAndMakeVisible(button);
         switchLinks[i] = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
-            owner.parameters, parameterIds[i + 5], button);
+            owner.parameters, switchParameterIds[i], button);
     }
 
     for (auto* button : {&theme, &reset, &copy, &paste})
         addAndMakeVisible(*button);
-    theme.setTooltip("Switch between the compact Device skin and the Neon skin");
+    theme.setTooltip("Switch between the Device skin and the Neon skin");
     theme.onClick = [this] { owner.setFlash(!owner.isFlash()); applyTheme(); };
     reset.setButtonText("Reset");
     reset.setTooltip("Restore the default effect parameters");
@@ -79,6 +89,9 @@ Editor::Editor(Processor& processor) : AudioProcessorEditor(processor), owner(pr
         paste.setButtonText(owner.pasteSettings(SystemClipboard::getTextFromClipboard()) ? "Pasted" : "Invalid");
         feedbackTicks = 48;
     };
+    addAndMakeVisible(meterPanel);
+    meterPanel.onReset = [this] { owner.requestMeterReset(); };
+    meterPanel.setMeters(owner.getMeters());
     setSize(editorWidth, editorHeight);
     applyTheme();
     startTimerHz(30);
@@ -88,6 +101,7 @@ Editor::~Editor() { setLookAndFeel(nullptr); }
 
 void Editor::applyTheme() {
     style.flash = owner.isFlash();
+    meterPanel.setNeon(style.flash);
     const auto foreground = style.flash ? rgb(nightText) : rgb(0xe4e4df);
     const auto muted = style.flash ? rgb(nightMuted) : rgb(0xaeb1a9);
     theme.setButtonText(style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
@@ -116,27 +130,20 @@ void Editor::applyTheme() {
 }
 
 void Editor::resized() {
-    const std::array<int, 5> deviceCenters{91, 222, 337, 452, 583};
-    const std::array<int, 5> neonCenters{82, 203, 324, 445, 566};
-    const auto& centers = style.flash ? neonCenters : deviceCenters;
+    constexpr std::array<int, 6> centers{70, 183, 285, 387, 500, 614};
     for (size_t i = 0; i < knobs.size(); ++i) {
-        labels[i].setBounds(centers[i] - 44, style.flash ? 113 : 129, 88, 20);
-        knobs[i].setBounds(centers[i] - 43, style.flash ? 139 : 149, 86, 96);
+        labels[i].setBounds(centers[i] - 44, 121, 88, 20);
+        knobs[i].setBounds(centers[i] - 45, 148, 90, 114);
     }
-    if (style.flash) {
-        switches[0].setBounds(42, 79, 78, 23);
-        switches[1].setBounds(284, 79, 80, 23);
-        switches[2].setBounds(525, 79, 82, 23);
-    } else {
-        switches[0].setBounds(47, 88, 88, 23);
-        switches[1].setBounds(293, 88, 88, 23);
-        switches[2].setBounds(539, 88, 88, 23);
-    }
-    switches[3].setBounds(642, 25, 85, 26);
-    theme.setBounds(513, 25, 118, 26);
-    reset.setBounds(24, 259, 66, 23);
-    copy.setBounds(99, 259, 105, 23);
-    paste.setBounds(212, 259, 64, 23);
+    switches[0].setBounds(32, 88, 76, 23);
+    switches[1].setBounds(244, 88, 82, 23);
+    switches[2].setBounds(458, 88, 84, 23);
+    switches[3].setBounds(817, 26, 85, 26);
+    theme.setBounds(678, 26, 126, 26);
+    reset.setBounds(24, 306, 66, 23);
+    copy.setBounds(100, 306, 105, 23);
+    paste.setBounds(215, 306, 64, 23);
+    meterPanel.setBounds(678, 76, 244, 246);
 }
 
 void Editor::timerCallback() {
@@ -146,8 +153,7 @@ void Editor::timerCallback() {
         copy.setButtonText("Copy settings");
         paste.setButtonText("Paste");
     }
-    meters = owner.getMeters();
-    repaint(636, 76, 105, 175);
+    meterPanel.setMeters(owner.getMeters());
 }
 
 void Editor::paint(Graphics& g) {
@@ -155,50 +161,51 @@ void Editor::paint(Graphics& g) {
         drawFlash(g);
     else
         drawDevice(g);
-    drawMeters(g);
 }
 
 void Editor::drawDevice(Graphics& g) {
     g.fillAll(rgb(0x292b2a));
     g.setColour(rgb(0x373a37));
-    g.fillRoundedRectangle(17.0f, 13.0f, 714.0f, 50.0f, 5.0f);
+    g.fillRoundedRectangle(18.0f, 14.0f, 904.0f, 50.0f, 5.0f);
     g.setColour(rgb(0xf5a24b));
     g.fillRoundedRectangle(27.0f, 25.0f, 4.0f, 25.0f, 2.0f);
     text(g, "Vocal Stack", {41, 20, 168, 32}, rgb(0xf4f4ea), 22.0f, true);
-    text(g, "VOCAL PROCESSOR", {172, 25, 160, 26}, rgb(0xa6aaa0), 11.0f, true);
+    text(g, "VOCAL PROCESSOR", {211, 26, 160, 26}, rgb(0xa6aaa0), 11.0f, true);
 
     g.setColour(rgb(0x1c1f1e));
-    g.fillRoundedRectangle(17.0f, 74.0f, 714.0f, 173.0f, 6.0f);
-    for (const auto area : {Rectangle<float>(25, 80, 132, 160),
-                           Rectangle<float>(166, 80, 342, 160),
-                           Rectangle<float>(517, 80, 132, 160)}) {
+    g.fillRoundedRectangle(14.0f, 72.0f, 656.0f, 222.0f, 6.0f);
+    for (const auto& plate : controlPlates) {
+        const auto area = plate.toFloat();
         g.setColour(rgb(0x252826));
         g.fillRoundedRectangle(area, 4.0f);
         g.setColour(rgb(0x343a35));
         g.drawRoundedRectangle(area, 4.0f, 1.0f);
     }
-    text(g, "LEVELER  /  DOUBLER  /  FORMANT", {417, 258, 309, 24},
-         rgb(0x9b9f96), 11.0f, true, Justification::centredRight);
+    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(0xaeb1a9), 11.0f, true, Justification::centred);
+    const std::array<const char*, 4> captions{
+        "PHRASE CONTROL", "TWO GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
+    };
+    for (size_t i = 0; i < controlPlates.size(); ++i)
+        text(g, captions[i], {controlPlates[i].getX(), 269, controlPlates[i].getWidth(), 15},
+             rgb(0xaeb1a9), 9.5f, false, Justification::centred);
+    text(g, "LEVELER  /  DOUBLER  /  FORMANT  /  OUTPUT", {300, 306, 366, 23},
+         rgb(0x9b9f96), 10.0f, true, Justification::centredRight);
 }
 
 void Editor::drawFlash(Graphics& g) {
     g.fillAll(rgb(night));
-    const std::array<Rectangle<int>, 5> plates{{
-        {22, 13, 705, 51},
-        {22, 75, 120, 170},
-        {151, 75, 350, 170},
-        {510, 75, 113, 170},
-        {632, 75, 95, 170}
-    }};
-    for (const auto& plate : plates) {
+    const auto drawPlate = [&](Rectangle<int> plate) {
         g.setColour(rgb(panel));
         g.fillRect(plate);
         g.setColour(rgb(outline));
         g.drawRect(plate);
-    }
+    };
+    drawPlate({18, 14, 904, 50});
+    for (const auto& plate : controlPlates)
+        drawPlate(plate);
 
     g.setColour(rgb(signPink));
-    g.fillRect(22, 13, 4, 51);
+    g.fillRect(18, 14, 4, 50);
     g.drawRect(35, 22, 32, 32);
     for (int x = 40; x <= 52; x += 6)
         g.drawLine(static_cast<float>(x), 46.0f, static_cast<float>(x + 8), 30.0f, 2.3f);
@@ -206,54 +213,33 @@ void Editor::drawFlash(Graphics& g) {
     text(g, "TOKYO  /  AFTER DARK", {79, 43, 212, 14}, rgb(nightMuted), 11.0f, true);
 
     g.setColour(rgb(signCyan));
-    g.drawRect(326, 25, 148, 26);
-    g.fillRect(326, 25, 4, 26);
-    text(g, "SHIBUYA", {337, 25, 101, 26}, rgb(signCyan), 14.0f, true);
-    text(g, "03", {441, 25, 23, 26}, rgb(signCyan), 12.0f, true, Justification::centred);
+    g.drawRect(382, 26, 148, 26);
+    g.fillRect(382, 26, 4, 26);
+    text(g, "SHIBUYA", {393, 26, 101, 26}, rgb(signCyan), 14.0f, true);
+    text(g, "03", {497, 26, 23, 26}, rgb(signCyan), 12.0f, true, Justification::centred);
 
-    constexpr std::array<uint32_t, 4> accents{signYellow, signPink, signCyan, signCyan};
+    constexpr std::array<uint32_t, 4> accents{signYellow, signPink, signCyan, signYellow};
+    const std::array<const char*, 4> captions{
+        "PHRASE CONTROL", "TWO GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
+    };
     for (size_t i = 0; i < accents.size(); ++i) {
-        const auto& plate = plates[i + 1];
+        const auto& plate = controlPlates[i];
         g.setColour(rgb(accents[i]));
         g.fillRect(plate.getX(), plate.getY(), plate.getWidth(), 2);
+        text(g, captions[i], {plate.getX(), 269, plate.getWidth(), 15},
+             rgb(nightMuted), 9.5f, false, Justification::centred);
     }
+    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(signYellow), 11.0f, true, Justification::centred);
     g.setColour(rgb(outline));
-    for (const int x : {264, 385})
-        g.drawVerticalLine(x, 110.0f, 234.0f);
-    g.drawHorizontalLine(252, 22.0f, 727.0f);
+    for (const int x : {234, 336})
+        g.drawVerticalLine(x, 121.0f, 260.0f);
+    g.drawHorizontalLine(298, 18.0f, 666.0f);
 
     g.setColour(rgb(signPink));
-    for (int x = 490; x <= 514; x += 6)
-        g.drawLine(static_cast<float>(x), 276.0f, static_cast<float>(x + 7), 265.0f, 1.7f);
-    text(g, "NIGHT SIGNAL  /  THREE VOICES", {528, 259, 199, 23},
+    for (int x = 399; x <= 423; x += 6)
+        g.drawLine(static_cast<float>(x), 323.0f, static_cast<float>(x + 7), 312.0f, 1.7f);
+    text(g, "NIGHT SIGNAL  /  THREE VOICES", {442, 306, 224, 23},
          rgb(nightMuted), 11.0f, true, Justification::centredRight);
-}
-
-void Editor::drawMeters(Graphics& g) {
-    const auto muted = style.flash ? rgb(nightMuted) : rgb(0xbabdb3);
-    const int x = style.flash ? 650 : 661;
-    const int spacing = style.flash ? 36 : 32;
-    const std::array<float, 2> levels{meters.input, meters.output};
-    const std::array<const char*, 2> names{"IN", "OUT"};
-    for (size_t i = 0; i < levels.size(); ++i) {
-        const int column = x + spacing * static_cast<int>(i);
-        text(g, names[i], {column - 6, 91, 30, 19}, muted, 11.0f, true, Justification::centred);
-        const auto db = Decibels::gainToDecibels(levels[i], -54.0f);
-        for (int tick = 0; tick < 22; ++tick) {
-            const bool lit = db > -54.0f + static_cast<float>(tick) * 2.45f;
-            const auto good = style.flash ? rgb(signCyan) : rgb(0x9ac37d);
-            g.setColour(!lit ? rgb(style.flash ? 0x293b51 : 0x343b34) :
-                        tick > 19 ? rgb(0xf78677) : tick > 16 ? rgb(0xf0b66d) : good);
-            const Rectangle<float> segment{static_cast<float>(column), 207.0f - tick * 4.35f, 18.0f, 3.1f};
-            if (style.flash)
-                g.fillRect(segment);
-            else
-                g.fillRoundedRectangle(segment, 0.7f);
-        }
-    }
-    const auto sign = meters.correctionDb > 0.05f ? "+" : "";
-    text(g, sign + String(meters.correctionDb, 1) + " dB", {x - 8, 218, 73, 19}, muted, 11.0f,
-         false, Justification::centred);
 }
 
 void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, float position,
@@ -265,12 +251,13 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     const float angle = start + position * (end - start);
     const auto name = slider.getName();
     const auto accent = rgb(!flash ? 0xf5a24b : name == "Formant" ? signCyan
-                            : name == "Level" ? signYellow : signPink);
+                            : name == "Level" || name == "Output" ? signYellow : signPink);
     Path track, value;
     track.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, start, end, true);
     g.setColour(flash ? rgb(outline) : rgb(0x50564f));
     g.strokePath(track, PathStrokeType(2.8f, PathStrokeType::curved, PathStrokeType::rounded));
-    const float origin = name == "Formant" ? (start + end) * 0.5f : start;
+    const float origin = name == "Formant" || name == "Output"
+        ? start + static_cast<float>(slider.valueToProportionOfLength(0.0)) * (end - start) : start;
     if (std::abs(angle - origin) > 0.001f) {
         value.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
                             std::min(angle, origin), std::max(angle, origin), true);

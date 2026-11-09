@@ -58,7 +58,6 @@ void VocalEngine::Voice::advance(float seconds, float human) {
         targetTone = 2.0f * uniform() - 1.0f;
     }
     const float step = seconds * (6.0f + human * 5.0f);
-    time = mix(time, targetTime, step);
     pitch = mix(pitch, targetPitch, step);
     tone = mix(tone, targetTone, step);
 }
@@ -92,7 +91,9 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     gainDownStep = coefficient(0.100);
     gainUpStep = coefficient(0.300);
     activityStep = coefficient(0.045);
-    meterDecay = 1.0f - coefficient(0.280);
+    for (auto* detectors : {&inputMeters, &outputMeters})
+        for (auto& detector : *detectors)
+            detector.prepare(rate);
     energyStep = coefficient(0.110);
     matchDownStep = coefficient(0.050);
     matchUpStep = coefficient(0.220);
@@ -110,6 +111,7 @@ void VocalEngine::reset(const Settings& settings) {
         voice.stretch.reset();
         voice.stretch.setFormantBase(static_cast<float>(150.0 / rate));
         voice.delay.clear();
+        voice.levelMatch = {};
         voice.random = voice.initialSeed;
         voice.time = voice.pitch = voice.tone = voice.remaining = 0;
     }
@@ -117,17 +119,40 @@ void VocalEngine::reset(const Settings& settings) {
         for (auto& delay : *delays)
             delay.clear();
     articulationDelay.clear();
+    leadMatch = {};
     rms = activity = gainDb = leadEnergy = mixEnergy = 0;
     lowPass = edgeEnergy = bodyEnergy = 0;
     gain = match = articulation = 1;
     active = false;
     untilUpdate = 0;
-    lastMeters = {};
+    for (auto* detectors : {&inputMeters, &outputMeters})
+        for (auto& detector : *detectors)
+            detector.reset();
+    correctionDb = 0;
     targets = settings;
     controls = {settings.levelOn ? settings.level : 0.0f,
                 settings.doubleOn ? settings.doubles : 0.0f,
                 settings.human, settings.width, settings.formant,
-                settings.formantOn ? 1.0f : 0.0f, settings.bypass ? 1.0f : 0.0f};
+                settings.formantOn ? 1.0f : 0.0f, settings.bypass ? 1.0f : 0.0f,
+                settings.outputGainDb};
+}
+
+Meters VocalEngine::meters() const noexcept {
+    Meters result;
+    result.inputChannels = inChannels;
+    result.outputChannels = outChannels;
+    result.correctionDb = correctionDb;
+    for (int channel = 0; channel < inChannels; ++channel)
+        result.input[channel] = inputMeters[channel].reading();
+    for (int channel = 0; channel < outChannels; ++channel)
+        result.output[channel] = outputMeters[channel].reading();
+    return result;
+}
+
+void VocalEngine::resetMeters() noexcept {
+    for (auto* detectors : {&inputMeters, &outputMeters})
+        for (auto& detector : *detectors)
+            detector.resetPeaks();
 }
 
 void VocalEngine::updateControls(const Settings& settings, bool hostBypass) {
@@ -160,6 +185,21 @@ float VocalEngine::consonantWeight(float sample) {
     const float body = std::clamp((ratio - 0.13f) * 2.5f, 0.0f, 1.0f);
     articulation = mix(articulation, 1.0f - 0.73f * body, articulationStep);
     return articulation;
+}
+
+float VocalEngine::matchedGain(LevelMatch& state, float referencePower, float renderedPower) {
+    state.referenceEnergy = mix(state.referenceEnergy, referencePower, energyStep);
+    state.renderedEnergy = mix(state.renderedEnergy, renderedPower, energyStep);
+    constexpr float silenceFloor = 1.0e-9f;
+    float targetGain = state.gain;
+    if (state.referenceEnergy > silenceFloor && state.renderedEnergy > silenceFloor) {
+        targetGain = std::clamp(std::sqrt(state.referenceEnergy / state.renderedEnergy), 0.25f, 4.0f);
+    } else if (state.referenceEnergy <= silenceFloor && state.renderedEnergy <= silenceFloor) {
+        targetGain = 1.0f;
+    }
+    // Hold through unmatched attacks/tails; never boost a missing or silent render.
+    state.gain = mix(state.gain, targetGain, targetGain < state.gain ? matchDownStep : matchUpStep);
+    return state.gain;
 }
 
 void VocalEngine::process(const float* const* input, float* const* output, int count,
@@ -199,6 +239,7 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         const float multiplier = leveler(0.5f * (left * left + right * right));
         for (int channel = 0; channel < inChannels; ++channel) {
             const float sample = channel == 0 ? left : right;
+            inputMeters[channel].process(sample);
             leadInput[channel][i] = sample * multiplier;
             dryDelay[channel].push(sample);
             levelDelay[channel].push(leadInput[channel][i]);
@@ -208,8 +249,6 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         const float mid = 0.5f * (left + right);
         monoInput[i] = mid * multiplier;
         articulationInput[i] = consonantWeight(mid);
-        lastMeters.input = std::max(lastMeters.input * meterDecay,
-                                   std::max(std::abs(left), std::abs(right)));
     }
 
     const float* leadIn[] = {leadInput[0].data(), leadInput[1].data()};
@@ -227,20 +266,39 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         controls.width = mix(controls.width, targets.width, parameterStep);
         controls.formant = mix(controls.formant, targets.formant, parameterStep);
         controls.formantMix = mix(controls.formantMix, targets.formantOn ? 1.0f : 0.0f, parameterStep);
-        controls.bypass = mix(controls.bypass, targets.bypass ? 1.0f : 0.0f, parameterStep);
+        const float bypassTarget = targets.bypass ? 1.0f : 0.0f;
+        controls.bypass = mix(controls.bypass, bypassTarget, parameterStep);
+        // Float one-poles otherwise stop just short of an exact bypass endpoint.
+        if (std::abs(controls.bypass - bypassTarget) < 0.0001f)
+            controls.bypass = bypassTarget;
+        controls.outputGainDb += (targets.outputGainDb - controls.outputGainDb) * parameterStep;
+        const float outputGain = dbToGain(static_cast<float>(controls.outputGainDb));
         articulationDelay.push(articulationInput[i]);
 
         const float formantBlend = controls.formantMix * std::min(1.0f, std::abs(controls.formant) * 5.0f);
         const int rightChannel = inChannels == 2 ? 1 : 0;
-        const float leadLeft = mix(alignedLevel[0][i], leadRendered[0][i], formantBlend);
-        const float leadRight = mix(alignedLevel[rightChannel][i], leadRendered[rightChannel][i], formantBlend);
+        const float referenceLeft = alignedLevel[0][i];
+        const float referenceRight = alignedLevel[rightChannel][i];
+        const float referencePower = 0.5f * (referenceLeft * referenceLeft + referenceRight * referenceRight);
+        const float renderedLeft = leadRendered[0][i];
+        const float renderedRight = leadRendered[rightChannel][i];
+        const float renderedPower = 0.5f * (renderedLeft * renderedLeft + renderedRight * renderedRight);
+        const float leadGain = matchedGain(leadMatch, referencePower, renderedPower);
+        const float leadLeft = mix(referenceLeft, renderedLeft * leadGain, formantBlend);
+        const float leadRight = mix(referenceRight, renderedRight * leadGain, formantBlend);
+        const float referenceMono = 0.5f * (referenceLeft + referenceRight);
+        const float timeStep = (6.0f + 5.0f * controls.human) / static_cast<float>(rate);
         std::array<float, 2> doubleSamples{};
         for (size_t index = 0; index < voices.size(); ++index) {
             auto& voice = voices[index];
+            // Smooth the read position per sample, not once per 64-sample control update.
+            voice.time = mix(voice.time, voice.targetTime, timeStep);
             const float offsetMs = index == 0 ? 13.0f : 24.0f;
             const float delaySamples = static_cast<float>(rate * 0.001) *
                 (offsetMs + voice.time * (1.0f + 6.0f * controls.human));
-            voice.delay.push(voice.rendered[i]);
+            const float voiceGain = matchedGain(voice.levelMatch, referenceMono * referenceMono,
+                                                voice.rendered[i] * voice.rendered[i]);
+            voice.delay.push(voice.rendered[i] * voiceGain);
             const float consonants = articulationDelay.read(static_cast<float>(latencySamples) + delaySamples);
             doubleSamples[index] = voice.delay.read(delaySamples) * consonants;
         }
@@ -264,20 +322,23 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
                                                        (mixEnergy + energyFloor)), 0.64f, 1.10f);
         match = mix(match, targetMatch, targetMatch < match ? matchDownStep : matchUpStep);
         const float compensation = mix(1.0f, match, std::min(1.0f, controls.doubles * 8.0f));
-        const float finalLeft = mix(left * compensation, alignedDry[0][i], controls.bypass);
-        const float finalRight = mix(right * compensation, alignedDry[rightChannel][i], controls.bypass);
+        // Trim only the wet path; select dry directly at full bypass for bit-exact identity.
+        const float finalLeft = controls.bypass == 1.0f ? alignedDry[0][i]
+            : mix(left * compensation * outputGain, alignedDry[0][i], controls.bypass);
+        const float finalRight = controls.bypass == 1.0f ? alignedDry[rightChannel][i]
+            : mix(right * compensation * outputGain, alignedDry[rightChannel][i], controls.bypass);
         if (outChannels == 1) {
             const float result = 0.5f * (finalLeft + finalRight);
             output[0][offset + i] = result;
-            lastMeters.output = std::max(lastMeters.output * meterDecay, std::abs(result));
+            outputMeters[0].process(result);
         } else {
             output[0][offset + i] = finalLeft;
             output[1][offset + i] = finalRight;
-            lastMeters.output = std::max(lastMeters.output * meterDecay,
-                                        std::max(std::abs(finalLeft), std::abs(finalRight)));
+            outputMeters[0].process(finalLeft);
+            outputMeters[1].process(finalRight);
         }
     }
-    lastMeters.correctionDb = gainDb * controls.level * (1.0f - controls.bypass);
+    correctionDb = gainDb * controls.level * (1.0f - controls.bypass);
 }
 
 } // namespace vocalstack

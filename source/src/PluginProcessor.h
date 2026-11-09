@@ -3,11 +3,19 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <clap-juce-extensions/clap-juce-extensions.h>
 #include "VocalEngine.h"
+#include "MeterBridge.h"
 
 namespace vocalstack {
 
-inline constexpr std::array<const char*, 9> parameterIds{
+// Append host parameters: existing IDs and indices are part of session compatibility.
+inline constexpr std::array<const char*, 10> parameterIds{
     "level", "double", "human", "width", "formant",
+    "levelOn", "doubleOn", "formantOn", "bypass", "outputGain"
+};
+inline constexpr std::array<const char*, 6> knobParameterIds{
+    "level", "double", "human", "width", "formant", "outputGain"
+};
+inline constexpr std::array<const char*, 4> switchParameterIds{
     "levelOn", "doubleOn", "formantOn", "bypass"
 };
 
@@ -26,7 +34,7 @@ public:
     double getTailLengthSeconds() const override { return engine.tailSeconds(); }
 
     bool supportsRemoteControls() const noexcept override { return true; }
-    uint32_t remoteControlsPageCount() noexcept override { return 1; }
+    uint32_t remoteControlsPageCount() noexcept override { return 2; }
     bool remoteControlsPageFill(uint32_t index, juce::String& section, uint32_t& id,
                                 juce::String& name,
                                 std::array<juce::AudioProcessorParameter*, CLAP_REMOTE_CONTROLS_COUNT>&) noexcept override;
@@ -52,6 +60,7 @@ public:
     bool isFlash() const { return flash.load(std::memory_order_relaxed); }
     void setFlash(bool enabled);
     Meters getMeters() const;
+    void requestMeterReset() noexcept { meterResetRequested.store(true, std::memory_order_relaxed); }
     juce::AudioProcessorValueTreeState parameters;
 
 private:
@@ -63,7 +72,8 @@ private:
 
     std::array<std::atomic<float>*, parameterIds.size()> values{};
     std::atomic<bool> flash{false};
-    std::array<std::atomic<float>, 3> metering{};
+    MeterBridge metering;
+    std::atomic<bool> meterResetRequested{false};
     VocalEngine engine;
     bool prepared = false;
 };

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.0.2 LANGUAGES C CXX)
+project(VocalStack VERSION 1.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -46,7 +46,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
         VST3_CATEGORIES Fx Tools
         VST3_AUTO_MANIFEST FALSE
         COPY_PLUGIN_AFTER_BUILD FALSE)
-    target_sources(VocalStack PRIVATE src/PluginProcessor.cpp src/PluginEditor.cpp)
+    target_sources(VocalStack PRIVATE src/PluginProcessor.cpp src/PluginEditor.cpp src/MeterPanel.cpp)
     target_compile_definitions(VocalStack PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0)
     target_link_libraries(VocalStack PRIVATE
@@ -66,5 +66,11 @@ if(VOCALSTACK_BUILD_TESTS)
         add_executable(vocalstack_clap_smoke tests/ClapSmoke.cpp)
         target_link_libraries(vocalstack_clap_smoke PRIVATE clap-core ${CMAKE_DL_LIBS})
         add_test(NAME VocalStackCLAP COMMAND vocalstack_clap_smoke $<TARGET_FILE:VocalStack_CLAP>)
+
+        juce_add_console_app(VocalStackEditorTests PRODUCT_NAME "Vocal Stack Editor Tests")
+        target_sources(VocalStackEditorTests PRIVATE tests/EditorTests.cpp)
+        target_link_libraries(VocalStackEditorTests PRIVATE VocalStack vocalstack_dsp
+            juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
+        add_test(NAME VocalStackEditor COMMAND VocalStackEditorTests)
     endif()
 endif()
