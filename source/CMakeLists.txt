@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.1.0 LANGUAGES C CXX)
+project(VocalStack VERSION 1.1.1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -45,6 +45,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
         FORMATS VST3
         VST3_CATEGORIES Fx Tools
         VST3_AUTO_MANIFEST FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS FALSE
         COPY_PLUGIN_AFTER_BUILD FALSE)
     target_sources(VocalStack PRIVATE src/PluginProcessor.cpp src/PluginEditor.cpp src/MeterPanel.cpp)
     target_compile_definitions(VocalStack PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0

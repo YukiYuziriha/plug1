@@ -29,6 +29,16 @@ constexpr std::array<const char*, knobParameterIds.size()> knobTips{
 };
 constexpr std::array<const char*, switchParameterIds.size()> switchNames{"LEVEL", "DOUBLE", "FORMANT", "BYPASS"};
 
+void leaveKeyboardToHost(Component& component) {
+    // Numeric entry owns keys only while its transient TextEditor is open.
+    if (dynamic_cast<TextEditor*>(&component) != nullptr)
+        return;
+    component.setWantsKeyboardFocus(false);
+    component.setMouseClickGrabsKeyboardFocus(false);
+    for (int i = 0; i < component.getNumChildComponents(); ++i)
+        leaveKeyboardToHost(*component.getChildComponent(i));
+}
+
 void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
           float size, bool bold = false, Justification align = Justification::centredLeft) {
     g.setFont(font(size, bold));
@@ -126,6 +136,8 @@ void Editor::applyTheme() {
         button.repaint();
     }
     resized();
+    // Theme changes recreate slider text labels, so reapply their idle focus policy.
+    leaveKeyboardToHost(*this);
     repaint();
 }
 

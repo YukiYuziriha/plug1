@@ -13,7 +13,7 @@ public:
     void setNeon(bool);
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
-    bool keyPressed(const juce::KeyPress&) override;
+
     void focusGained(FocusChangeType) override { repaint(); }
     void focusLost(FocusChangeType) override { repaint(); }
 

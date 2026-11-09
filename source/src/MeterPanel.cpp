@@ -36,17 +36,18 @@ String maximumText(float peak) {
 
 MeterPanel::MeterPanel() {
     setName("Input and output sample meters");
-    setTitle("Sample meters; click or press Return to clear peaks and clips");
+    setTitle("Sample meters; click to clear peaks and clips");
     setTooltip("All meters are dBFS. RMS fill = signal energy; white PK = sample peak; "
                "amber HOLD = DSP-supplied 1.5 s sample-peak hold.\n"
                "MAX = highest sample peak in the active channels since reset. "
                "Red CLIP = latched sample overload. MONO uses one M lane, stereo uses L/R.\n"
                "LVL = leveler gain correction, not the Output trim.\n"
-               "Click anywhere here (or focus and press Return/Space) to request clearing "
+               "Click anywhere here to request clearing "
                "held peaks, maximum peaks and clip latches. Live RMS/PK continue.");
     setOpaque(true);
     setMouseCursor(MouseCursor::PointingHandCursor);
-    setWantsKeyboardFocus(true);
+    setWantsKeyboardFocus(false);
+    setMouseClickGrabsKeyboardFocus(false);
 }
 
 void MeterPanel::setMeters(const Meters& snapshot) {
@@ -66,14 +67,6 @@ void MeterPanel::mouseDown(const MouseEvent& event) {
         onReset();
 }
 
-bool MeterPanel::keyPressed(const KeyPress& key) {
-    if (key == KeyPress::returnKey || key == KeyPress::spaceKey) {
-        if (onReset)
-            onReset();
-        return true;
-    }
-    return false;
-}
 
 void MeterPanel::paint(Graphics& g) {
     g.fillAll(rgb(neon ? 0x090d17 : 0x292b2a));

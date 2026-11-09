@@ -7,6 +7,9 @@
   headroom, readable peaks, and trustworthy bypass.
 - Keep the interface focused. Prefer a few well-chosen controls and useful
   defaults over exposing every DSP variable or adding flashy complexity.
+- Preserve DAW keyboard shortcuts, especially Space for transport. Ordinary
+  control clicks must not claim keyboard focus or consume host shortcuts. Only
+  deliberate text entry should own keys, and commit/cancel must release it.
 - When an important design choice is unclear, ask the user. Do not guess about
   sonic goals, destructive workflows, or major UI/architecture changes.
 - Look at respected plugins and their official documentation for inspiration

@@ -175,22 +175,82 @@ vocalstack::Meters syntheticMeters() {
     return snapshot;
 }
 
-void meterResetKeys() {
+void meterTransportKeys() {
     MeterPanel panel;
     panel.setSize(244, 246);
+    panel.addToDesktop(0); // Hidden native peer: exercise JUCE key routing without taking focus.
+    auto* peer = panel.getPeer();
+    expect(peer != nullptr, "Meter transport test could not create a native peer");
     int resets = 0;
     panel.onReset = [&resets] { ++resets; };
     for (const bool neon : {false, true}) {
         panel.setNeon(neon);
         panel.setMeters(syntheticMeters());
         const auto before = resets;
-        expect(panel.keyPressed(juce::KeyPress(juce::KeyPress::returnKey)), "Meter panel did not handle Return");
-        expect(resets == before + 1, "Return did not request exactly one meter reset");
-        expect(panel.keyPressed(juce::KeyPress(juce::KeyPress::spaceKey)), "Meter panel did not handle Space");
-        expect(resets == before + 2, "Space did not request exactly one meter reset");
-        expect(!panel.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)), "Meter panel consumed an unrelated key");
-        expect(resets == before + 2, "An unrelated key requested a meter reset");
+        expect(!peer->handleKeyPress(juce::KeyPress(juce::KeyPress::spaceKey)),
+               "Meter consumed the host's Space transport shortcut");
+        expect(!peer->handleKeyPress(juce::KeyPress(juce::KeyPress::returnKey)),
+               "Meter consumed the host's Return shortcut");
+        expect(resets == before, "A host shortcut cleared meter history");
+        expect(!panel.getWantsKeyboardFocus() && !panel.getMouseClickGrabsKeyboardFocus(),
+               "Clicking the meter can steal keyboard focus");
+        const auto now = juce::Time::getCurrentTime();
+        const juce::MouseEvent click{juce::Desktop::getInstance().getMainMouseSource(), {10, 10},
+            juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 1, 0, 0, 0, 0,
+            &panel, &panel, now, {10, 10}, now, 1, false};
+        panel.mouseDown(click);
+        expect(resets == before + 1, "Clicking the meter did not clear peaks");
     }
+}
+
+void expectPassiveControls(juce::Component& component) {
+    if (dynamic_cast<juce::TooltipWindow*>(&component) != nullptr ||
+        dynamic_cast<juce::TextEditor*>(&component) != nullptr)
+        return;
+    expect(!component.getWantsKeyboardFocus() && !component.getMouseClickGrabsKeyboardFocus(),
+           "An idle plugin control can steal host keyboard focus: " + component.getName());
+    for (int i = 0; i < component.getNumChildComponents(); ++i)
+        expectPassiveControls(*component.getChildComponent(i));
+}
+
+void editorTransportAndTextEntry() {
+    Processor owner;
+    std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
+    editor->addToDesktop(0); // Keep the native peer hidden; do not activate a test window.
+    auto* peer = editor->getPeer();
+    expect(peer != nullptr, "Editor transport test could not create a native peer");
+    const auto expectTransport = [&] {
+        expectPassiveControls(*editor);
+        expect(!peer->handleKeyPress(juce::KeyPress(juce::KeyPress::spaceKey)),
+               "Editor consumed Space outside text entry");
+        expect(!peer->handleKeyPress(juce::KeyPress(juce::KeyPress::returnKey)),
+               "Editor consumed Return outside text entry");
+    };
+    expectTransport();
+    juce::Slider* output = nullptr;
+    for (int i = 0; i < editor->getNumChildComponents(); ++i)
+        if (auto* slider = dynamic_cast<juce::Slider*>(editor->getChildComponent(i));
+            slider != nullptr && slider->getName() == "Output")
+            output = slider;
+    expect(output != nullptr && output->isTextBoxEditable(), "Output numeric entry was disabled");
+    const auto enter = [&](const juce::String& value) {
+        output->showTextBox();
+        juce::TextEditor* entry = nullptr;
+        for (int i = 0; i < output->getNumChildComponents(); ++i)
+            if (auto* label = dynamic_cast<juce::Label*>(output->getChildComponent(i)))
+                if (auto* candidate = label->getCurrentTextEditor())
+                    entry = candidate;
+        expect(entry != nullptr && entry->getWantsKeyboardFocus(), "Numeric entry cannot receive typing");
+        entry->setText(value, false);
+    };
+    enter("-6.5");
+    output->hideTextBox(false);
+    expectNear(parameterValue(owner, "outputGain"), -6.5, "Numeric entry did not commit");
+    expectTransport();
+    enter("-12");
+    output->hideTextBox(true);
+    expectNear(parameterValue(owner, "outputGain"), -6.5, "Cancelling numeric entry changed the parameter");
+    expectTransport();
 }
 
 juce::String componentName(juce::Component& component) {
@@ -226,6 +286,7 @@ void editorSkin(bool neon) {
     std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
     expect(editor != nullptr, skin + " editor creation failed");
     editor->setVisible(true);
+    expectPassiveControls(*editor);
 
     constexpr std::array<const char*, 6> names{"Level", "Double", "Human", "Width", "Formant", "Output"};
     std::array<juce::Slider*, names.size()> knobs{};
@@ -284,6 +345,15 @@ void editorSkin(bool neon) {
     expectNear(output.getValue(), 3.0, skin + " Output attachment did not follow the parameter");
     output.setValue(0.0, juce::sendNotificationSync);
 
+    for (auto* control : controls)
+        if (auto* button = dynamic_cast<juce::Button*>(control);
+            button != nullptr && button->getButtonText().startsWith("SKIN")) {
+            button->onClick();
+            expectPassiveControls(*editor);
+            button->onClick();
+            expectPassiveControls(*editor);
+        }
+
     // Keep injection and capture synchronous so the editor's timer cannot replace the synthetic snapshot.
     meters->setMeters(syntheticMeters());
     saveSnapshot(*editor, neon ? "editor-neon.png" : "editor-device.png");
@@ -299,13 +369,14 @@ int main() {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 8> tests{{
+    const std::array<Test, 9> tests{{
         {"Output parameter contract", outputParameterContract},
         {"Output save/copy/paste/reset", outputStateRoundTrips},
         {"Legacy state Output fallback", legacyStateDefaults},
         {"Named bypass binding", bypassBinding},
         {"Audio/UI meter publication and clear", meterPublicationAndReset},
-        {"Meter panel reset keys", meterResetKeys},
+        {"Meter click reset and host shortcuts", meterTransportKeys},
+        {"Editor host shortcuts and numeric entry", editorTransportAndTextEntry},
         {"Device editor and PNG", deviceEditor},
         {"Neon editor and PNG", neonEditor}
     }};

@@ -1,4 +1,4 @@
-# Vocal Stack 1.1.0
+# Vocal Stack 1.1.1
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
@@ -56,8 +56,8 @@ The dedicated meter panel displays actual input and final output in **dBFS**:
   sample overload, not true/intersample peak; it does not clip or limit the audio.
 - **LVL**: separately labeled leveler gain correction, not output trim.
 
-Click the panel, or focus it and press Return/Space, to clear held/max peaks and
-clip flags without changing the audio, RMS, or live peak envelope. Audio must be
+Click the panel to clear held/max peaks and clip flags without changing the
+audio, RMS, or live peak envelope. Space/Return are not meter shortcuts. Audio must be
 processing for the reset request to take effect; ongoing overload relatches CLIP.
 Meters keep their history independently of the editor's 30 Hz refresh.
 
@@ -76,6 +76,13 @@ The plugin reports 1,344 samples of latency at 44.1 and 48 kHz, about 30.5 and
 28 ms respectively. Version 1.0.0 reported 2,496 samples at those rates. Bitwig can compensate during playback. This latency is
 also present when monitoring through the effect. Bypass uses the aligned dry
 path. CLAP offers stereo, mono-to-stereo, and mono layouts.
+
+## 1.1.1 transport shortcut fix
+
+Normal control clicks no longer request keyboard focus, and the meter panel no
+longer consumes Space/Return. Idle slider value labels follow the same policy
+in both skins, including after a skin change. Deliberate numeric entry still
+accepts typing; commit or cancel the edit to return shortcuts to the host.
 
 ## Included 1.0.3 fixes
 
@@ -124,19 +131,22 @@ putting signal processing in the editor. See `AGENTS.md` for project conventions
 
 ## Verification
 
-- Version 1.1.0 Windows x64 binaries were built natively with MSVC 2026 and
+- Version 1.1.1 Windows x64 binaries were built natively with MSVC 2026 and
   Ninja. All three CTest suites (DSP, CLAP host, editor/state) passed.
 - DSP checks cover Human update boundaries at 44.1–192 kHz, formant RMS matching
   at 44.1–96 kHz, stereo/mono behavior, leveler/doubler balance, gain accuracy and
   smoothing, block-size independence, automation, silence/reset, calibrated
   meters, peak timing and latched overloads. Meter-only resets do not alter audio.
 - Editor tests cover both skins' bounds and control bindings, state copy/paste,
-  legacy sessions without Output, unity reset, keyboard meter clear, and PNG
-  rendering. CLAP tests cover ten automatable parameters and both remote pages.
+  legacy sessions without Output, unity reset, mouse-only meter clear, and PNG
+  rendering. Hidden native-peer tests check Space/Return are unconsumed outside
+  numeric editing, and that numeric commit/cancel restores this behavior. Focus
+  policy is checked again after switching skins. Actual DAW transport behavior
+  still requires a host check. CLAP tests cover ten parameters and both remote pages.
 - Earlier Linux CLAP builds passed 34 validator checks with zero failures and
   warnings. Ten inapplicable checks were skipped. The earlier Linux VST3 build
   passed pluginval at strictness level 5. These external validators have not
-  been rerun for 1.1.0.
+  been rerun for 1.1.1.
 - The DSP and CLAP host tests exercised bypass alignment, three bus layouts,
   state recall, parameter automation, offline processing, and operation at
   several sample rates up to 192 kHz. The formant tests included steady 72 Hz
@@ -147,5 +157,5 @@ putting signal processing in the editor. See `AGENTS.md` for project conventions
   host and Bitwig Studio 6.1.4 on Linux scanned and inserted the CLAP.
   The sandbox's Bitwig audio engine stopped during startup. Playback in
   that Linux Bitwig sandbox remained unverified. The user subsequently confirmed
-  an earlier Windows build works in Bitwig. Version 1.1.0 has passed the offline
+  an earlier Windows build works in Bitwig. Version 1.1.1 has passed the offline
   checks above; listening to this updated version in Bitwig remains a user check.
