@@ -119,6 +119,7 @@ public:
         mode.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe4e9ee));
         mode.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff526071));
         if (graph) graph->setNeon(neon);
+        if (visual) visual->setNeon(neon);
         if (expanded) expanded->setNeon(neon);
         updateBandButtons();
         repaint();
@@ -168,6 +169,10 @@ public:
             if (mode.getNumItems() > 0) {
                 mode.setBounds(area.removeFromTop(29));
                 area.removeFromTop(10);
+            }
+            if (visual) {
+                visual->setBounds(area.removeFromTop(isWave() ? 240 : 260));
+                area.removeFromTop(6);
             }
             for (auto& control : controls) {
                 control->setBounds(area.removeFromTop(48));
@@ -219,6 +224,8 @@ private:
         } else mode.setEnabled(false);
     }
     void setupWave() {
+        visual = std::make_unique<toneui::WaveshaperVisual>(owner, slot);
+        addAndMakeVisible(*visual);
         for (size_t i = 0; i < Waveshaper::shapeNames.size(); ++i)
             mode.addItem(Waveshaper::shapeNames[i], int(i + 1));
         mode.setName("Waveshaper shape");
@@ -230,7 +237,7 @@ private:
         mix->slider.setTooltip("True dry/wet blend; drive can increase level. Output trim is not a limiter.");
         addAndMakeVisible(*mix);
         controls.push_back(std::move(mix));
-        hint.setText("SHAPE -> DRIVE -> OUTPUT\n\nDrive adds real input gain. Use Output trim to leave headroom, then blend with Dry / wet.\n\nIndependent curves with antiderivative antialiasing; not oversampling or alias-free processing.", juce::dontSendNotification);
+        hint.setText("Drive adds real gain. Trim for headroom.\nADAA is not oversampling or alias-free.", juce::dontSendNotification);
     }
     void setupEq() {
         graph = std::make_unique<toneui::EqGraph>(owner, slot);
@@ -278,10 +285,12 @@ private:
         if (owner.parameters.getParameter(id))
             adaptiveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner.parameters, id, adaptive);
         else adaptive.setEnabled(false);
-        hint.setText("Double-click: bell | ends: shelf | sides: cut\nBottom: notch | wheel on band: Q | no spectrum", juce::dontSendNotification);
+        hint.setText("Click: bell | drag ends: shelf / sides: cut\nBottom: notch | wheel: Q | FFT: right dBFS scale", juce::dontSendNotification);
         selectBand(0);
     }
     void setupBands() {
+        visual = std::make_unique<toneui::CrossoverVisual>(owner, slot);
+        addAndMakeVisible(*visual);
         mode.addItem("2 bands | Low / High", 1);
         mode.addItem("3 bands | Low / Mid / High", 2);
         mode.setName("Number of crossover bands");
@@ -347,10 +356,12 @@ private:
         const auto low = toneui::value(owner, toneParameterId(slot, "CrossoverLow"), 250);
         const auto high = toneui::value(owner, toneParameterId(slot, "CrossoverHigh"), 4000);
         hint.setText(three
-            ? "LOW  |  MID  |  HIGH\n\nSplit outputs: Low / Mid / High. Route each through its own FX chain, then recombine the branches downstream.\n\nHigh crossover is active only in 3-band mode. Mid wiring and settings remain stored in 2-band mode."
-            : "LOW  |  HIGH\n\nSplit outputs: Low / High. Route each through its own FX chain, then recombine the branches downstream.\n\nSwitch to 3 bands to enable Mid and the high crossover; inactive settings stay stored.", juce::dontSendNotification);
-        if (three && low >= high)
-            hint.setText("CROSSOVERS OVERLAP\n\nSet Low crossover below High crossover. The displayed controls are requested values; audio follows the processor's crossover-ordering policy.", juce::dontSendNotification);
+            ? "Low / Mid / High: route branches to FX, then recombine. LR4 sum has unity magnitude, not dry phase. Curves show settled requests."
+            : "Low / High: high crossover and Mid wiring are dormant, not erased. LR4 sum has unity magnitude, not dry phase.", juce::dontSendNotification);
+        if (toneui::value(owner, fxParameterId(slot, "On"), 1) < 0.5f) {
+            hint.setText("BYPASSED: one full-band output, not a split. Dormant crossover settings and branch wiring are retained.", juce::dontSendNotification);
+        } else if (three && low >= high)
+            hint.setText("CROSSOVERS OVERLAP: High is clamped to Low in the response and DSP. Separate the cutoffs to restore a useful Mid band.", juce::dontSendNotification);
     }
     void timerCallback() override {
         if (!isShowing()) return;
@@ -368,6 +379,7 @@ private:
     std::array<juce::TextButton, 8> bandButtons;
     std::vector<std::unique_ptr<toneui::Control>> controls, bandControls;
     std::unique_ptr<toneui::EqGraph> graph;
+    std::unique_ptr<toneui::FxMonitorView> visual;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enabledAttachment, adaptiveAttachment;
     std::unique_ptr<ExpandedWindow> expanded;

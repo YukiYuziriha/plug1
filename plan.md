@@ -4,7 +4,58 @@
 
 This document records the staged implementation plan and the subsequent control-design decisions.
 
-### Current implementation checkpoint: 1.4.0
+### Current release scope: 1.4.1 — UI, routing, and FX monitors
+
+The latest amendments in this section take precedence over every conflicting
+historical checkpoint and staged requirement below. This patch retains the
+current UI+monitor scope, not a new effect module or a full Pro-Q/EQ+ clone.
+Release CLAP/VST3 builds and all 12 focused suites passed, including 26 editor
+regression groups. Refreshed packages and installed binaries match by SHA256;
+packaged/installed CLAP smoke checks passed. Both skins were visually reviewed.
+The long legacy DSP suite was excluded; Bitwig listening/transport checks remain
+manual user validation.
+
+- Use embedded **Stack / Routing** top tabs. Changing tabs or panel visibility
+  never changes processing activation or audio-graph connections.
+- Dragging an output pin moves its connection to a new input, replacing its
+  existing destination instead of adding fan-out. Dropping on empty canvas
+  disconnects; clicking without dragging leaves the connection unchanged.
+  **Ctrl/Cmd+output drag** moves the source. Selected cables support dragging
+  either endpoint, with empty-canvas disconnect and undo/redo.
+- Shared-input editing uses the selected cable to identify the connection.
+  The selected-cable inspector includes **Disconnect**; this supersedes the
+  earlier no-button decision. Disconnect and endpoint moves are undoable.
+- The canvas mouse wheel zooms around the cursor **without Ctrl**. Retain pan,
+  +/- zoom, and Fit without taking ordinary DAW transport shortcuts.
+- Present muted voices remain visible; absent voices are hidden. Basic shows
+  the first two voices only. Apply this distinction to stack, routing, and
+  Voice Motion rather than treating mute as removal.
+- A bypassed canonical `mainChorale` in the default Main Mix → Chorale → Output
+  chain folds into a transparent chain display. Custom main-Chorale wiring
+  remains visible even when bypassed. Visibility and bypass presentation never
+  mutate audio-graph topology; bypass changes processing, not connections.
+- EQ shows live input/output **2048-point Hann FFTs**, computed on the UI thread
+  from snapshots with stereo-power combination, not channel summing. Keep the
+  **±24 dB response-gain scale separate from FFT dBFS**. A **single click** on
+  empty graph space adds a bell, not a double-click. Monitoring includes bypass.
+- Waveshaper shows a **static transfer curve**, explicitly not the dynamic ADAA
+  response, plus live stereo pre/post waveforms including bypass.
+- Multiband shows the **requested LR4 response**, input FFT, and **actual output
+  RMS meters**, including bypass (#0 full-band, other outputs silent). Do not
+  portray the requested response as measured band-output spectra.
+- Add standalone `vocalstack_fxmonitor_tests` from `tests/FxMonitorTests.cpp`,
+  linked to `vocalstack_dsp`, registered as `VocalStackFxMonitor`. With plugin
+  suites and optional pinned-history baseline enabled, the configured suite
+  count is **13 including long `VocalStackDSP`, or 12 excluding it**; without the
+  baseline the counts are 12/11. Counts are not passing-test claims.
+- Official references are inspiration, not copied code/assets or full feature
+  parity: [FabFilter analyzer help](https://www.fabfilter.com/help/pro-q/using/analyzer)
+  documents pre/post spectra; [Blender node editing](https://docs.blender.org/manual/en/latest/interface/controls/nodes/editing.html)
+  explicitly allows output fan-out and documents Ctrl-dragging outgoing links.
+  Our single-output connection policy is an intentional difference, not a claim
+  that Blender forbids fan-out. No exact/full Pro-Q or EQ+ analyzer is claimed.
+
+### Historical implementation checkpoint: 1.4.0
 
 The user authorized the core through nodes and Voice Motion, excluding follow-up effects. This checkpoint implements eight stable voice slots, musical Pitch/Fine Detune, stacked formants, neutral-origin controls, routing/execution, independent Chorale slots, draft/active graph persistence, native node editing and snapshots.
 
@@ -19,9 +70,10 @@ Implementation choices and limits:
 - Voice Motion plots fine detune vertically and shows musical Pitch separately in the readout.
 - Nine core suites plus an optional pinned-history baseline comparison cover automated validation. Listening and transport behavior in the user's Bitwig session remain manual validation.
 
-### Subsequent user amendments implemented in 1.4.0
+### Historical user amendments implemented in 1.4.0
 
-These decisions supersede conflicting earlier design text below:
+These superseded the original staged design; the 1.4.1 amendments above now take
+precedence wherever they conflict (especially tabs, cable edits, and monitors):
 
 - Visible cables are the accepted running topology. No separately visible non-running draft; invalid cycles/duplicate/illegal links are rejected atomically and removed from view.
 - Gain compensation is automatic at multi-connection inputs. No visible Sum node or manual compensation box; existing Sum boxes migrate to direct links.
@@ -32,7 +84,10 @@ These decisions supersede conflicting earlier design text below:
 - Advanced header groups Voice stack, Add voice, Open Routing and Reset to Basic; routing inspectors have a wider native panel and expanded EQ view.
 - XP-style character Filter, delay and reverb remain future work.
 
-The remaining sections retain the original staged design and longer-term requirements; amendments above take precedence where the design evolved.
+The remaining sections retain the original staged design and longer-term
+requirements, including historical gestures and analyzer parity goals that are
+not the current implementation contract. The latest 1.4.1 amendments above take
+precedence wherever the design evolved.
 
 Keep Basic mode quick to use. Advanced adds **up to eight generated voices, a live voice monitor, and an optional FX-routing editor**, backed by separate processing modules.
 

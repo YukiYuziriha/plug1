@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "Equalizer.h"
+#include "FxVisuals.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include <cmath>
@@ -45,13 +46,13 @@ inline const std::array<const char*, 14> modeLabels{
     "Low cut 6 dB/oct", "Low cut 12 dB/oct", "Low cut 24 dB/oct", "Low cut 48 dB/oct",
     "High cut 6 dB/oct", "High cut 12 dB/oct", "High cut 24 dB/oct", "High cut 48 dB/oct", "Notch"};
 
-// Reads APVTS values only. The response is the settled requested response, not
-// the audio engine's in-flight smoothing state and not a spectrum analyzer.
-class EqGraph final : public juce::Component, public juce::SettableTooltipClient {
+// Requested response and interactive bands are independent of the captured FFT.
+// Left axis: EQ gain dB. Right axis: stereo-power spectrum peak amplitude dBFS.
+class EqGraph final : public FxMonitorView, public juce::SettableTooltipClient {
 public:
-    EqGraph(Processor& processor, size_t fxSlot) : owner(processor), slot(fxSlot) {
+    EqGraph(Processor& processor, size_t fxSlot) : FxMonitorView(processor, fxSlot, true), owner(processor), slot(fxSlot) {
         setName("EQ response graph");
-        setTitle("EQ response: drag bands, wheel for Q, double-click to add");
+        setTitle("EQ response and live stereo spectrum: click to add, drag bands, wheel for Q");
         setWantsKeyboardFocus(false);
         setMouseClickGrabsKeyboardFocus(false);
         setTooltipText();
@@ -59,10 +60,16 @@ public:
     }
     ~EqGraph() override { finishGesture(); }
     std::function<void(size_t)> onSelect;
-    void setNeon(bool enabled) { neon = enabled; repaint(); }
     void select(size_t band) { selected = juce::jmin(size_t(7), band); rebuildPaths(); repaint(); }
     void resized() override { rebuildPaths(); }
-    void visibilityChanged() override { if (!isShowing()) finishGesture(); }
+    void visibilityChanged() override {
+        FxMonitorView::visibilityChanged();
+        if (!isShowing()) { finishGesture(); pendingClick = false; pendingMode = -1; }
+    }
+    void parentHierarchyChanged() override {
+        FxMonitorView::parentHierarchyChanged();
+        if (!isShowing()) { finishGesture(); pendingClick = false; pendingMode = -1; }
+    }
     void refresh(bool force = false) {
         EqualizerSettings next;
         next.enabled = value(owner, fxParameterId(slot, "On"), 1) >= 0.5f;
@@ -106,6 +113,10 @@ public:
                            int(x) - 12, int(area.getBottom()) + 3, 30, 14, juce::Justification::centred);
             }
         }
+        g.setColour(juce::Colour(0xffa8b3bb));
+        g.drawText("Hz", 1, int(area.getBottom()) + 3, 27, 14, juce::Justification::centredRight);
+        paintSpectrum(g, area, true);
+        paintSpectrumScale(g, area);
         for (int db : {-24, -12, 0, 12, 24}) {
             const auto y = yFor(float(db));
             g.setColour(juce::Colour(0xffa8b3bb).withAlpha(db == 0 ? 0.45f : 0.14f));
@@ -139,16 +150,20 @@ public:
         g.setColour(juce::Colour(0xff7e9297).withAlpha(0.5f));
         g.drawRoundedRectangle(bounds.reduced(0.5f), 5, 1);
         g.setColour(juce::Colour(0xffa8b3bb));
-        g.drawText(hoverHint.isEmpty() ? "Hz / dB   |   requested response" : hoverHint,
-                   getLocalBounds().removeFromTop(18).reduced(7, 0), juce::Justification::centredRight);
+        auto title = getLocalBounds().removeFromTop(18).reduced(7, 0);
+        g.drawText("FFT dBFS", title.removeFromRight(62), juce::Justification::centredRight);
+        g.drawText(!settings.enabled ? "EQ dB | BYPASS | IN / OUT FFT"
+                       : isStreamStalled() ? "EQ dB | fading last FFT"
+                                              : hasLiveFrame() ? "EQ dB | IN dim / OUT bright FFT"
+                                        : "EQ dB | no live audio", title, juce::Justification::centredLeft);
     }
     void mouseMove(const juce::MouseEvent& e) override {
         const bool onBand = hit(e.position) >= 0;
         const int mode = edgeMode(e.position);
         const juce::String next = onBand ? "Drag: frequency / gain | wheel: Q"
-            : mode == 13 ? "Drag inward: add notch"
-            : mode == 1 || mode == 2 ? "Drag curve end: add shelf"
-            : mode >= 0 ? "Drag edge: add cut" : "Double-click: add bell";
+            : mode == 13 ? "Click: bell | drag inward: notch"
+            : mode == 1 || mode == 2 ? "Click: bell | drag curve end: shelf"
+            : mode >= 0 ? "Click: bell | drag edge: cut" : "Click empty space: add bell";
         if (hoverHint != next) { hoverHint = next; setTooltip(next); repaint(); }
         setMouseCursor(onBand ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::CrosshairCursor);
     }
@@ -156,14 +171,17 @@ public:
     void mouseDown(const juce::MouseEvent& e) override {
         finishGesture();
         pendingMode = -1;
+        pendingClick = false;
         if (!e.mods.isLeftButtonDown() || e.getNumberOfClicks() > 1) return;
         refresh();
         const int found = hit(e.position);
         if (found >= 0) { choose(size_t(found)); dragBand = found; return; }
         pendingMode = edgeMode(e.position);
+        pendingClick = plot().contains(e.position);
     }
     void mouseDrag(const juce::MouseEvent& e) override {
         if (!e.mods.isLeftButtonDown() || e.getDistanceFromDragStart() < 3) return;
+        pendingClick = false;
         if (dragBand < 0 && pendingMode >= 0) {
             dragBand = create(pendingMode, e.position);
             pendingMode = -1;
@@ -176,12 +194,19 @@ public:
         }
         moveBand(size_t(dragBand), e.position);
     }
-    void mouseUp(const juce::MouseEvent&) override { finishGesture(); pendingMode = -1; }
-    void mouseDoubleClick(const juce::MouseEvent& e) override {
-        finishGesture();
-        if (!e.mods.isLeftButtonDown() || !plot().contains(e.position) || hit(e.position) >= 0) return;
-        create(0, e.position);
+    void mouseUp(const juce::MouseEvent& e) override {
+        const bool add = pendingClick && e.getNumberOfClicks() == 1
+            && e.getDistanceFromDragStart() < 3 && plot().contains(e.position);
+        finishGesture(); pendingMode = -1; pendingClick = false;
+        if (add) {
+            refresh();
+            const int found = hit(e.position);
+            if (found >= 0) choose(size_t(found)); else create(0, e.position);
+        }
     }
+    // The first mouseUp already added/selected a band. Never duplicate it on
+    // the second click, even when the first click filled the last free slot.
+    void mouseDoubleClick(const juce::MouseEvent&) override { pendingClick = false; }
     void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override {
         const int found = hit(e.position);
         if (found < 0 || wheel.deltaY == 0 || !gestures.empty()) return;
@@ -195,8 +220,10 @@ public:
 private:
     void setTooltipText() {
         // Component is deliberately not a keyboard command target.
-        const juce::String instructions = "Double-click empty space: bell. Drag a curve end: shelf. "
-            "Drag a side edge: cut. Drag bottom edge: notch. Wheel on a band: Q.";
+        const juce::String instructions = "Single-click empty space: bell. Click a band: select. Drag a curve end: shelf. "
+            "Drag a side edge: cut. Drag bottom edge: notch. Wheel on a band: Q. "
+            "Left scale: requested EQ gain dB. Right: live FFT peak dBFS, Hann window, stereo power. "
+            "Input dim, output bright; FFT is independent of the +/-24 dB response scale.";
         setDescription(instructions);
         setTooltip(instructions);
     }
@@ -212,7 +239,7 @@ private:
         return -1;
     }
     juce::Rectangle<float> plot() const {
-        return getLocalBounds().toFloat().withTrimmedLeft(32).withTrimmedRight(13)
+        return getLocalBounds().toFloat().withTrimmedLeft(32).withTrimmedRight(34)
             .withTrimmedTop(24).withTrimmedBottom(23);
     }
     float xFor(float hz) const {
@@ -299,7 +326,7 @@ private:
     size_t slot, selected = 0;
     EqualizerSettings settings;
     double sampleRate = 48000;
-    bool neon = false;
+    bool pendingClick = false;
     int dragBand = -1, pendingMode = -1;
     std::vector<juce::RangedAudioParameter*> gestures;
     juce::String hoverHint;

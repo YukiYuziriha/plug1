@@ -30,6 +30,7 @@ Processor::Processor()
         .withInput("Vocal In", juce::AudioChannelSet::stereo(), true)
         .withOutput("Stack Out", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, stateType, makeParameters()) {
+    engine.setFxMonitor(&fxMonitor);
     setLatencySamples(VocalEngine::defaultLatency);
     for (size_t i = 0; i < values.size(); ++i)
         values[i] = parameters.getRawParameterValue(parameterIds[i]);
@@ -239,6 +240,12 @@ void Processor::render(juce::AudioBuffer<float>& audio, bool hostBypass) {
                    audio.getNumSamples(), settings(), hostBypass);
     voiceBridge.publish(engine.voiceSnapshots());
     metering.publish(engine.meters());
+}
+
+void Processor::retainFxMonitor(size_t slot) { fxMonitor.retain(slot); }
+void Processor::releaseFxMonitor(size_t slot) { fxMonitor.release(slot); }
+bool Processor::readFxMonitor(size_t slot, FxMonitorFrame& out) const {
+    return fxMonitor.read(slot, out);
 }
 
 Meters Processor::getMeters() const {

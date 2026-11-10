@@ -424,15 +424,17 @@ void routingUiRegression() {
         expectNear(double(owner.getRoutingLayout().getChildWithProperty("id", 100).getProperty("y")), 120,
                    "Redo did not restore node position");
         click("Undo");
-        // Drag an output onto an occupied input: keep an invalid draft, not a new audio plan.
+        // Dropping an occupied output onto its current input is an accepted replacement.
         canvas->mouseDown(routingMouse(*canvas, {210, 62}));
         canvas->mouseDrag(routingMouse(*canvas, {240, 60}, true));
         canvas->mouseUp(routingMouse(*canvas, {240, 60}, true));
-        expect(owner.getRoutingGraph().links.size() == 2 && owner.getRoutingError().isNotEmpty(),
-               "Duplicate cable was left visible instead of rejected");
-        expectSavedGraph(savedProcessorState(owner), "ActiveRoutingGraph", graph);
-        expect(graphText(owner.getRoutingGraph()) == graphText(graph),
-               "Rejected cable changed the accepted graph");
+        expect(owner.getRoutingGraph().links.size() == 2 && owner.getRoutingError().isEmpty(),
+               "Occupied output replacement was duplicated or rejected");
+        auto replacement = graph;
+        replacement.links = {graph.links[1], graph.links[0]};
+        expectSavedGraph(savedProcessorState(owner), "ActiveRoutingGraph", replacement);
+        expect(graphText(owner.getRoutingGraph()) == graphText(replacement),
+               "Same-destination replacement changed the accepted connections");
         canvas->mouseDown(routingMouse(*canvas, {260, 35}));
         canvas->mouseUp(routingMouse(*canvas, {260, 35}));
         click("Bypass FX");

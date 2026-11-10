@@ -651,6 +651,7 @@ void editorSkin(bool neon) {
 }
 
 #include "ProcessorUiRegressionTests.h"
+#include "RoutingPolishTests.h"
 
 void deviceEditor() { editorSkin(false); }
 void neonEditor() { editorSkin(true); }
@@ -662,7 +663,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 21> tests{{
+    const std::array<Test, 26> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -682,6 +683,11 @@ int main() {
         {"Tone FX UI, EQ gestures and multiband cable endpoints", vocalstack::toneUiTests::run},
         {"Voice 1 FX alters only Voice 1 with automatic merging", perVoiceFxSignalPath},
         {"Routing mouse edits, history, focus and both skins", routingUiRegression},
+        {"Embedded Stack/Routing tabs retain Advanced in both skins", routingPolish::embeddedTabs},
+        {"Occupied output replacement, disconnect inspector and cursor zoom", routingPolish::outputGestures},
+        {"Multiband output edits preserve other ports", routingPolish::multibandOutputs},
+        {"Routing voice visibility follows presence, not mute", routingPolish::voiceVisibility},
+        {"Canonical Chorale folding edits the real graph and follows host", routingPolish::foldedMainChorale},
         {"Device editor and PNG", deviceEditor},
         {"Neon editor and PNG", neonEditor}
     }};

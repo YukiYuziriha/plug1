@@ -4,6 +4,7 @@
 #include "Waveshaper.h"
 #include "Equalizer.h"
 #include "Multiband.h"
+#include "FxMonitor.h"
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -144,6 +145,12 @@ public:
     // installs them; prepare publishes the default immediately. Controls/bypass
     // do not reduce bounds, since automation can reactivate connected effects.
     double tailSeconds() const noexcept { return reportedTail.load(std::memory_order_acquire); }
+    // Non-owning, opt-in instrumentation. Set only with audio quiescent; the
+    // monitor must outlive the executor. Standalone DSP remains uninstrumented.
+    void setFxMonitor(FxMonitor* monitor) noexcept {
+        fxMonitor = monitor;
+        if (fxMonitor) fxMonitor->reset(rate > 0 ? rate : 48000);
+    }
     RoutingExecutor() = default;
     RoutingExecutor(const RoutingExecutor&) = delete;
     RoutingExecutor& operator=(const RoutingExecutor&) = delete;
@@ -236,6 +243,7 @@ public:
         last = correction = {};
         transition = 0;
         rendered = false;
+        if (fxMonitor) fxMonitor->reset(rate > 0 ? rate : 48000);
     }
     StereoSample process(const RoutingSources& sources, const RoutingControls& controls) noexcept {
         const auto write = retireWrite.load(std::memory_order_relaxed);
@@ -245,6 +253,7 @@ public:
             if (auto* next = pending.exchange(nullptr, std::memory_order_acq_rel)) {
                 auto* old = active;
                 active = next;
+                if (fxMonitor) fxMonitor->reset(rate);
                 reportedTail.store(next->tailSeconds, std::memory_order_release);
                 if (old) {
                     retired[write % retired.size()] = old;
@@ -254,6 +263,7 @@ public:
             }
         }
         if (!active) return {};
+        if (fxMonitor) fxMonitor->beginSample();
         updateRegions(controls);
         for (int i = 0; i < active->count; ++i) {
             auto& step = active->steps[i];
@@ -264,6 +274,10 @@ public:
             else ports[0] = {};
             auto& value = ports[0];
             const auto& n = step.node;
+            const int monitorSlot = fxMonitor && isEffect(n.type) ? routingFxSlot(n.id) : -1;
+            const bool monitoring = monitorSlot >= 0 && fxMonitor->capturing(size_t(monitorSlot));
+            StereoSample monitorInput{};
+            int monitorBands = 0;
             const auto input = [&](int pin) -> Value {
                 int contributors = 0, single = 0;
                 for (int wire = 0; wire < step.inputCount; ++wire)
@@ -337,6 +351,7 @@ public:
             }
             case NodeType::chorale: {
                 value = input(0);
+                if (monitoring) monitorInput = value.audio;
                 const int slot = routingFxSlot(n.id);
                 FxSettings fx{n.enabled && (!n.mainControls || controls.choraleOn),
                               n.mainControls ? controls.choraleMix : n.mix,
@@ -352,6 +367,7 @@ public:
             }
             case NodeType::waveshaper: {
                 value = input(0);
+                if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
                 auto settings = fx.waveshaper; settings.enabled = settings.enabled && fx.enabled;
                 step.fx->waveshaper.process(value.audio.left, value.audio.right, settings);
@@ -359,6 +375,7 @@ public:
             }
             case NodeType::equalizer: {
                 value = input(0);
+                if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
                 auto settings = fx.eq; settings.enabled = settings.enabled && fx.enabled;
                 step.fx->eq.process(value.audio.left, value.audio.right, settings);
@@ -366,7 +383,9 @@ public:
             }
             case NodeType::crossover: {
                 const auto in = input(0);
+                if (monitoring) monitorInput = in.audio;
                 const auto fx = effectSettings(n, controls);
+                monitorBands = fx.enabled ? (fx.bandCount == 2 ? 2 : 3) : 1;
                 // Disabled crossover is full-band on port zero; other ports silent.
                 // Keep all filter histories warm even while bypassed.
                 const auto bands = step.fx->crossover.process(in.audio.left, in.audio.right,
@@ -387,6 +406,22 @@ public:
                 break;
             }
             case NodeType::output: value = input(0); break;
+            }
+            if (monitoring) {
+                auto monitorOutput = value.audio;
+                std::array<std::array<float, 2>, 3> bands{};
+                if (monitorBands != 0) {
+                    monitorOutput = {};
+                    for (int band = 0; band < monitorBands; ++band) {
+                        const auto audio = ports[band].audio;
+                        bands[size_t(band)] = {audio.left, audio.right};
+                        monitorOutput.left += audio.left;
+                        monitorOutput.right += audio.right;
+                    }
+                }
+                fxMonitor->capture(size_t(monitorSlot), n.id,
+                    monitorInput.left, monitorInput.right,
+                    monitorOutput.left, monitorOutput.right, monitorBands, bands);
             }
         }
         auto out = active->values[active->output][0].audio;
@@ -559,6 +594,7 @@ private:
         reportedTail.store(0, std::memory_order_release);
     }
     static_assert(std::atomic<double>::is_always_lock_free, "tail publication requires lock-free doubles");
+    FxMonitor* fxMonitor = nullptr;
     std::atomic<double> reportedTail{0};
     double rate = 0;
     Plan* active = nullptr;

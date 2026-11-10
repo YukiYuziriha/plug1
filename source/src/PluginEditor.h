@@ -36,8 +36,10 @@ private:
     std::array<juce::Slider, knobParameterIds.size()> knobs;
     std::array<juce::Label, knobParameterIds.size()> labels;
     std::array<juce::TextButton, switchParameterIds.size()> switches;
-    juce::TextButton theme, reset, copy, paste, drawer, routing;
-    std::unique_ptr<RoutingWindow> routingWindow;
+    juce::TextButton theme, reset, copy, paste, drawer, stackTab, routingTab;
+    RoutingPanel routingPanel;
+    bool routingVisible = false;
+    bool routingOpened = false;
     DoublerPanel advancedPanel;
     ChoralePanel choralePanel;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, knobParameterIds.size()> knobLinks;

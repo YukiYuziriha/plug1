@@ -1,7 +1,11 @@
-# Vocal Stack 1.4.0
+# Vocal Stack 1.4.1
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
+
+1.4.1 polishes embedded routing and adds live per-effect visual monitors; it adds
+no new effect module. Release CLAP/VST3 packages are refreshed. Automated checks
+passed; listening and transport validation in the user's Bitwig session remain manual.
 
 ## Install
 
@@ -86,9 +90,11 @@ Use Output for manual trim. Other modules can still change final output level.
 
 ### Advanced Doubler
 
-**Show Advanced / Hide Advanced** only changes editor size, never sound. The
-separate **Voice stack** switch selects the saved custom stack instead of
-Basic's two voices. Fresh configurations show two voice cards and **+ Add voice**.
+The embedded **Stack / Routing** top tabs select the editor view, never the
+processing mode or sound. The separate **Voice stack** switch selects the saved
+custom stack instead of Basic's first two voices. Present but muted voices remain
+visible in the stack, routing view, and Voice Motion; absent slots are hidden.
+Basic displays only the first two voices. Fresh configurations show two voice cards and **+ Add voice**.
 Add up to eight generated voices (the lead is separate), in a horizontally scrollable
 card area. **On** mutes without removing the card; **Remove** hides/disconnects an
 added slot without renumbering the others or erasing its settings. Re-adding uses
@@ -152,14 +158,24 @@ Until audio is processed, no live voice measurements are available.
 
 ### Optional FX routing
 
-Click **Open Routing** in the main row or Advanced header. Drag output pins to
-input pins, drag nodes to arrange them, and drag blank space to pan. Ctrl+wheel
-or the +/- buttons zoom; **Fit** frames the patch. **Drag a cable's input end**
-to another input to reconnect it, or release over blank space to disconnect it.
-Select a cable to drag either end, or Ctrl+drag its output end. Shared inputs
-pick the selected cable, otherwise the last connected cable. There is no
-Disconnect button. Toolbar **Undo/Redo** restores edits; ordinary controls leave
-transport shortcuts to the DAW.
+Select the embedded **Routing** top tab (beside **Stack**). Drag nodes to
+arrange them and blank space to pan. The mouse wheel over the canvas zooms
+around the cursor without Ctrl; +/- and **Fit** are also available.
+
+Drag an output pin to an input to connect it. An already connected output moves
+its cable to the new destination, replacing its existing destination rather than
+adding fan-out; dropping it on empty canvas disconnects it. A click without a
+drag leaves wiring unchanged. **Ctrl/Cmd+drag an output** moves the cable's
+source instead. Select a cable to drag either endpoint; dropping an endpoint on
+empty canvas disconnects it. At a shared input, select the intended cable to
+choose which connection to edit. The selected-cable inspector also provides
+**Disconnect**. Endpoint moves and disconnections support toolbar **Undo/Redo**;
+ordinary controls leave transport shortcuts to the DAW.
+
+[Blender's official node-editing documentation](https://docs.blender.org/manual/en/latest/interface/controls/nodes/editing.html)
+verifies that Blender allows multiple links from an output and Ctrl+drag moves
+outgoing links. It is workflow inspiration, not an exact copy: our single-output
+connection policy is intentional, while inputs still support compensated fan-in.
 
 Available nodes: Lead, Voice sources, Chorale, Waveshaper, EQ8, Multiband,
 Dry/Wet Mix, Output. One FX node is one independent machine; routing chooses
@@ -186,8 +202,13 @@ short de-click ramp). An unused disconnected effect does not invalidate a workin
 bypass route. An FX whose input alone is disconnected may finish its short tail.
 Structural errors—cycles, exact duplicate cables, illegal ports, or unsupported
 additional branch latency—are rejected without leaving different cables on screen.
-The visible graph is always the accepted running topology, never a separate draft. Per-voice Delay is intentional
-timing, not latency to be compensated away.
+Visible cables represent accepted topology, never a separate draft. The one
+presentation-only exception is a bypassed canonical `mainChorale` in the default
+Main Mix → Chorale → Output chain: it folds into a transparent chain display.
+Custom main-Chorale wiring remains visible even when bypassed. Tab visibility,
+voice visibility, and bypass display folding never rewrite audio-graph connections;
+bypass changes processing, not topology. Per-voice Delay is intentional timing,
+not latency to be compensated away.
 
 Graph plans are validated/prepared off audio and handed off lock-free. Unchanged
 FX identities retain their history. A 10 ms output-offset ramp de-clicks topology
@@ -209,20 +230,34 @@ result. Controls and shape transitions are smoothed. First-order antiderivative
 antialiasing reduces aliasing; this is **not** oversampling or alias-free processing.
 It adds no explicit sample delay but can change frequency-dependent phase/level.
 
+The monitor pairs a **static transfer curve** with live stereo pre/post waveforms.
+The static curve illustrates the memoryless shaping function; it explicitly does
+not depict the dynamic ADAA response. Waveforms show actual input/output samples,
+including bypass, rather than an animation inferred from the curve.
+
 ### EQ8
 
 Eight stable bands with 14 independently implemented modes: bell, two shelf slopes
 per side, 6/12/24/48 dB cuts per side, and notch. Graph editing follows EQ+-style
-interaction: double-click to create a bell, drag a point for frequency/gain, wheel
+interaction: a **single click** on empty graph space creates a bell (not a
+double-click), drag a point for frequency/gain, wheel
 on a point for Q, drag curve ends for shelves, side edges for cuts, bottom for notch.
 Select a band for exact values/type, enable or remove it. Global frequency Shift,
 output Gain and Adaptive Q are available. **Expand EQ** opens a larger editor.
 
-The response curve uses our actual coefficient builder, not a fabricated spectrum.
-There is currently **no spectrum/reference-track analyzer**, dynamic EQ, or claim
-of sonic equivalence to Bitwig EQ+. UI inspiration includes EQ+ gestures and
+The response curve uses our actual coefficient builder on a **−24 to +24 dB**
+response scale. Live input/output spectra use **2048-point Hann-windowed FFTs**
+computed on the UI thread from audio snapshots, combining stereo power rather
+than summing channels and cancelling opposite-polarity signals. Their **dBFS**
+scale is separate from the EQ response-gain scale; the spectrum is measured audio,
+not the coefficient response. Input/output monitoring also reflects bypass.
+
+UI inspiration includes EQ+ gestures,
 [Pro-Q's selected-band controls](https://www.fabfilter.com/help/pro-q/using/bandcontrols),
-with original code/assets and the existing Device/Neon palettes.
+and [FabFilter's official analyzer documentation](https://www.fabfilter.com/help/pro-q/using/analyzer)
+for pre/post spectrum readability. Original code/assets and Device/Neon palettes
+remain. This is not an exact or complete Pro-Q/EQ+ analyzer, dynamic EQ, external
+reference-track analyzer, or claim of sonic equivalence.
 
 ![EQ8 selected-band editor in the Neon palette](VocalStack-EQ.png)
 
@@ -240,6 +275,11 @@ in three-band mode #0=Low, #1=Mid, #2=High. Switching to two bands preserves any
 stored #2 cables, visibly dashed and silent; review band assignments when switching.
 Bypassed splitters pass full-band input on #0 only, with the other ports silent.
 Filter state/control changes are smoothed; crossover ordering is bounded by DSP.
+
+The monitor shows the **requested LR4 crossover response**, a live input FFT,
+and **actual per-output RMS meters**. The response plot describes the requested
+filters, not measured output spectra. RMS readings reflect actual output audio,
+including bypass: full-band input on #0 and silence on the other outputs.
 
 XP-style character Filter, delay and reverb remain follow-ups in [the plan](plan.md).
 
@@ -311,11 +351,14 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The first configure fetches pinned dependencies. Eleven core test suites cover DSP,
-Chorale, routing, voices, FX automation, pitch/formant spectra, tone processors,
-multiband, CLAP hosting, and editor/state. Optionally configure with
-`-DVOCALSTACK_TEST_BASELINE=ON` to add a twelfth comparison suite; this requires
-Python and the pinned pre-routing revision in local Git history. The plugins appear under
+The first configure fetches pinned dependencies. With plugins enabled, twelve
+suites cover DSP, Chorale, routing, voices, FX automation, pitch/formant spectra,
+tone processors, multiband, FX monitoring (`VocalStackFxMonitor`), CLAP hosting,
+and editor/state. Configure with `-DVOCALSTACK_TEST_BASELINE=ON` for the optional
+pinned-history comparison: **13 suites including the long `VocalStackDSP` suite,
+or 12 excluding it** (`ctest --test-dir build -C Release -E '^VocalStackDSP$'
+--output-on-failure`). The baseline requires Python and the pinned pre-routing
+revision in local Git history. These are configured counts, not passing results. The plugins appear under
 `build/VocalStack_artefacts/Release/`. To build just the portable DSP tests,
 configure with `-DVOCALSTACK_BUILD_PLUGIN=OFF`.
 
@@ -356,6 +399,22 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.4.1:** Release CLAP/VST3 built with MSVC 2026. All **12 focused CTest suites**
+passed, including **26 editor/state test groups** in both skins. Coverage includes
+single-click EQ creation, occupied-output moves/disconnection, selected-cable
+Disconnect/undo, embedded tabs, voice visibility, canonical Chorale folding,
+FFT normalization and stereo cancellation safety, measured band RMS, independent
+FX capture, concurrent snapshot readers, and reset/epoch invalidation. Monitored
+and unmonitored routing renders match bit-for-bit; the pinned default-path
+comparison retains unchanged audio and latency.
+
+Rendered screenshots were visually reviewed in both skins. Packaged and installed
+CLAP smoke tests passed; both installed formats match their refreshed packages by
+SHA256. The long legacy `VocalStackDSP` suite was excluded. Automated checks and
+screenshots are not a listening or transport check in the user's Bitwig session.
+
+### Historical validation records
 
 - 1.4.0 Release CLAP/VST3 built with MSVC 2026. All 11 focused suites passed,
   including 21 editor cases, independent per-voice FX, automatic fan-in,

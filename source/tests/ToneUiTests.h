@@ -4,6 +4,8 @@
 #include "RoutingPanel.h"
 #include <array>
 #include <cmath>
+#include <complex>
+#include <limits>
 #include <iostream>
 #include <memory>
 #include <set>
@@ -11,8 +13,8 @@
 #include <vector>
 
 // Include at file scope. MAIN calls run() on the GUI/message thread after its
-// ScopedJuceInitialiser_GUI has been constructed. No DSP preparation, sleeps,
-// popup-menu automation, or production/private-access hooks are needed.
+// ScopedJuceInitialiser_GUI has been constructed. Checks use public APIs only;
+// the live-view check prepares DSP and polls pending timers with a bounded wait.
 namespace vocalstack::toneUiTests {
 
 inline void require(bool condition, const juce::String& message) {
@@ -202,10 +204,10 @@ private:
     std::vector<juce::AudioProcessorParameter*> parameters;
 };
 
-// The public graph's documented axes: log 20..20k, +/-24 dB. No private paths,
-// engine state, spectrum buffers, or GUI timer dispatch are inspected.
+// The public graph's documented axes: log 20..20k, +/-24 dB, with a
+// 34-pixel right gutter for the independent spectrum dBFS scale.
 inline juce::Rectangle<float> plot(const toneui::EqGraph& graph) {
-    return graph.getLocalBounds().toFloat().withTrimmedLeft(32).withTrimmedRight(13)
+    return graph.getLocalBounds().toFloat().withTrimmedLeft(32).withTrimmedRight(34)
         .withTrimmedTop(24).withTrimmedBottom(23);
 }
 inline juce::Point<float> eqPoint(const toneui::EqGraph& graph, float frequency, float db) {
@@ -280,8 +282,14 @@ inline void eqPanel(bool neon) {
     const auto gId = eqBandParameterId(1, 0, "Gain");
     const auto qId = eqBandParameterId(1, 0, "Q");
     const auto created = eqPoint(*graph, 1000, 6);
+    graph->mouseDown(mouse(*graph, created, created));
+    require(enabledBands(owner) == 0, "single click must not create before mouseUp");
+    graph->mouseUp(mouse(*graph, created, created, false, 0));
+    require(enabledBands(owner) == 1, "single down/up did not create exactly one band");
+    const auto beforeDouble = slotValues(owner);
     doubleClick(*graph, created);
-    require(enabledBands(owner) == 1, "double-click did not create one band");
+    require(enabledBands(owner) == 1 && slotValues(owner) == beforeDouble,
+            "double-click on existing band duplicated or edited it");
     near(read(owner, eqBandParameterId(1, 0, "Mode")), 0, "new band is not a bell");
     near(read(owner, fId), 1000, "bell creation frequency", 0.1f);
     near(read(owner, gId), 6, "bell creation gain", 0.02f);
@@ -299,6 +307,7 @@ inline void eqPanel(bool neon) {
         (moved.x + 2 - plot(*graph).getX()) / plot(*graph).getWidth());
     near(read(owner, fId), expectedFrequency, "drag frequency", 0.2f);
     near(read(owner, gId), 9, "drag gain", 0.02f);
+    require(enabledBands(owner) == 1, "dragging an existing band created an extra band");
     const auto frequencyAfter = gestures.count(parameter(owner, fId));
     const auto gainAfter = gestures.count(parameter(owner, gId));
     require(frequencyAfter.begins == frequencyBefore.begins + 1 && frequencyAfter.ends == frequencyBefore.ends + 1
@@ -503,7 +512,8 @@ inline void routingPorts(bool neon) {
     require(owner.getRoutingGraph().links.size() == 4, "fan-in replaced another crossover cable");
     transport(panel);
     auto* inspector = find<ToneEffectPanel>(panel, [](auto&) { return true; });
-    require(inspector != nullptr && inspector->getWidth() == 400, "multiband inspector was not integrated");
+    require(inspector != nullptr && inspector->getWidth() >= 320 && inspector->getWidth() <= 400,
+                "multiband inspector was not integrated in its adaptive viewport");
     visibleLayout(*inspector);
     require(find<juce::Button>(panel, [](auto& b) { return b.getButtonText() == "Disconnect"; }) == nullptr,
             "obsolete Disconnect toolbar still present");
@@ -521,18 +531,28 @@ inline void routingPorts(bool neon) {
     require(links(owner, 100, 13, 2) == 0, "Redo did not disconnect High");
     action(panel, "Undo");
 
-    // Pick the High cable at its cubic midpoint, then move its selected source end.
+    // Selection does not change the ordinary output gesture: move its destination,
+    // or disconnect on empty space, never move its source without Ctrl/Command.
     click(surface, {495, 84});
-    drag(surface, {450, 106}, leadOutput);
-    require(links(owner, 1, 13, 0) == 1 && links(owner, 100, 13, 2) == 0,
-            "selected source-end reconnection failed/default sourcePin not reset");
+    drag(surface, {450, 106}, empty);
+    require(links(owner, 100, 13, 2) == 0 && links(owner, 1, 100, 0) == 1
+            && links(owner, 100, 13, 0) == 1 && links(owner, 100, 13, 1) == 1,
+            "selected occupied output drag did not disconnect only High's destination");
     action(panel, "Undo");
-    require(links(owner, 100, 13, 2) == 1, "source-end Undo lost High pin");
-    drag(surface, {450, 106}, leadOutput,
-         juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::ctrlModifier);
-    require(links(owner, 1, 13, 0) == 1 && links(owner, 100, 13, 2) == 0, "Ctrl-output drag did not rewire source");
-    action(panel, "Undo");
-    require(links(owner, 100, 13, 2) == 1, "Ctrl-output Undo lost High pin");
+    require(links(owner, 100, 13, 2) == 1, "output-destination Undo lost High pin");
+    for (const int modifier : {juce::ModifierKeys::ctrlModifier, juce::ModifierKeys::commandModifier}) {
+        click(surface, {495, 84});
+        drag(surface, {450, 106}, leadOutput, juce::ModifierKeys::leftButtonModifier | modifier);
+        require(links(owner, 1, 13, 0) == 1 && links(owner, 100, 13, 2) == 0,
+                "Ctrl/Command source-end reconnection failed/default sourcePin not reset");
+        require(links(owner, 1, 100, 0) == 0 && owner.getRoutingGraph().links.size() == 3
+                && links(owner, 100, 13, 0) == 1 && links(owner, 100, 13, 1) == 1,
+                "source replacement did not clear the new output's previous links or changed other bands");
+        action(panel, "Undo");
+        require(links(owner, 100, 13, 2) == 1 && links(owner, 1, 100, 0) == 1
+                && links(owner, 1, 13, 0) == 0 && owner.getRoutingGraph().links.size() == 4,
+                "source-end Undo did not restore both occupied outputs");
+    }
 
     // A self-cycle rejection must not leave a draft or remove the original High.
     drag(surface, outputInput, {260, 62});
@@ -564,14 +584,184 @@ inline void routingPorts(bool neon) {
     passive(stored);
 }
 
+inline void spectrumCalibration() {
+    constexpr size_t bin = 64;
+    std::array<std::array<float, toneui::FxSpectrum::size>, 2> samples{};
+    const auto fill = [&](float left, float right) {
+        for (size_t i = 0; i < toneui::FxSpectrum::size; ++i) {
+            const auto x = float(std::sin(6.283185307179586 * double(bin * i) / toneui::FxSpectrum::size));
+            samples[0][i] = left * x; samples[1][i] = right * x;
+        }
+    };
+    toneui::FxSpectrum spectrum;
+    for (const auto amplitudes : {std::array<float, 2>{1, 1}, {1, -1}, {.25f, -.25f}, {1, 0}}) {
+        fill(amplitudes[0], amplitudes[1]); spectrum.clear(); spectrum.update(samples);
+        const float expected = float(10 * std::log10((amplitudes[0] * amplitudes[0]
+            + amplitudes[1] * amplitudes[1]) * .5));
+        near(spectrum.levelsDbFS()[bin], expected, "Hann/stereo-power FFT calibration", .002f);
+        for (float db : spectrum.levelsDbFS()) require(std::isfinite(db) && db >= -96, "invalid FFT level");
+    }
+    // DC/Nyquist must not receive the interior bins' factor of two.
+    for (bool nyquist : {false, true}) {
+        for (size_t i = 0; i < toneui::FxSpectrum::size; ++i)
+            samples[0][i] = samples[1][i] = nyquist && i % 2 ? -1.0f : 1.0f;
+        spectrum.clear(); spectrum.update(samples);
+        near(spectrum.levelsDbFS()[nyquist ? toneui::FxSpectrum::size / 2 : 0], 0, "FFT endpoint normalization", .002f);
+    }
+    samples = {}; spectrum.clear(); spectrum.update(samples);
+    for (float db : spectrum.levelsDbFS()) near(db, -96, "silence FFT floor");
+    samples[0][0] = std::numeric_limits<float>::quiet_NaN();
+    samples[1][1] = std::numeric_limits<float>::infinity();
+    spectrum.update(samples);
+    for (float db : spectrum.levelsDbFS()) near(db, -96, "nonfinite FFT sanitization");
+}
+
+inline void staticTransfer() {
+    for (int shape : {0, 1, 2}) for (float drive : {-24.0f, 0.0f, 48.0f})
+        for (float output : {-60.0f, 0.0f, 24.0f}) for (float mix : {0.0f, .4f, 1.0f})
+            for (float x : {-2.0f, -.25f, 0.0f, .25f, 2.0f}) {
+                const double curve = toneui::WaveshaperVisual::settledTransfer(x, drive, output, mix, shape, true);
+                Waveshaper dsp; dsp.prepare(48000);
+                WaveshaperSettings settings; settings.driveDb = drive; settings.outputDb = output;
+                settings.mix = mix; settings.shape = shape;
+                float left = x, right = -x;
+                dsp.process(left, right, settings);
+                // Second identical sample exercises settled ADAA's transfer limit.
+                left = x; right = -x; dsp.process(left, right, settings);
+                near(float(curve), left, "static curve differs from settled DSP", .00002f);
+                near(float(toneui::WaveshaperVisual::settledTransfer(-x, drive, output, mix, shape, true)),
+                     right, "static curve right/polarity", .00002f);
+                near(float(toneui::WaveshaperVisual::settledTransfer(x, drive, output, mix, shape, false)),
+                     x, "static bypass must be exact", 0);
+            }
+    near(float(toneui::WaveshaperVisual::settledTransfer(2, 48, 0, 1, 1, true)), 1, "hard upper limit");
+    near(float(toneui::WaveshaperVisual::settledTransfer(-2, 48, 0, 1, 1, true)), -1, "hard lower limit");
+}
+
+inline void crossoverResponse() {
+    constexpr double tau = 6.283185307179586;
+    for (double rate : {44100.0, 48000.0, 96000.0}) for (int count : {2, 3}) {
+        constexpr std::array<double, 6> frequencies{40, 250, 900, 4000, 10000, 18000};
+        std::array<std::array<std::complex<double>, frequencies.size()>, 3> measured{};
+        Multiband dsp; dsp.prepare(rate);
+        // Direct DFT of a long impulse includes the actual all-pass alignment,
+        // without FFT-bin rounding or a steady-state/smoothing timing guess.
+        for (size_t i = 0; i < 32768; ++i) {
+            const auto bands = dsp.process(i == 0 ? 1.0f : 0.0f, 0, count, 250, 4000);
+            for (size_t f = 0; f < frequencies.size(); ++f) {
+                const auto phase = std::polar(1.0, -tau * frequencies[f] * double(i) / rate);
+                for (size_t b = 0; b < 3; ++b) measured[b][f] += double(bands[b][0]) * phase;
+            }
+        }
+        for (size_t f = 0; f < frequencies.size(); ++f) {
+            const auto response = toneui::CrossoverVisual::responseMagnitudes(frequencies[f], rate, 250, 4000, count);
+            for (size_t b = 0; b < 3; ++b)
+                near(float(response[b]), float(std::abs(measured[b][f])), "crossover analytic vs DSP impulse", .00002f);
+            near(float(std::abs(measured[0][f] + measured[1][f] + measured[2][f])), 1,
+                 "crossover recombination magnitude", .00002f);
+        }
+    }
+}
+
+inline void liveMonitorViews(bool neon) {
+    Processor owner;
+    fixture(owner);
+    owner.prepareToPlay(48000, 128);
+    juce::Component root;
+    root.setSize(800, 300);
+    root.setVisible(true); root.addToDesktop(0);
+    toneui::CrossoverVisual first(owner, 1), second(owner, 1);
+    first.setNeon(neon); second.setNeon(neon);
+    root.addAndMakeVisible(first); root.addAndMakeVisible(second);
+    first.setBounds(0, 0, 390, 290); second.setBounds(400, 0, 390, 290);
+    const auto feed = [&](float amplitude = .2f) {
+        juce::AudioBuffer<float> audio(2, 128); juce::MidiBuffer midi;
+        for (int block = 0; block < 128; ++block) {
+            for (int i = 0; i < 128; ++i) {
+                const float x = amplitude * std::sin(float(6.283185307179586 * 1500 * (block * 128 + i) / 48000));
+                audio.setSample(0, i, x); audio.setSample(1, i, -x);
+            }
+            owner.processBlock(audio, midi);
+        }
+    };
+    const auto poll = [&](const auto& predicate) {
+        const double deadline = juce::Time::getMillisecondCounterHiRes() + 2000;
+        do {
+            juce::Timer::callPendingTimersSynchronously();
+            if (predicate()) return true;
+            juce::Thread::sleep(1);
+        } while (juce::Time::getMillisecondCounterHiRes() < deadline);
+        return false;
+    };
+    feed();
+    FxMonitorFrame captured;
+    require(owner.readFxMonitor(1, captured), "visible views did not retain actual capture");
+    require(poll([&] { return first.hasLiveFrame() && second.hasLiveFrame(); }), "visible views never consumed frame");
+    require(first.monitorFrame().sequence == captured.sequence && second.monitorFrame().sequence == captured.sequence,
+            "views did not display same actual published frame");
+    toneui::FxSpectrum expected, expectedOutput;
+    expected.update(captured.input); expectedOutput.update(captured.output);
+    require(first.monitorFrame().bandCount == 3, "live crossover port count missing");
+    for (size_t band = 0; band < 3; ++band)
+        near(first.monitorFrame().bandRms[band], captured.bandRms[band], "displayed band RMS not from capture", 0);
+    float peak = -96;
+    for (size_t b = 0; b < toneui::FxSpectrum::bins; ++b) {
+        near(first.inputSpectrum().levelsDbFS()[b], expected.levelsDbFS()[b], "live spectrum not derived from actual input", .002f);
+        near(first.outputSpectrum().levelsDbFS()[b], expectedOutput.levelsDbFS()[b], "live spectrum not derived from actual output", .002f);
+        peak = std::max(peak, expected.levelsDbFS()[b]);
+    }
+    require(peak > -30, "actual antiphase signal missing from display");
+    render(first);
+
+    // Complete a routing reset and fresh silent publication between GUI polls.
+    // Identity/rate stay unchanged, so only epoch can clear the FFT peak history.
+    const auto beforeReset = captured;
+    auto graph = owner.getRoutingGraph();
+    graph.links.push_back({100, 13, 0, 0});
+    juce::String error;
+    require(owner.setRoutingGraph(graph, error), "live-view routing reset rejected: " + error);
+    feed(0);
+    require(owner.readFxMonitor(1, captured) && captured.epoch != beforeReset.epoch
+            && captured.sequence > beforeReset.sequence && captured.nodeId == beforeReset.nodeId
+            && captured.sampleRate == beforeReset.sampleRate, "routing reset did not publish a fresh epoch");
+    require(first.monitorFrame().epoch == beforeReset.epoch && second.monitorFrame().epoch == beforeReset.epoch,
+            "reset regression must leave old frames displayed until the next GUI poll");
+    require(poll([&] { return first.hasLiveFrame() && second.hasLiveFrame()
+            && first.monitorFrame().epoch == captured.epoch && second.monitorFrame().epoch == captured.epoch; }),
+            "views did not consume reset epoch");
+    expected.clear(); expectedOutput.clear();
+    expected.update(captured.input); expectedOutput.update(captured.output);
+    near(expected.levelsDbFS()[64], -96, "post-reset input was not silent", .002f);
+    for (const auto* view : {&first, &second}) for (size_t b = 0; b < toneui::FxSpectrum::bins; ++b) {
+        near(view->inputSpectrum().levelsDbFS()[b], expected.levelsDbFS()[b], "old input FFT peak survived routing epoch", .002f);
+        near(view->outputSpectrum().levelsDbFS()[b], expectedOutput.levelsDbFS()[b], "old output FFT peak survived routing epoch", .002f);
+    }
+
+    first.setVisible(false);
+    require(!first.hasLiveFrame() && owner.readFxMonitor(1, captured), "hiding one view released the other view");
+    second.setVisible(false);
+    require(!second.hasLiveFrame() && !owner.readFxMonitor(1, captured), "last hidden view retained stale data");
+    first.setVisible(true);
+    require(!owner.readFxMonitor(1, captured), "reshown view reused old subscription frame");
+    feed();
+    require(poll([&] { return first.hasLiveFrame(); }), "reshown view failed to receive fresh data");
+    root.setVisible(false);
+    require(!first.hasLiveFrame() && !owner.readFxMonitor(1, captured), "hidden parent retained monitor");
+    owner.releaseResources();
+}
+
 inline void run() {
     require(juce::MessageManager::getInstance()->isThisTheMessageThread(), "run() requires initialized GUI message thread");
+    spectrumCalibration();
+    staticTransfer();
+    crossoverResponse();
     for (const bool neon : {false, true}) {
         eqPanel(neon);
         edgesAndCapacity(neon);
         waveAndCrossover(neon);
         routingPorts(neon);
+        liveMonitorViews(neon);
     }
-    std::cout << "Tone UI tests passed (both skins; graph gestures, attachments, source pins and history).\n";
+    std::cout << "Tone UI tests passed (both skins; graph gestures, calibrated FFT, static curves, live monitors, source pins and history).\n";
 }
 } // namespace vocalstack::toneUiTests

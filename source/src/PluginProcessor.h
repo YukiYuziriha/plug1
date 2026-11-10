@@ -5,6 +5,7 @@
 #include "VocalEngine.h"
 #include "MeterBridge.h"
 #include "VoiceBridge.h"
+#include "FxMonitor.h"
 #include <mutex>
 #include <string_view>
 #include <string>
@@ -156,6 +157,9 @@ public:
     bool addVoice();
     void removeVoice(size_t slot);
     std::array<VoiceSnapshot, 8> getVoiceSnapshots() const;
+    void retainFxMonitor(size_t slot);
+    void releaseFxMonitor(size_t slot);
+    bool readFxMonitor(size_t slot, FxMonitorFrame& out) const;
 
 
     bool isFlash() const { return flash.load(std::memory_order_relaxed); }
@@ -188,6 +192,9 @@ private:
     Graph routingDraft = defaultGraph(), routingActive = routingDraft;
     juce::ValueTree routingLayout{"RoutingLayout"};
     juce::String routingError;
+    // FxMonitor's large windows live on its heap, not the Processor/test stack.
+    // Declared before engine so the non-owning executor pointer outlives it.
+    FxMonitor fxMonitor;
     VocalEngine engine;
     bool prepared = false;
 };

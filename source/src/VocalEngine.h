@@ -66,6 +66,8 @@ public:
     // Off audio, one serialized control caller. prepare must have completed.
     RoutingValidation requestGraph(const Graph& graph) { return routing.requestGraph(graph); }
     void collectRetiredGraphs() { routing.collectRetired(); }
+    // Optional non-owning bridge; caller owns lifetime, audio must be quiescent.
+    void setFxMonitor(FxMonitor* monitor) noexcept { routing.setFxMonitor(monitor); }
     std::array<VoiceSnapshot, 8> voiceSnapshots() const noexcept { return snapshots; }
 
 private:

@@ -8,7 +8,7 @@ Font font(float height, bool bold = false) {
     return Font(FontOptions(height, bold ? Font::bold : Font::plain));
 }
 
-constexpr int editorWidth = 940, editorHeight = 430, drawerHeight = 442;
+constexpr int editorWidth = 940, editorHeight = 430, drawerHeight = 442, routingHeight = 700;
 const std::array<Rectangle<int>, 4> controlPlates{{
     {18, 76, 104, 214}, {132, 76, 306, 214},
     {448, 76, 104, 214}, {562, 76, 104, 214}
@@ -48,7 +48,8 @@ void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
 }
 
 Editor::Editor(Processor& processor)
-    : AudioProcessorEditor(processor), owner(processor), advancedPanel(processor), choralePanel(processor) {
+    : AudioProcessorEditor(processor), owner(processor), routingPanel(processor),
+      advancedPanel(processor), choralePanel(processor) {
     setLookAndFeel(&style);
     for (size_t i = 0; i < knobs.size(); ++i) {
         auto& knob = knobs[i];
@@ -104,11 +105,16 @@ Editor::Editor(Processor& processor)
     drawer.setTooltip("Show or hide voice controls without changing Advanced Doubler activation or sound");
     drawer.onClick = [this] { owner.setAdvancedVisible(!owner.isAdvancedVisible()); syncDrawer(); };
     addAndMakeVisible(drawer);
-    routing.setButtonText("Open Routing");
-    routing.setTooltip("Open the native audio graph and independent FX inspector");
-    routing.onClick = [this] { openRouting(); };
+    stackTab.setButtonText("Stack");
+    stackTab.setTooltip("Show the vocal stack controls");
+    stackTab.onClick = [this] { routingVisible = false; syncDrawer(); };
+    routingTab.setButtonText("Routing");
+    routingTab.setTooltip("Show the audio graph and independent FX inspector");
+    routingTab.onClick = [this] { openRouting(); };
+    addAndMakeVisible(stackTab);
+    addAndMakeVisible(routingTab);
+    addChildComponent(routingPanel);
     advancedPanel.onOpenRouting = [this] { openRouting(); };
-    addAndMakeVisible(routing);
     addChildComponent(advancedPanel);
     addAndMakeVisible(choralePanel);
     addAndMakeVisible(meterPanel);
@@ -120,15 +126,16 @@ Editor::Editor(Processor& processor)
 }
 
 Editor::~Editor() {
-    routingWindow.reset();
     setLookAndFeel(nullptr);
 }
 
 void Editor::openRouting() {
-    if (!routingWindow) routingWindow = std::make_unique<RoutingWindow>(owner);
-    routingWindow->setNeon(style.flash);
-    routingWindow->setVisible(true);
-    routingWindow->toFront(false);
+    routingVisible = true;
+    syncDrawer();
+    if (!routingOpened) {
+        routingOpened = true;
+        routingPanel.fitIfUnpositioned();
+    }
 }
 
 void Editor::applyTheme() {
@@ -136,7 +143,7 @@ void Editor::applyTheme() {
     meterPanel.setNeon(style.flash);
     advancedPanel.setNeon(style.flash);
     choralePanel.setNeon(style.flash);
-    if (routingWindow) routingWindow->setNeon(style.flash);
+    routingPanel.setNeon(style.flash);
     const auto foreground = style.flash ? rgb(nightText) : rgb(0xe4e4df);
     const auto muted = style.flash ? rgb(nightMuted) : rgb(0xaeb1a9);
     theme.setButtonText(style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
@@ -151,8 +158,9 @@ void Editor::applyTheme() {
         knob.setColour(Slider::textBoxHighlightColourId, rgb(style.flash ? 0x34496a : 0x4b5175));
         knob.repaint();
     }
-    for (auto* button : {&theme, &reset, &copy, &paste, &drawer, &routing}) {
+    for (auto* button : {&theme, &reset, &copy, &paste, &drawer, &stackTab, &routingTab}) {
         button->setColour(TextButton::textColourOffId, foreground);
+        button->setColour(TextButton::textColourOnId, rgb(0x17171c));
         button->repaint();
     }
     for (auto& button : switches) {
@@ -182,22 +190,37 @@ void Editor::resized() {
     paste.setBounds(215, 306, 64, 23);
     meterPanel.setBounds(678, 76, 244, 246);
     drawer.setBounds(300, 306, 144, 23);
-    routing.setBounds(450, 306, 104, 23);
+    stackTab.setBounds(382, 26, 70, 26);
+    routingTab.setBounds(458, 26, 78, 26);
+    routingPanel.setBounds(18, 76, 904, getHeight() - 94);
     choralePanel.setBounds(18, 344, 904, 64);
     advancedPanel.setBounds(18, editorHeight, 904, drawerHeight - 12);
 }
 
 void Editor::syncDrawer() {
     const bool visible = owner.isAdvancedVisible();
-    advancedPanel.setVisible(visible);
+    for (auto& knob : knobs) knob.setVisible(!routingVisible);
+    for (auto& label : labels) label.setVisible(!routingVisible);
+    for (size_t i = 0; i < switches.size() - 1; ++i)
+        switches[i].setVisible(!routingVisible);
+    for (auto* button : {&theme, &reset, &copy, &paste, &drawer})
+        button->setVisible(!routingVisible);
+    meterPanel.setVisible(!routingVisible);
+    choralePanel.setVisible(!routingVisible);
+    advancedPanel.setVisible(!routingVisible && visible);
+    routingPanel.setVisible(routingVisible);
+    stackTab.setToggleState(!routingVisible, dontSendNotification);
+    routingTab.setToggleState(routingVisible, dontSendNotification);
     drawer.setButtonText(visible ? "Hide Advanced" : "Show Advanced");
-    setSize(editorWidth, editorHeight + (visible ? drawerHeight : 0));
+    setSize(editorWidth, routingVisible ? routingHeight
+                                     : editorHeight + (visible ? drawerHeight : 0));
     advancedPanel.sync();
     leaveKeyboardToHost(*this);
+    repaint();
 }
 
 void Editor::timerCallback() {
-    if (advancedPanel.isVisible() != owner.isAdvancedVisible())
+    if (advancedPanel.isVisible() != (!routingVisible && owner.isAdvancedVisible()))
         syncDrawer();
     advancedPanel.sync();
     if (owner.isFlash() != style.flash)
@@ -224,6 +247,9 @@ void Editor::drawDevice(Graphics& g) {
     g.fillRoundedRectangle(27.0f, 25.0f, 4.0f, 25.0f, 2.0f);
     text(g, "Vocal Stack", {41, 20, 168, 32}, rgb(0xf4f4ea), 22.0f, true);
     text(g, "VOCAL PROCESSOR", {211, 26, 160, 26}, rgb(0xa6aaa0), 11.0f, true);
+
+    if (routingVisible)
+        return;
 
     g.setColour(rgb(0x1c1f1e));
     g.fillRoundedRectangle(14.0f, 72.0f, 656.0f, 222.0f, 6.0f);
@@ -254,8 +280,6 @@ void Editor::drawFlash(Graphics& g) {
         g.drawRect(plate);
     };
     drawPlate({18, 14, 904, 50});
-    for (const auto& plate : controlPlates)
-        drawPlate(plate);
 
     g.setColour(rgb(signPink));
     g.fillRect(18, 14, 4, 50);
@@ -265,11 +289,11 @@ void Editor::drawFlash(Graphics& g) {
     text(g, "VOCAL STACK", {78, 16, 236, 30}, rgb(nightText), 27.0f, true);
     text(g, "TOKYO  /  AFTER DARK", {79, 43, 212, 14}, rgb(nightMuted), 11.0f, true);
 
-    g.setColour(rgb(signCyan));
-    g.drawRect(382, 26, 148, 26);
-    g.fillRect(382, 26, 4, 26);
-    text(g, "SHIBUYA", {393, 26, 101, 26}, rgb(signCyan), 14.0f, true);
-    text(g, "03", {497, 26, 23, 26}, rgb(signCyan), 12.0f, true, Justification::centred);
+    if (routingVisible)
+        return;
+
+    for (const auto& plate : controlPlates)
+        drawPlate(plate);
 
     constexpr std::array<uint32_t, 4> accents{signYellow, signPink, signCyan, signYellow};
     const std::array<const char*, 4> captions{
@@ -340,7 +364,7 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
     const auto area = button.getLocalBounds().toFloat().reduced(0.7f);
     const bool lit = button.getToggleState();
     const auto name = button.getButtonText();
-    const bool routingAction = name == "Open Routing";
+    const bool routingAction = name == "Open Routing" || name == "Routing" || name == "Stack";
     const auto accent = rgb(name == "BYPASS" ? 0xf58680 : !flash ? 0xe3a15e
                             : routingAction || name == "FORMANT" ? signCyan : name == "LEVEL" ? signYellow : signPink);
     auto fill = lit ? accent : routingAction ? accent.withAlpha(0.18f) : rgb(flash ? panel : 0x333733);
