@@ -26,16 +26,28 @@ private:
 
     void timerCallback() override;
     void applyTheme();
+    void updateBypassControls(float bypassValue);
     void syncDrawer();
     void openRouting();
     void drawDevice(juce::Graphics&);
     void drawFlash(juce::Graphics&);
+    void rememberWindow();
+    void revealParameter(const juce::String&);
+    bool keyPressed(const juce::KeyPress&) override;
 
     Processor& owner;
     Style style;
-    std::array<juce::Slider, knobParameterIds.size()> knobs;
+    juce::Component layoutCanvas;
+    float layoutScale = 1.0f;
+    juce::Point<float> layoutOffset;
+    bool restoringWindow = true;
+    int selectedVoiceSlot = -1;
+    std::array<ModulationSlider, knobParameterIds.size()> knobs;
+    ParameterKnob globalMix;
+    juce::Label assignmentBanner;
+    juce::TextButton endAssignment;
     std::array<juce::Label, knobParameterIds.size()> labels;
-    std::array<juce::TextButton, switchParameterIds.size()> switches;
+    std::array<modulationui::Button, switchParameterIds.size()> switches;
     juce::TextButton theme, reset, copy, paste, drawer, stackTab, routingTab;
     RoutingPanel routingPanel;
     bool routingVisible = false;
@@ -44,7 +56,9 @@ private:
     ChoralePanel choralePanel;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, knobParameterIds.size()> knobLinks;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, switchParameterIds.size()> switchLinks;
+    std::unique_ptr<juce::ParameterAttachment> bypassUiLink;
     juce::TooltipWindow tips{this, 530};
+    juce::BubbleMessageComponent revealBubble;
     MeterPanel meterPanel;
     int feedbackTicks = 0;
 };

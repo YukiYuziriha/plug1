@@ -4,10 +4,246 @@
 
 This document records the staged implementation plan and the subsequent control-design decisions.
 
-### Current release scope: 1.4.1 — UI, routing, and FX monitors
+### 1.5.0 — resizing, Lead, modulation, and waveshapers
 
-The latest amendments in this section take precedence over every conflicting
-historical checkpoint and staged requirement below. This patch retains the
+**Status: implemented, validated, packaged and installed as 1.5.0.** This
+section takes precedence over conflicting historical requirements below. Existing
+sessions, original parameter IDs/order/ranges, and authoritative audio topology
+remain compatibility constraints.
+
+Release validation:
+
+- Release CLAP/VST3 builds and **all 16 focused suites passed**, including **33
+  editor/state groups** in both skins. This includes neutral/default-path baseline
+  compatibility, modulation timing/publication/dwell/recall, extra mixer targets,
+  EQ assignment gestures, Raw/quality/DC/RMS matching and legacy normalized shape
+  automation. The long legacy `VocalStackDSP` suite was excluded, not passed.
+- Both skins' Stack/Routing/FX/LFO/Assignments renders visually reviewed. Packaged
+  and installed CLAP smoke tests passed. Both installed formats match packages by
+  SHA256. Actual Bitwig listening/transport remains manual user validation.
+- Worst-case stress passed finite-output checks, but an isolated 48 kHz run of
+  8 pitched voices + 16 FX (15 serial 4x Multi Fold shapers) + 16 modulators/256
+  assignments took about **1.4 seconds per audio second** on this machine.
+  Capacity limits are not real-time CPU guarantees; extreme patches can overload.
+
+Implementation checklist:
+
+- [x] Proportional resizable Stack; unscaled expanding Routing; saved window size,
+  graph view and selection; scrolling inspectors and pinned + Modulator.
+- [x] Global Mix beside Bypass, preserved/dimmed while bypassed; existing control
+  renamed Lead / Stack without changing its host identity/behavior.
+- [x] Neutral editable Lead, separate from eight generated voices; shared controls
+  in Stack and source-node inspectors, with bidirectional selection.
+- [x] Replace parameter sliders in voice cards, Routing FX/voice inspectors, and
+  Stack Chorale with shared rotary controls. Voice cards use **two rows of four**;
+  signed arcs use actual zero (Gain uses 0 dB), not the midpoint of its range.
+- [x] 16 independent Classic LFO/Random sources, 256 assignments, fixed 32-sample
+  clock, tempo/retrigger information, bounded real-time-safe publication and snapshots.
+- [x] Controls / Assignments inspector, signed depths, enable/remove/reveal,
+  persistent Assign across views, discrete assignment menus, live combined markers
+  and selected-source ranges, including EQ handle/wheel assignment gestures.
+- [x] Additional Dry/Wet mixers are parameter-bound and modulatable, not exceptions
+  to the sound-control rule; IDs 200..247 have fixed slots. Nonstandard imported
+  mixer IDs retain legacy graph controls. Machine aliases are stored in UI layout,
+  editable by double-clicking inspector title, with graph-history support.
+- [x] 19 original waveshapers, curve-icon selector, Shape, per-instance Raw,
+  Off/2x/4x quality, DC handling and optional bounded stereo-RMS audition matching.
+- [x] Append-only host parameters: **1007 total**, original 874 unchanged. In
+  particular, old WaveShape remains 0..2: appended WaveAlgorithm uses 0=Follow
+  Legacy, 1..19=explicit curves, preserving old normalized shape automation.
+- [x] Negative-formant sound/ranges remain unchanged. Preserve Clarity is deferred.
+
+Release clarifications superseding broader wording below:
+
+- Oversampling uses preallocated half-band **IIR** paths with zero explicit integer
+  delay, not a linear-phase/latency-producing mode. ADAA/IIR/DC phase is frequency
+  dependent; local/parallel dry stays direct and can comb. General nonzero integer
+  latency remains rejected. Do not claim phase-neutral branch compensation.
+- Classic LFO/Random are original **monophonic** implementations following verified
+  Bitwig workflow descriptions, not exact DSP/full device parity. Sync follows
+  tempo/division with restart-on-play, not PPQ seek/loop phase locking. Random is
+  uniform stepped/cubic-slew motion. UI changes preserve running histories; a
+  prepare/reset initializes them, rather than recalling sample-exact phase/RNG state.
+- RMS audition matching is gated, bounded +/-24 dB, and smoothed over 300 ms;
+  manual Output trim remains active. It is not peak limiting or a LUFS guarantee.
+- Reference: https://www.bitwig.com/userguide/latest/modulator/ . No proprietary
+  source, artwork, branding, or presets were copied.
+
+#### Delivery order
+
+1. Resizable UI, global Mix, editable Lead, and shared voice inspector.
+2. Shared modulation backend, Classic LFO/Random, assignments, and live feedback.
+3. Expanded waveshapers, per-instance Raw mode, quality modes, and required
+   latency support. Raw mode itself does not require oversampling or added latency.
+
+Each stage must produce a working, tested plugin. No new Filter, delay, reverb,
+or unrelated EQ/multiband redesign is included.
+
+#### Resizable window and selection
+
+- Stack scales its complete layout proportionally, with no stretched text or
+  controls; account for the Advanced drawer's different layout aspect ratio.
+- Routing keeps controls, nodes, text, and pins at normal size. Additional window
+  area expands the canvas; the right inspector retains a sensible width and
+  gains usable height. Scroll overflowing inspector content.
+- Keep **+ Modulator** pinned at the inspector bottom.
+- Use sensible minimum sizes. Remember window dimensions, graph pan/zoom, and
+  selection. Switching tabs must not unexpectedly resize the window.
+- Resizing never rearranges nodes or repeatedly auto-fits the graph. Retain Fit.
+- Selection follows across Stack and Routing: reveal/highlight the corresponding
+  voice card when changing views.
+- Keep double-click reset and modifier-drag fine adjustment consistent wherever
+  compatible with existing deliberate gestures. Preserve DAW keyboard shortcuts.
+- Inspector headers clearly identify the selected machine, with rename/bypass
+  where applicable. Retain the current color scheme and both skins.
+
+#### Global Mix and Lead / Stack
+
+- Rename the existing doubler Mix to **Lead / Stack**, including its main routing
+  mix-node presentation, without changing its behavior or parameter identity.
+  Use a clear balance readout rather than an unexplained percentage.
+- Add a global **Mix** beside whole-plugin Bypass at the top right: latency-aligned
+  untouched input versus the complete processed graph output.
+- Default global Mix to 100% processed, including migration of older sessions.
+- Bypass passes original input, dims/disables global Mix, and preserves its value.
+- Keep processor histories/tails coherent at the Dry endpoint. Smooth transitions.
+- Do not add a redundant local dry/wet knob to the Lead card.
+
+#### Editable Lead and shared voice controls
+
+- Show Lead first in Stack, visually distinguished from generated voices. Lead
+  does not consume one of the eight generated-voice slots.
+- Provide local pitch, fine detune, formant, pan, gain, and enable controls;
+  applicable delay/humanization controls start neutral. Preserve existing shared
+  processing; avoid applying its formant or other shared controls twice.
+- Lead edits affect the Lead side of Lead / Stack; only global Mix accesses
+  untouched original input. Existing Lead / Stack behavior is not redefined.
+- Extract shared voice controls for Stack cards and the Routing inspector when a
+  Lead/Voice source is selected. Both edit the same stable parameters, not copies.
+- Preserve musical Pitch +/-36 st, Fine +/-100 ct, local/main Formant +/-24 st
+  and existing additive formant behavior. Neutral-origin displays remain correct.
+
+#### Modulation architecture and target coverage
+
+- Build a shared modulation layer, not per-effect LFO hacks or audio-cable nodes.
+  Current parameter IDs/settings are foundations, not an existing modulation API.
+- Independent modulators and stable assignments combine base settings/host
+  automation with contributions into bounded effective DSP values.
+- Never write modulation output into host parameter/base values.
+- Address targets by stable parameter ID and modulators by stable identity;
+  preserve assignments across panel changes, reopening, and session recall.
+- Evaluate on a fixed audio/control clock, independent of host block size, with
+  parameter-appropriate interpolation/smoothing and safe discrete transitions.
+- All continuous sound parameters are targets: voice/Lead controls, main controls,
+  FX mix/drive/output, EQ frequency/gain/Q, crossover frequencies, etc.
+- Discrete sound controls use explicit stepped modulation and safe switching;
+  prevent accidental chattering. Structural/UI actions and whole-plugin Bypass
+  are not targets. Removing/replacing targets must never redirect assignments to
+  an unrelated machine that reuses an FX slot.
+- Initial scope is modulation of sound parameters, not modulator-to-modulator
+  feedback. Such an extension requires explicit ordering/cycle rules.
+- Prepare edits off audio and publish bounded plans safely. No allocation, locks,
+  graph rebuilds, or destruction in the audio callback.
+- Publish lightweight effective-value/contribution snapshots for the UI; no GUI
+  reads of live DSP state. Serialize settings/assignments with safe old-state defaults.
+- Wire host tempo/transport and MIDI into processing where needed for sync and
+  triggering; do not pretend these are already consumed by the current engine.
+
+#### Classic LFO and Random
+
+- Use Bitwig Classic LFO and Random as the workflow/behavior references. Verify
+  official documentation and map controls before implementation. Use original
+  code/assets; record deliberate differences, not unverified exact-parity claims.
+- Classic LFO: periodic waveform/shaping controls, free Hz and host-synced timing,
+  phase, relevant retrigger modes, bipolar/unipolar behavior, live output display.
+- Random: stepped values and smoothly evolving motion, free/synced timing, and
+  relevant smoothing/distribution/retrigger controls based on the verified reference.
+- Stable running state: opening panels, resizing, selecting targets, and changing
+  host block sizes must not restart phases or random sequences unexpectedly.
+
+#### Assignment interaction and inspector
+
+- **+ Modulator** offers Classic LFO / Random. A compact persistent modulator strip
+  permits reselecting an LFO after selecting an audio node; no audio cables needed.
+- Selecting a modulator shows right-inspector **Controls / Assignments** tabs.
+- Assignment rows show machine + parameter, editable signed amount in useful units,
+  enable/disable, remove, and a way to reveal/highlight the target control.
+- Click **Assign**, then drag an eligible highlighted control to set signed depth
+  instead of changing its base setting. Multiple targets have independent amounts.
+- Assignment mode survives voice/FX selection and Stack/Routing tab switches.
+  Show a persistent **Assigning: LFO 1** banner. Escape or Assign exits.
+- Keep base values visible. Draw the selected modulator's range as a colored arc
+  or strip and the actual combined effective value as a moving indicator.
+- Distinguish the selected LFO's contribution from the result of multiple sources.
+  Apply feedback to knobs, sliders, and relevant EQ handles in both views.
+- Show truthful activity during assignment and playback, not invented animation.
+
+#### Expanded waveshapers and presentation
+
+- Preserve existing Soft / Hard / Asymmetric algorithm identities and sound by
+  default; append algorithms without reordering existing saved choices.
+- Proposed collection (19 total), subject to meaningful distinct behavior/tests:
+  - Existing: Soft, Hard, Asymmetric.
+  - Saturation: Warm Asymmetric, Sine Saturation, Arctangent.
+  - Clipping: Rounded Clip, Asymmetric Clip.
+  - Folding: Triangle Fold, Sine Fold, Single Fold, Multi Fold.
+  - Rectification: Half-Wave, Full-Wave.
+  - Destruction: Staircase, Dead Zone, Binary Threshold.
+  - Curve shaping: Exponential, S-Curve.
+- These are original algorithms, inspired by Thermal's breadth, not proprietary
+  curve reproductions or claimed sonic clones.
+- Keep Drive / Output / local Mix. Add modulatable Shape where meaningful and
+  clearly disable it for algorithms without that dimension.
+- Group the selector by family with small curve icons; update the static transfer
+  visualization and retain actual pre/post stereo waveform monitoring.
+- Add optional level-matched audition, explicitly not limiting or a guarantee of
+  perceptual loudness matching. Handle DC in asymmetric/rectifying algorithms.
+
+#### Raw aliasing switch and quality
+
+- Add a saved **Raw** switch per waveshaper instance, default Off to preserve
+  existing sessions. Raw On directly evaluates the nonlinear curve at project
+  sample rate, bypassing ADAA/other alias-reduction processing for that mode.
+- Off retains current ADAA for existing algorithms; new algorithms need suitable
+  documented anti-aliasing strategies. Do not claim an alias-free Off mode.
+- Smooth Raw switching without clicks, keep required histories warm, and expose
+  it consistently in inspector/state/visuals. Define discrete modulation safely.
+- Raw is intentionally sample-rate/input/drive dependent, not a fixed grit amount
+  or bitcrusher. Explain that bypassing ADAA also changes its attenuation/phase.
+- Add selectable oversampling quality separately. Make Raw and quality semantics
+  explicit: Raw runs the nonlinearity at project rate, not secretly oversampled.
+- Align local dry/wet and parallel graph branches, report host latency, and extend
+  current routing latency restrictions before enabling latency-producing modes.
+- Quality changes prepare off audio and transition safely. Measure CPU/alias
+  reduction; oversampling is not universally preferable and not alias-free.
+
+#### Negative formant: explicitly deferred
+
+- User clarified dullness occurs at strongly negative settings, not small shifts.
+- **Do not change negative-formant DSP, ranges, stacking, brightness, or defaults
+  in this implementation.** Darkening alone is not established as a bug.
+- Optional Preserve Clarity (retaining consonant/sibilant detail while shifting
+  vowel/body character) is an idea for later listening evaluation only, not an
+  approved feature. No automatic treble boost or hidden unshifted-voice blend.
+
+#### Validation and release
+
+- Test migration, unchanged old IDs/indices, neutral defaults, and repeatable recall.
+- Check resizes/minimum sizes/both skins, tab/selection persistence, shared controls,
+  global Mix endpoints, Lead / Stack, bypass, and dry/branch latency alignment.
+- Test modulation timing across irregular blocks/sample rates, sync/transport/MIDI,
+  positive/negative/multiple assignments, safe removal/replacement, and UI snapshots.
+- Test waveshaper silence/reset/DC/finite output, drive/shape/Raw automation,
+  safe quality transitions, alias behavior, and parallel reconstruction/alignment.
+- Measure eight-voice/populated-graph/modulation CPU. Run focused regression suites;
+  distinguish automated results from actual Bitwig listening/transport checks.
+- Refresh versions/docs/packages and install only if unlocked after successful
+  builds. No binary rebuild is needed merely to record this pending plan.
+
+### Historical release scope: 1.4.1 — UI, routing, and FX monitors
+
+These 1.4.1 amendments take precedence over older checkpoints below, but not the
+1.5.0 amendments above. That patch retained the
 current UI+monitor scope, not a new effect module or a full Pro-Q/EQ+ clone.
 Release CLAP/VST3 builds and all 12 focused suites passed, including 26 editor
 regression groups. Refreshed packages and installed binaries match by SHA256;

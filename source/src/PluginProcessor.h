@@ -6,6 +6,7 @@
 #include "MeterBridge.h"
 #include "VoiceBridge.h"
 #include "FxMonitor.h"
+#include "Modulation.h"
 #include <mutex>
 #include <string_view>
 #include <string>
@@ -58,13 +59,73 @@ inline const auto toneParameterIdStorage = [] {
     }
     return ids;
 }();
+inline constexpr size_t originalParameterCount = 874;
+inline constexpr size_t globalMixParameterIndex = originalParameterCount;
+inline constexpr size_t leadParameterStart = globalMixParameterIndex + 1;
+inline constexpr std::array<const char*, 9> leadParameterIds{
+    "leadOn", "leadGain", "leadPan", "leadDelay", "leadDetune", "leadFormant", "leadDepth", "leadRate", "leadPitch"
+};
+inline const auto waveExtraParameterIdStorage = [] {
+    std::array<std::string, 30> ids;
+    for (size_t slot = 1; slot < 16; ++slot) {
+        ids[(slot - 1) * 2] = "fx" + std::to_string(slot) + "WaveRaw";
+        ids[(slot - 1) * 2 + 1] = "fx" + std::to_string(slot) + "WaveShapeAmount";
+    }
+    return ids;
+}();
+inline constexpr size_t waveExtraParameterStart = leadParameterStart + leadParameterIds.size();
+inline constexpr size_t waveQualityParameterStart = waveExtraParameterStart + 30;
+static_assert(waveQualityParameterStart == 914);
+inline const auto waveQualityParameterIdStorage = [] {
+    std::array<std::string, 15> ids;
+    for (size_t slot = 1; slot < 16; ++slot)
+        ids[slot - 1] = "fx" + std::to_string(slot) + "WaveQuality";
+    return ids;
+}();
+inline constexpr size_t waveLevelMatchParameterStart = waveQualityParameterStart + 15;
+inline const auto waveLevelMatchParameterIdStorage = [] {
+    std::array<std::string, 15> ids;
+    for (size_t slot = 1; slot < 16; ++slot)
+        ids[slot - 1] = "fx" + std::to_string(slot) + "WaveLevelMatch";
+    return ids;
+}();
+inline constexpr size_t localMixParameterStart = waveLevelMatchParameterStart + 15;
+inline const auto localMixParameterIdStorage = [] {
+    std::array<std::string, 48> ids;
+    for (size_t slot = 0; slot < ids.size(); ++slot)
+        ids[slot] = "mix" + std::to_string(slot + 1) + "Balance";
+    return ids;
+}();
+inline juce::String localMixParameterId(uint32_t nodeId) {
+    return nodeId >= 200 && nodeId < 248 ? juce::String(localMixParameterIdStorage[nodeId - 200]) : juce::String();
+}
+inline constexpr size_t waveAlgorithmParameterStart = localMixParameterStart + 48;
+inline const auto waveAlgorithmParameterIdStorage = [] {
+    std::array<std::string, 15> ids;
+    for (size_t slot = 1; slot < 16; ++slot)
+        ids[slot - 1] = "fx" + std::to_string(slot) + "WaveAlgorithm";
+    return ids;
+}();
 inline const auto parameterIds = [] {
-    std::array<const char*, 874> ids{};
+    std::array<const char*, waveAlgorithmParameterStart + 15> ids{};
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
         ids[legacyParameterIds.size() + i] = toneParameterIdStorage[i].c_str();
+    ids[globalMixParameterIndex] = "globalMix";
+    for (size_t i = 0; i < leadParameterIds.size(); ++i) ids[leadParameterStart + i] = leadParameterIds[i];
+    for (size_t i = 0; i < waveExtraParameterIdStorage.size(); ++i)
+        ids[waveExtraParameterStart + i] = waveExtraParameterIdStorage[i].c_str();
+    for (size_t i = 0; i < waveQualityParameterIdStorage.size(); ++i)
+        ids[waveQualityParameterStart + i] = waveQualityParameterIdStorage[i].c_str();
+    for (size_t i = 0; i < waveLevelMatchParameterIdStorage.size(); ++i)
+        ids[waveLevelMatchParameterStart + i] = waveLevelMatchParameterIdStorage[i].c_str();
+    for (size_t i = 0; i < localMixParameterIdStorage.size(); ++i)
+        ids[localMixParameterStart + i] = localMixParameterIdStorage[i].c_str();
+    for (size_t i = 0; i < waveAlgorithmParameterIdStorage.size(); ++i)
+        ids[waveAlgorithmParameterStart + i] = waveAlgorithmParameterIdStorage[i].c_str();
     return ids;
 }();
+static_assert(parameterIds.size() <= ModulationBackend::maxTargets);
 juce::String toneParameterId(size_t slot, const char* field);
 juce::String eqBandParameterId(size_t slot, size_t band, const char* field);
 
@@ -128,7 +189,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     const juce::String getName() const override { return "Vocal Stack"; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
 
     int getNumPrograms() override { return 1; }
@@ -148,6 +209,15 @@ public:
     bool isAdvancedVisible() const { return advancedVisible.load(std::memory_order_relaxed); }
     void setAdvancedVisible(bool);
     Settings settings() const;
+
+    // Control-thread API. Setters validate the entire bounded state before publication.
+    ModulationState getModulationState() const;
+    bool setModulationState(const ModulationState& state, juce::String& error);
+    void beginModulationAssignment(uint32_t id);
+    void endModulationAssignment();
+    uint32_t modulationAssignmentId() const noexcept;
+    bool setModulationDepth(uint32_t modulatorId, const juce::String& parameterId, float normalizedDepth);
+    ModulationSnapshot getModulationSnapshot() const;
 
     Graph getRoutingGraph() const;
     bool setRoutingGraph(const Graph&, juce::String& error);
@@ -174,7 +244,10 @@ private:
     void setParameterValue(const char* id, float value);
     juce::ValueTree copyState();
     bool restoreState(const juce::XmlElement&);
-    void render(juce::AudioBuffer<float>&, bool hostBypass);
+    void render(juce::AudioBuffer<float>&, juce::MidiBuffer&, bool hostBypass);
+    Settings settingsFromValues(const std::array<float, parameterIds.size()>&) const;
+    Graph qualitySnapshot(Graph) const;
+    void updateModulationValues();
     void timerCallback() override;
     bool setRoutingGraphLocked(const Graph&, juce::String& error);
     void reconnectVoiceLocked(size_t slot);
@@ -182,6 +255,23 @@ private:
 
 
     std::array<std::atomic<float>*, parameterIds.size()> values{};
+    std::array<juce::RangedAudioParameter*, parameterIds.size()> rangedParameters{};
+    std::array<bool, parameterIds.size()> steppedParameters{};
+    ModulationState modulationState;
+    ModulationBackend modulation;
+    std::atomic<uint32_t> assignmentId{0};
+    std::array<float, ModulationBackend::maxTargets> modulationContributions{};
+    std::array<float, parameterIds.size()> effectiveValues{};
+    std::array<uint64_t, parameterIds.size()> discreteHoldUntil{};
+    uint64_t processedSamples = 0;
+    double processingSampleRate = 48000;
+    std::array<bool, parameterIds.size()> activeTargetMask{};
+    // Assigned target values are latched in real units on audio; normalization
+    // for display and all unassigned-target reads happen on the UI thread.
+    std::atomic<uint64_t> modulationSnapshotSequence{0};
+    std::array<std::atomic<bool>, parameterIds.size()> snapshotTargeted{};
+    std::array<std::atomic<float>, parameterIds.size()> snapshotBase{}, snapshotEffective{};
+    bool transportPlaying = false;
     std::atomic<bool> flash{false}, advancedVisible{false}, advancedInitialized{false};
     MeterBridge metering;
     std::atomic<bool> meterResetRequested{false};

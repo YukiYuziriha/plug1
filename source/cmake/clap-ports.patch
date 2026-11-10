@@ -118,7 +118,7 @@ index 9f87bb5..df396a1 100644
 -        // JUCE has no way to report an unstream error; setStateInformation is void
 -        // So we just have to assume it works.
 +        // Vocal Stack uses JUCE's binary XML envelope for plugin state.
-+        if (chunkMemory.getSize() > 64 * 1024 ||
++        if (chunkMemory.getSize() > 1024 * 1024 ||
 +            !juce::AudioProcessor::getXmlFromBinary(chunkMemory.getData(), (int)chunkMemory.getSize()))
 +        {
 +            chunkMemory.reset();

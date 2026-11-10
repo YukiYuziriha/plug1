@@ -8,7 +8,7 @@ Font font(float height, bool bold = false) {
     return Font(FontOptions(height, bold ? Font::bold : Font::plain));
 }
 
-constexpr int editorWidth = 940, editorHeight = 430, drawerHeight = 442, routingHeight = 700;
+constexpr int editorWidth = 940, editorHeight = 430, drawerHeight = 442;
 const std::array<Rectangle<int>, 4> controlPlates{{
     {18, 76, 104, 214}, {132, 76, 306, 214},
     {448, 76, 104, 214}, {562, 76, 104, 214}
@@ -17,11 +17,11 @@ constexpr uint32_t night = 0x090d17, panel = 0x111827, outline = 0x2b3a53;
 constexpr uint32_t signPink = 0xff4ca0, signCyan = 0x64f5e3, signYellow = 0xf8de6b;
 constexpr uint32_t nightText = 0xf1f5ff, nightMuted = 0x9eafc8;
 constexpr std::array<const char*, knobParameterIds.size()> knobNames{
-    "Leveler", "Mix", "Human", "Width", "Formant", "Output"
+    "Leveler", "Lead / Stack", "Human", "Width", "Formant", "Output"
 };
 constexpr std::array<const char*, knobParameterIds.size()> knobTips{
     "Even out vocal phrases while matching long-term input RMS. 0% off, 100% full riding; not a limiter or output volume",
-    "True Mix: 0% processed lead only; 100% generated doubles only; blend between them",
+    "Lead / Stack balance: 0% processed Lead, 100% generated Stack. Only global Mix accesses untouched input",
     "How far the doubles vary in timing, pitch and tone",
     "How widely the generated takes are panned",
     "Shared formant -24 to +24 st, added to each voice formant. Double-click for 0 st",
@@ -48,41 +48,68 @@ void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
 }
 
 Editor::Editor(Processor& processor)
-    : AudioProcessorEditor(processor), owner(processor), routingPanel(processor),
+    : AudioProcessorEditor(processor), owner(processor), globalMix(processor, "globalMix", "Mix", "%"), routingPanel(processor),
       advancedPanel(processor), choralePanel(processor) {
     setLookAndFeel(&style);
+    addAndMakeVisible(layoutCanvas);
+    setResizable(true, true);
+    setResizeLimits(940, 560, 2400, 2200);
+    const auto savedLayout = owner.getRoutingLayout();
+    selectedVoiceSlot = juce::jlimit(-1, 7, int(savedLayout.getProperty("selectedVoiceSlot", -1)));
+    layoutCanvas.addAndMakeVisible(globalMix);
+    globalMix.slider.setTextBoxStyle(Slider::TextBoxRight, false, 42, 19);
+    globalMix.slider.setTooltip("Untouched input / complete processed output. Bypass preserves this setting");
+    assignmentBanner.setInterceptsMouseClicks(false, false);
+    assignmentBanner.setFont(font(12, true));
+    layoutCanvas.addChildComponent(assignmentBanner);
+    endAssignment.setButtonText("Done");
+    endAssignment.onClick = [this] { owner.endModulationAssignment(); };
+    layoutCanvas.addChildComponent(endAssignment);
     for (size_t i = 0; i < knobs.size(); ++i) {
         auto& knob = knobs[i];
+        knob.bindModulation(owner, knobParameterIds[i]);
         knob.setName(knobNames[i]);
         knob.setTitle(knobNames[i]);
         knob.setTooltip(knobTips[i]);
         knob.setSliderStyle(Slider::RotaryHorizontalVerticalDrag);
         knob.setTextBoxStyle(Slider::TextBoxBelow, false, 82, 22);
         knob.setScrollWheelEnabled(false);
-        addAndMakeVisible(knob);
+        layoutCanvas.addAndMakeVisible(knob);
         knobLinks[i] = std::make_unique<AudioProcessorValueTreeState::SliderAttachment>(
             owner.parameters, knobParameterIds[i], knob);
         if (const auto* parameter = owner.parameters.getParameter(knobParameterIds[i]))
             knob.setDoubleClickReturnValue(true, i == 4 || i == 5 ? 0.0
                 : parameter->convertFrom0to1(parameter->getDefaultValue()));
+        if (i == 1) {
+            knob.textFromValueFunction = [](double value) {
+                return String(100.0 - value, 0) + " / " + String(value, 0);
+            };
+            knob.valueFromTextFunction = [](const String& value) {
+                return value.contains("/") ? value.fromFirstOccurrenceOf("/", false, false).getDoubleValue() : value.getDoubleValue();
+            };
+            knob.updateText();
+        }
         labels[i].setText(knobNames[i], dontSendNotification);
         labels[i].setJustificationType(Justification::centred);
         labels[i].setInterceptsMouseClicks(false, false);
-        addAndMakeVisible(labels[i]);
+        layoutCanvas.addAndMakeVisible(labels[i]);
     }
     for (size_t i = 0; i < switches.size(); ++i) {
         auto& button = switches[i];
+        button.setModulationOwner(owner);
+        button.setComponentID(switchParameterIds[i]);
+        button.setName(switchNames[i]);
         button.setButtonText(switchNames[i]);
         button.setClickingTogglesState(true);
         button.setTooltip(i == 3 ? "Bypass the whole effect with latency compensation"
                                  : "Toggle this module on or off");
-        addAndMakeVisible(button);
+        layoutCanvas.addAndMakeVisible(button);
         switchLinks[i] = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
             owner.parameters, switchParameterIds[i], button);
     }
 
     for (auto* button : {&theme, &reset, &copy, &paste})
-        addAndMakeVisible(*button);
+        layoutCanvas.addAndMakeVisible(*button);
     theme.setTooltip("Switch between the Device skin and the Neon skin");
     theme.onClick = [this] { owner.setFlash(!owner.isFlash()); applyTheme(); };
     reset.setButtonText("Reset");
@@ -104,28 +131,52 @@ Editor::Editor(Processor& processor)
     drawer.setName("Show Advanced");
     drawer.setTooltip("Show or hide voice controls without changing Advanced Doubler activation or sound");
     drawer.onClick = [this] { owner.setAdvancedVisible(!owner.isAdvancedVisible()); syncDrawer(); };
-    addAndMakeVisible(drawer);
+    layoutCanvas.addAndMakeVisible(drawer);
     stackTab.setButtonText("Stack");
     stackTab.setTooltip("Show the vocal stack controls");
     stackTab.onClick = [this] { routingVisible = false; syncDrawer(); };
     routingTab.setButtonText("Routing");
     routingTab.setTooltip("Show the audio graph and independent FX inspector");
     routingTab.onClick = [this] { openRouting(); };
-    addAndMakeVisible(stackTab);
-    addAndMakeVisible(routingTab);
+    layoutCanvas.addAndMakeVisible(stackTab);
+    layoutCanvas.addAndMakeVisible(routingTab);
     addChildComponent(routingPanel);
     advancedPanel.onOpenRouting = [this] { openRouting(); };
-    addChildComponent(advancedPanel);
-    addAndMakeVisible(choralePanel);
-    addAndMakeVisible(meterPanel);
+    layoutCanvas.addChildComponent(advancedPanel);
+    advancedPanel.onVoiceSelected = [this](int slot) {
+        selectedVoiceSlot = slot;
+        auto tree = owner.getRoutingLayout();
+        tree.setProperty("selectedVoiceSlot", slot, nullptr);
+        owner.setRoutingLayout(tree);
+        if (!restoringWindow) routingPanel.selectVoice(slot);
+    };
+    routingPanel.onSelectVoice = [this](int slot) {
+        selectedVoiceSlot = slot;
+        advancedPanel.selectVoice(slot, false, false);
+    };
+    routingPanel.onRevealParameter = [this](const String& id) { revealParameter(id); };
+    addChildComponent(revealBubble);
+    advancedPanel.selectVoice(selectedVoiceSlot, false, false);
+    layoutCanvas.addAndMakeVisible(choralePanel);
+    layoutCanvas.addAndMakeVisible(meterPanel);
     meterPanel.onReset = [this] { owner.requestMeterReset(); };
     meterPanel.setMeters(owner.getMeters());
     syncDrawer();
     applyTheme();
+    setSize(juce::jlimit(940, 2400, int(savedLayout.getProperty("editorWidth", editorWidth))),
+            juce::jlimit(560, 2200, int(savedLayout.getProperty("editorHeight", owner.isAdvancedVisible() ? editorHeight + drawerHeight : 700))));
+    restoringWindow = false;
+    bypassUiLink = std::make_unique<ParameterAttachment>(*owner.parameters.getParameter("bypass"),
+        [this](float value) { updateBypassControls(value); }, nullptr);
+    bypassUiLink->sendInitialUpdate();
+    timerCallback();
     startTimerHz(30);
 }
 
 Editor::~Editor() {
+    stopTimer();
+    bypassUiLink.reset();
+    rememberWindow();
     setLookAndFeel(nullptr);
 }
 
@@ -140,6 +191,8 @@ void Editor::openRouting() {
 
 void Editor::applyTheme() {
     style.flash = owner.isFlash();
+    globalMix.setNeon(style.flash);
+    assignmentBanner.setColour(Label::textColourId, rgb(0xb798ff));
     meterPanel.setNeon(style.flash);
     advancedPanel.setNeon(style.flash);
     choralePanel.setNeon(style.flash);
@@ -175,6 +228,14 @@ void Editor::applyTheme() {
 }
 
 void Editor::resized() {
+    if (getWidth() <= 0 || getHeight() <= 0) return;
+    const int designHeight = editorHeight + (owner.isAdvancedVisible() ? drawerHeight : 0);
+    layoutScale = routingVisible ? 1.0f : jmin(float(getWidth()) / float(editorWidth), float(getHeight()) / float(designHeight));
+    layoutOffset = routingVisible ? Point<float>() : Point<float>((float(getWidth()) - editorWidth * layoutScale) * 0.5f,
+        (float(getHeight()) - designHeight * layoutScale) * 0.5f);
+    layoutCanvas.setTransform(AffineTransform());
+    layoutCanvas.setBounds(0, 0, routingVisible ? getWidth() : editorWidth, routingVisible ? getHeight() : designHeight);
+    layoutCanvas.setTransform(AffineTransform::scale(layoutScale).translated(layoutOffset.x, layoutOffset.y));
     constexpr std::array<int, 6> centers{70, 183, 285, 387, 500, 614};
     for (size_t i = 0; i < knobs.size(); ++i) {
         labels[i].setBounds(centers[i] - 44, 121, 88, 20);
@@ -183,8 +244,10 @@ void Editor::resized() {
     switches[0].setBounds(32, 88, 76, 23);
     switches[1].setBounds(244, 88, 82, 23);
     switches[2].setBounds(458, 88, 84, 23);
-    switches[3].setBounds(817, 26, 85, 26);
-    theme.setBounds(678, 26, 126, 26);
+    const int right = routingVisible ? getWidth() - 18 : 922;
+    switches[3].setBounds(right - 85, 26, 85, 26);
+    globalMix.setBounds(right - 185, 10, 90, 54);
+    theme.setBounds(right - 320, 26, 126, 26);
     reset.setBounds(24, 306, 66, 23);
     copy.setBounds(100, 306, 105, 23);
     paste.setBounds(215, 306, 64, 23);
@@ -192,9 +255,12 @@ void Editor::resized() {
     drawer.setBounds(300, 306, 144, 23);
     stackTab.setBounds(382, 26, 70, 26);
     routingTab.setBounds(458, 26, 78, 26);
-    routingPanel.setBounds(18, 76, 904, getHeight() - 94);
+    routingPanel.setBounds(18, 100, jmax(0, getWidth() - 36), jmax(0, getHeight() - 118));
+    assignmentBanner.setBounds(24, routingVisible ? 70 : 408, routingVisible ? jmax(0, getWidth() - 118) : 760, 22);
+    endAssignment.setBounds(routingVisible ? getWidth() - 88 : 790, routingVisible ? 70 : 408, 64, 22);
     choralePanel.setBounds(18, 344, 904, 64);
     advancedPanel.setBounds(18, editorHeight, 904, drawerHeight - 12);
+    if (!restoringWindow) rememberWindow();
 }
 
 void Editor::syncDrawer() {
@@ -212,11 +278,21 @@ void Editor::syncDrawer() {
     stackTab.setToggleState(!routingVisible, dontSendNotification);
     routingTab.setToggleState(routingVisible, dontSendNotification);
     drawer.setButtonText(visible ? "Hide Advanced" : "Show Advanced");
-    setSize(editorWidth, routingVisible ? routingHeight
-                                     : editorHeight + (visible ? drawerHeight : 0));
+    if (!routingVisible) {
+        const auto tree = owner.getRoutingLayout();
+        selectedVoiceSlot = jlimit(-1, 7, int(tree.getProperty("selectedVoiceSlot", selectedVoiceSlot)));
+        advancedPanel.selectVoice(selectedVoiceSlot, true, false);
+    }
+    resized();
     advancedPanel.sync();
     leaveKeyboardToHost(*this);
     repaint();
+}
+
+void Editor::updateBypassControls(float bypassValue) {
+    const bool bypassed = bypassValue >= 0.5f;
+    globalMix.setEnabled(!bypassed);
+    globalMix.setAlpha(bypassed ? 0.35f : 1.0f);
 }
 
 void Editor::timerCallback() {
@@ -230,9 +306,63 @@ void Editor::timerCallback() {
         paste.setButtonText("Paste");
     }
     meterPanel.setMeters(owner.getMeters());
+    updateBypassControls(owner.parameters.getRawParameterValue("bypass")->load());
+    const auto assigning = owner.modulationAssignmentId();
+    const auto modulationState = owner.getModulationState();
+    modulationui::refreshWithSelection(*this, owner, owner.getModulationSnapshot(), modulationState, assigning);
+    const auto repaintSwitches = [](auto&& self, Component& component) -> void {
+        if (dynamic_cast<modulationui::Button*>(&component)) component.repaint();
+        for (auto* child : component.getChildren()) if (child->isVisible()) self(self, *child);
+    };
+    repaintSwitches(repaintSwitches, *this);
+    assignmentBanner.setVisible(assigning != 0);
+    endAssignment.setVisible(assigning != 0);
+    if (assigning != 0) {
+        String name = "Modulator " + String(assigning);
+        for (const auto& mod : modulationState.modulators) if (mod.id == assigning)
+            name = String(mod.type == ModulatorType::lfo ? "LFO " : "Random ") + String(assigning);
+        assignmentBanner.setText("Assigning: " + name + "  /  drag a control to set depth", dontSendNotification);
+    }
+}
+
+void Editor::revealParameter(const String& id) {
+    const auto find = [&](auto&& self, Component& parent) -> Component* {
+        if (parent.getComponentID() == id) return &parent;
+        for (auto* child : parent.getChildren())
+            if (auto* found = self(self, *child)) return found;
+        return nullptr;
+    };
+    auto* target = find(find, layoutCanvas);
+    if (target == nullptr) return;
+    routingVisible = false;
+    syncDrawer();
+    revealBubble.toFront(false);
+    AttributedString text;
+    text.append("Target: " + (target->getName().isNotEmpty() ? target->getName() : id),
+                font(12.0f), Colours::white);
+    revealBubble.showAt(target, text, 1600, true, false);
+    leaveKeyboardToHost(revealBubble);
+}
+
+void Editor::rememberWindow() {
+    if (restoringWindow || getWidth() <= 0 || getHeight() <= 0) return;
+    auto tree = owner.getRoutingLayout();
+    if (int(tree.getProperty("editorWidth")) == getWidth() && int(tree.getProperty("editorHeight")) == getHeight()) return;
+    tree.setProperty("editorWidth", getWidth(), nullptr);
+    tree.setProperty("editorHeight", getHeight(), nullptr);
+    owner.setRoutingLayout(tree);
+}
+
+bool Editor::keyPressed(const KeyPress& key) {
+    if (key == KeyPress::escapeKey && owner.modulationAssignmentId() != 0) {
+        owner.endModulationAssignment(); return true;
+    }
+    return false;
 }
 
 void Editor::paint(Graphics& g) {
+    g.fillAll(rgb(style.flash ? night : 0x292b2a));
+    g.addTransform(AffineTransform::scale(layoutScale).translated(layoutOffset.x, layoutOffset.y));
     if (style.flash)
         drawFlash(g);
     else
@@ -242,7 +372,7 @@ void Editor::paint(Graphics& g) {
 void Editor::drawDevice(Graphics& g) {
     g.fillAll(rgb(0x292b2a));
     g.setColour(rgb(0x373a37));
-    g.fillRoundedRectangle(18.0f, 14.0f, 904.0f, 50.0f, 5.0f);
+    g.fillRoundedRectangle(18.0f, 14.0f, routingVisible ? float(getWidth() - 36) : 904.0f, 50.0f, 5.0f);
     g.setColour(rgb(0xf5a24b));
     g.fillRoundedRectangle(27.0f, 25.0f, 4.0f, 25.0f, 2.0f);
     text(g, "Vocal Stack", {41, 20, 168, 32}, rgb(0xf4f4ea), 22.0f, true);
@@ -279,7 +409,7 @@ void Editor::drawFlash(Graphics& g) {
         g.setColour(rgb(outline));
         g.drawRect(plate);
     };
-    drawPlate({18, 14, 904, 50});
+    drawPlate({18, 14, routingVisible ? getWidth() - 36 : 904, 50});
 
     g.setColour(rgb(signPink));
     g.fillRect(18, 14, 4, 50);
@@ -357,6 +487,8 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     const auto a = centre.getPointOnCircumference(inner - 3.6f, angle);
     const auto b = centre.getPointOnCircumference(inner - 11.0f, angle);
     g.drawLine({a, b}, 2.6f);
+    if (auto* modulation = dynamic_cast<ModulationSlider*>(&slider))
+        modulation->drawModulation(g, centre, radius, start, end);
 }
 
 void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colour&,

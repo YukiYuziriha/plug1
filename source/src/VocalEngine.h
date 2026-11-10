@@ -32,6 +32,10 @@ struct Settings {
     // touching graph/state publication. Without opt-in, node-authored nested
     // settings remain authoritative. Added effects never depend on choraleOn.
     bool fxAutomation = false;
+    std::array<float, 48> localMix{};
+    bool localMixAutomation = false;
+    float globalMix = 1.0f; // Untouched latency-aligned input vs complete graph + trim.
+    VoiceSettings leadSettings{true, 0, 0, 0, 0, 0, 0, 0, 0, true};
 };
 
 // Audio-thread value snapshot. The processor must publish copies via its own
@@ -133,6 +137,12 @@ private:
     bool active = false;
     LevelMatch leadMatch;
     Stretch lead{421};
+    Voice leadMotion{613};
+    std::array<HarmonyShifter, 2> leadHarmony;
+    std::array<DelayLine, 2> leadLocalDelay;
+    float leadPitchBlend = 0, leadLocalBlend = 0, globalMix = 1;
+    bool leadHarmonyRunning = false;
+    int leadHarmonyWarmup = 0;
     std::array<Voice, 8> voices{Voice{1471}, Voice{5417}, Voice{7919}, Voice{104729},
                               Voice{130363}, Voice{155921}, Voice{196613}, Voice{262147}};
     RoutingExecutor routing;

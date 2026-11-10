@@ -112,6 +112,8 @@ struct RoutingControls {
     float choraleMix = 0.25f, choraleMotion = 0.35f;
     std::array<FxSettings, 16> fxSettings{};
     bool fxAutomation = false;
+    std::array<float, 48> localMix{};
+    bool localMixAutomation = false;
 };
 
 // Fan-in contract: distinct source voices are orthogonal, duplicate paths are
@@ -125,8 +127,11 @@ struct RoutingControls {
 // Bounded executor chosen instead of AudioProcessorGraph: no JUCE dependency,
 // explicit mixer/pin semantics, and a raw-pointer audio handoff with off-thread
 // reclamation. All modules report zero additional integer sample latency.
-// LR4/EQ IIR phase and waveshaper ADAA phase/attenuation are NOT delay alignment;
-// parallel dry/processed paths may comb. No dry-null recombination is promised.
+// LR4/EQ IIR phase and waveshaper ADAA/IIR-oversampling phase/attenuation are NOT
+// delay alignment; parallel dry/processed paths may comb. No dry-null
+// recombination is promised. Off/2x/4x/Raw have the same explicit integer delay
+// (zero), so every wire is already integer-time aligned: no compensating delay
+// lines are inserted. This is deliberately NOT an IIR group-delay estimate.
 //
 // Thread contract: prepare/reset/destruction require audio quiescence AND
 // serialization with all control calls. requestGraph
@@ -138,6 +143,12 @@ struct RoutingControls {
 class RoutingExecutor {
 public:
     static constexpr int maxNodes = 48, maxLinks = 128, maxEffects = 16, maxInputs = 16;
+    // Added to the engine's own latency, not a replacement for it. Quality is
+    // live automation: no off-thread graph compile or latency renegotiation is
+    // needed for these zero-explicit-delay IIR modes. Nonzero external node
+    // latency is still rejected rather than pretending it is compensated.
+    static constexpr int integerLatencySamples = Waveshaper::latencySamples;
+    int additionalLatencySamples() const noexcept { return integerLatencySamples; }
     // Theoretical graph limit, NOT the tail reported for every graph. IIR tails
     // are asymptotic; their finite reporting allowances do not truncate audio.
     static constexpr double maximumTailSeconds = maxEffects * 256.0;
@@ -165,6 +176,7 @@ public:
             throw std::invalid_argument("invalid routing sample rate");
         clear();
         rate = sampleRate;
+        mixSmoothing = float(-std::expm1(-1.0 / (rate * .010)));
         transitionLength = std::max(1, int(rate * 0.010));
         requestGraph(defaultGraph());
         active = pending.exchange(nullptr);
@@ -232,9 +244,12 @@ public:
         size_t used = 0;
         const auto resetPlan = [&](Plan* plan) {
             if (!plan) return;
-            for (int i = 0; i < plan->count; ++i) if (auto* machine = plan->steps[i].fx.get()) {
-                if (std::find(seen.begin(), seen.begin() + used, machine) == seen.begin() + used) {
-                    seen[used++] = machine; machine->reset();
+            for (int i = 0; i < plan->count; ++i) {
+                plan->steps[i].mixInitialized = false;
+                if (auto* machine = plan->steps[i].fx.get()) {
+                    if (std::find(seen.begin(), seen.begin() + used, machine) == seen.begin() + used) {
+                        seen[used++] = machine; machine->reset();
+                    }
                 }
             }
         };
@@ -343,7 +358,14 @@ public:
                 break;
             }
             case NodeType::mix: {
-                const float m = unit(n.mainControls ? controls.mix : n.mix, 0.35f);
+                float m = unit(n.mainControls ? controls.mix : n.mix, 0.35f);
+                if (!n.mainControls && controls.localMixAutomation && n.id >= 200 && n.id < 248) {
+                    const float target = unit(controls.localMix[n.id - 200], n.mix);
+                    if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
+                    else step.smoothedMix += mixSmoothing * (target - step.smoothedMix);
+                    if (std::abs(step.smoothedMix - target) < 1e-6f) step.smoothedMix = target;
+                    m = float(step.smoothedMix);
+                }
                 const auto& dry = input(0); const auto& wet = input(1);
                 value.audio = {blend(dry.audio.left, wet.audio.left, m), blend(dry.audio.right, wet.audio.right, m)};
                 for (size_t s = 0; s < value.lineage.size(); ++s) value.lineage[s] = blend(dry.lineage[s], wet.lineage[s], m);
@@ -464,7 +486,7 @@ private:
     static constexpr double moduleTailSeconds(NodeType type) noexcept {
         switch (type) {
         case NodeType::chorale: return .040;
-        case NodeType::waveshaper: return .020; // previous driven sample / smoothed blend
+        case NodeType::waveshaper: return Waveshaper::tailSeconds; // DC / IIR resampling / smoothing
         case NodeType::equalizer: return 256; // conservative extreme-Q/low-cutoff IIR decay
         case NodeType::crossover: return 8;
         default: return 0;
@@ -478,6 +500,8 @@ private:
         RoutingNode node;
         std::array<int, maxLinks> inputs{}, inputPins{}, sourcePins{};
         int inputCount = 0;
+        double smoothedMix = 0;
+        bool mixInitialized = false;
         std::shared_ptr<Machine> fx;
     };
     struct Plan {
@@ -550,7 +574,14 @@ private:
                     || !std::isfinite(n.crossoverHigh) || n.crossoverLow < 10
                     || n.crossoverHigh < n.crossoverLow) return {false, "invalid crossover controls"};
                 [[fallthrough]];
-            case NodeType::waveshaper: case NodeType::equalizer:
+            case NodeType::waveshaper:
+                if (n.waveshaper.shape < 0 || n.waveshaper.shape >= int(Waveshaper::shapeNames.size())
+                    || !std::isfinite(n.waveshaper.shapeAmount) || n.waveshaper.shapeAmount < 0
+                    || n.waveshaper.shapeAmount > 1 || n.waveshaper.quality < 0
+                    || n.waveshaper.quality >= int(Waveshaper::qualityNames.size()))
+                    return {false, "invalid waveshaper shape/quality controls"};
+                [[fallthrough]];
+            case NodeType::equalizer:
             case NodeType::chorale: ++effects; break;
             case NodeType::output: ++outputs; break;
             case NodeType::sum: case NodeType::mix: break;
@@ -597,6 +628,7 @@ private:
     FxMonitor* fxMonitor = nullptr;
     std::atomic<double> reportedTail{0};
     double rate = 0;
+    float mixSmoothing = 0;
     Plan* active = nullptr;
     std::atomic<Plan*> pending{nullptr};
     std::array<Plan*, 4> retired{};

@@ -1,11 +1,13 @@
-# Vocal Stack 1.4.1
+# Vocal Stack 1.5.0
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-1.4.1 polishes embedded routing and adds live per-effect visual monitors; it adds
-no new effect module. Release CLAP/VST3 packages are refreshed. Automated checks
-passed; listening and transport validation in the user's Bitwig session remain manual.
+1.5.0 adds resizable Stack/Routing views, an independently editable Lead, shared
+rotary voice/FX inspectors, global dry/wet Mix, Classic LFO/Random modulation,
+and 19 waveshapers with Raw, 2x/4x quality, and optional RMS level matching.
+Final release verification is recorded below. Bitwig listening/transport checks
+remain manual; these are original processors/workflows, not proprietary clones.
 
 ## Install
 
@@ -27,15 +29,16 @@ and [VST3](https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical%2BDo
 | Control | Default | Effect |
 | --- | --- | --- |
 | Leveler | 50% | Smooth phrase dynamics while approximately preserving long-term input RMS; 0% off |
-| Mix | 35% | True dry/wet doubler blend: 0% processed lead, 100% generated voices only |
+| Lead / Stack | 35% Stack | Existing doubler balance: edited Lead versus generated voices; host ID/name remains `double` / Mix |
+| Global Mix | 100% | Top-right untouched original input versus complete processed patch |
 | Human | 35% | Variation in the doubles' timing, pitch, and tone |
 | Width | 65% | Stereo spread of the doubles |
 | Formant | 0.0 st | Moves vocal resonances at the original lead pitch |
 | Output | 0.0 dB | Final output trim, −24 to +12 dB; double-click for unity |
 
-Bitwig's **Plug-in Parameters** button exposes all 874 parameters, including eight
-voices, musical Pitch, presence, and 16 fixed FX automation slots. The original
-139 IDs/indices are retained; additional tone controls append after them. The original **Vocal Stack**
+Bitwig's **Plug-in Parameters** button exposes all 1007 parameters, including Lead,
+eight generated voices, musical Pitch, presence, 16 fixed FX slots and 48 local
+mixer slots. All original 874 IDs/indices are retained; new controls append. The original **Vocal Stack**
 CLAP Remote Controls page retains its five knobs and three module switches. A
 second **Output** page supplies output trim and bypass. Original parameter IDs,
 indices and remote assignments are unchanged; new parameters are appended.
@@ -71,12 +74,28 @@ Meters keep their history independently of the editor's 30 Hz refresh.
 
 The preview uses synthetic readings to demonstrate peak hold and clip indication.
 
+### Window and control layout
+
+Drag the window corner to resize (940x560 minimum, 2400x2200 maximum). Stack
+scales its complete design proportionally, including Advanced; unmatched space
+is letterboxed, never stretched. Routing keeps controls/nodes unscaled and expands
+the canvas and inspector height. Small inspectors scroll. Window size and graph
+pan/zoom are saved; tab/drawer changes do not resize the window or refit the graph.
+Voice cards use two rows of four knobs; selecting a Lead/Voice node opens the same
+controls on the right. Selection follows between views. Numeric entry, double-click
+reset, and modifier fine adjustment remain available without stealing idle DAW keys.
+
 ### Mix and Leveler
 
-**Mix is now a true linear dry/wet crossfade for the doubler.** Dry means the lead
-after Leveler and shared Formant processing, not a whole-plugin bypass. At 100%,
+**Global Mix** beside Bypass blends latency-aligned original input (0%) with the
+complete processed patch (100%, the migration/default value). Bypass passes the
+original aligned input and dims/disables Mix without erasing its setting. FX keep
+running at global Dry so switching back does not restart their histories.
+
+**Lead / Stack** retains the existing linear doubler crossfade. Its Lead side
+includes Leveler, shared Formant, and the new local Lead edits, not untouched input. At 100% Stack,
 no lead remains; with all advanced voices disabled the wet bus is silent. Turning
-DOUBLE off restores the processed lead regardless of Mix. Chorale and Output
+DOUBLE off restores the edited Lead regardless of Lead / Stack. Chorale and Output
 remain downstream. A linear blend of decorrelated voices can dip in RMS near the
 middle; neither a fixed perceived loudness nor identical peaks are guaranteed.
 
@@ -94,7 +113,9 @@ The embedded **Stack / Routing** top tabs select the editor view, never the
 processing mode or sound. The separate **Voice stack** switch selects the saved
 custom stack instead of Basic's first two voices. Present but muted voices remain
 visible in the stack, routing view, and Voice Motion; absent slots are hidden.
-Basic displays only the first two voices. Fresh configurations show two voice cards and **+ Add voice**.
+Basic routing displays only the first two generated voices plus Lead. Fresh
+Advanced configurations show an editable Lead card, two generated voice cards,
+and **+ Add voice**.
 Add up to eight generated voices (the lead is separate), in a horizontally scrollable
 card area. **On** mutes without removing the card; **Remove** hides/disconnects an
 added slot without renumbering the others or erasing its settings. Re-adding uses
@@ -121,7 +142,12 @@ freezes the motion state. Shared Formant adds to voice offsets when enabled;
 turning it off leaves Advanced's independent formants active. Basic's subtle voice
 coloration still follows the shared Formant switch. Consonant suppression keeps
 the generated stack behind the lead. Stereo input doubles use its mono mid;
-the lead preserves the input stereo image.
+the neutral Lead preserves the input stereo image. Lead has its own enable,
+pitch/fine/formant, gain, stereo balance, delay and motion controls, defaulting
+neutral (Depth and Rate zero). Lead edits apply independently of Advanced
+activation; they never consume one of the eight generated slots. Lead local
+formant adds to the enabled shared formant. Negative-formant algorithms/ranges
+are otherwise unchanged in this release.
 
 First UI activation initializes voices from current Human unless you have already
 edited or restored custom voices. Later toggles preserve custom edits. Host
@@ -143,7 +169,7 @@ The main Formant knob now spans **−24 to +24 st**. Shared and independent voic
 Formant add together, allowing **±48 st** before additional Human motion; there
 is no ±24 combined cap. Pitch does not perform scale detection or pitch correction.
 Large pitch/formant shifts are creative processing, with source-dependent artifacts.
-Signed sliders fill from zero; Gain fills from its 0 dB marker, not the midpoint
+Signed knobs fill from zero; Gain fills from its 0 dB marker, not the midpoint
 of its asymmetric range.
 
 ### Voice Motion
@@ -189,7 +215,11 @@ Voices -------------------> Main Mix Wet (automatic compensation)
 Main Mix -> Chorale -> Output trim / meters
 ```
 
-The main Mix knob controls the main Mix node; other Mix nodes have local blends.
+Lead / Stack controls the main Mix node; additional Mix nodes have stable,
+automatable and modulatable local Dry/Wet parameters (IDs 200..247). Local
+crossfades are smoothed. Double-click the selected machine's inspector title to
+rename it; aliases are UI state and never change parameter/voice identities. Standalone imported mixers outside that ID range retain
+their graph-authored control; normal UI-created mixers use the supported range.
 DOUBLE off selects the dry input of that main node, not an unconditional lead
 shortcut through custom routing. A custom graph may omit it entirely. Global
 bypass always returns latency-aligned original input, ignoring graph and trim.
@@ -224,16 +254,86 @@ on migration. The default Basic signal path remains regression-tested unchanged.
 
 ### Waveshaper
 
-Three independent curves: **Soft**, **Hard**, and **Asymmetric**. Drive adds up to
-36 dB before shaping; Output trim spans -24 to +12 dB; local Dry/wet blends the
-result. Controls and shape transitions are smoothed. First-order antiderivative
-antialiasing reduces aliasing; this is **not** oversampling or alias-free processing.
-It adds no explicit sample delay but can change frequency-dependent phase/level.
+19 original curves, grouped in the selector with small transfer icons. The
+additional **Legacy** entry follows the original three-shape host parameter:
+its 0..2 range and normalized automation are unchanged. New explicit choices use
+the appended **Wave Algorithm** parameter (0 = Follow Legacy, 1..19 = curves):
+
+- **Classic:** Soft, Hard, Asymmetric (existing identities/default processing retained).
+- **Saturation:** Warm Asymmetric, Sine Saturation, Arctangent.
+- **Clipping:** Rounded Clip, Asymmetric Clip.
+- **Folding:** Triangle Fold, Sine Fold, Single Fold, Multi Fold.
+- **Rectification:** Half-Wave, Full-Wave.
+- **Destruction:** Staircase, Dead Zone, Binary Threshold.
+- **Curves:** Exponential, S-Curve.
+
+Drive adds up to 36 dB; Output trim spans -24 to +12 dB; local Dry/Wet blends
+the result. Shape controls new algorithms and is disabled for the original three.
+New asymmetric/rectifying algorithms remove DC; legacy processing is preserved.
+
+**Raw** directly evaluates the curve at project sample rate. Off uses first-order
+ADAA; **Quality** adds 2x/4x half-band IIR oversampling. Raw overrides Quality
+without erasing its saved value. Changes crossfade without RT allocation or graph
+rebuilding. Aliasing depends on input, drive, shape, and sample rate; Raw is not a
+fixed grit/bitcrusher amount, and Off/oversampling are not alias-free.
+
+These modes add **zero explicit integer delay**, but ADAA/IIR/DC filters have
+frequency-dependent phase and attenuation. Local/parallel dry remains direct:
+**parallel paths can comb; this is not phase-neutral compensation.** General
+nonzero-integer-latency routing remains rejected, not silently misaligned.
+
+**Level match** is an optional bounded stereo-RMS audition aid (300 ms energy and
+gain smoothing, +/-24 dB bound, gated silence). Manual Output trim remains active.
+It is not a limiter, LUFS measurement, fixed loudness guarantee, or peak control.
 
 The monitor pairs a **static transfer curve** with live stereo pre/post waveforms.
 The static curve illustrates the memoryless shaping function; it explicitly does
-not depict the dynamic ADAA response. Waveforms show actual input/output samples,
+not depict dynamic ADAA, IIR/DC filtering or RMS level matching. Waveforms show actual input/output samples,
 including bypass, rather than an animation inferred from the curve.
+
+![Waveshaper rotary inspector](VocalStack-Waveshaper.png)
+
+### LFO and Random modulation
+
+In Routing, use **+ Modulator** at the bottom right to add Classic LFO or Random.
+The persistent bottom strip selects existing modulators. The right inspector has
+**Controls / Assignments** tabs. Up to 16 independent monophonic sources and 256
+assignments are supported.
+
+Classic LFO provides sine/triangle/saw/square, phase skew, phase, amount and polarity.
+Random uses uniform stepped values or cubic slew. Both support free Hz, tempo-synced
+beat lengths (including dotted/triplet presets), restart-on-play and incoming MIDI
+note retrigger. Sync is tempo/division timing, **not PPQ seek/loop phase locking**;
+there is no Bitwig per-note polyphonic modulator mode. These are original
+implementations inspired by [Bitwig's official modulator descriptions](https://www.bitwig.com/userguide/latest/modulator/),
+not exact/full Bitwig device parity.
+
+1. Select a source and click **Assign**.
+2. Select any voice/FX or switch to Stack; Assign remains active.
+3. Drag a highlighted knob to set signed depth, not its base setting.
+4. In EQ, drag an existing handle for frequency/gain depth; wheel assigns Q.
+5. Escape or **Done** exits. In Assign, click a sound switch/choice for an explicit
+   stepped-depth menu; right-click also offers assignments outside Assign.
+
+The Assignments tab lists targets, signed depth, enable, Remove and Reveal.
+Linear targets display depth in their units; logarithmic targets use percent of
+normalized span. Colored ranges show the selected source's amount; moving markers
+show combined effective values. Base values/host automation remain untouched.
+Clipping at parameter bounds is intentional. Discrete modulation uses hysteresis
+and a 20 ms dwell to prevent chattering, with effect-specific smoothing.
+
+Continuous sound controls, including extra mixers, are targets; Bypass, Advanced
+activation, presence/removal, graph wiring, and UI operations are excluded.
+Modulator-to-modulator feedback is not included. Removing a voice/FX/mixer retires
+its assignments so a reused slot cannot inherit them accidentally.
+Assignments/settings survive session recall; phases/RNG histories continue through
+UI edits, but playback state is initialized on prepare/reset, not serialized as a
+sample-exact random continuation. The audio clock uses fixed 32-sample control
+intervals independent of host block boundaries.
+
+![LFO Controls in the Neon palette](VocalStack-LFO.png)
+
+![Selected LFO assignments and signed depths](VocalStack-Modulation.png)
 
 ### EQ8
 
@@ -351,12 +451,12 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The first configure fetches pinned dependencies. With plugins enabled, twelve
+The first configure fetches pinned dependencies. With plugins enabled, sixteen
 suites cover DSP, Chorale, routing, voices, FX automation, pitch/formant spectra,
-tone processors, multiband, FX monitoring (`VocalStackFxMonitor`), CLAP hosting,
-and editor/state. Configure with `-DVOCALSTACK_TEST_BASELINE=ON` for the optional
-pinned-history comparison: **13 suites including the long `VocalStackDSP` suite,
-or 12 excluding it** (`ctest --test-dir build -C Release -E '^VocalStackDSP$'
+tone/multiband/FX monitoring, Lead/global Mix, waveshaper expansion, modulation
+backend/processor, CLAP hosting and editor/state. Configure with
+`-DVOCALSTACK_TEST_BASELINE=ON` for the optional pinned-history comparison:
+**17 suites including long `VocalStackDSP`, or 16 excluding it** (`ctest --test-dir build -C Release -E '^VocalStackDSP$'
 --output-on-failure`). The baseline requires Python and the pinned pre-routing
 revision in local Git history. These are configured counts, not passing results. The plugins appear under
 `build/VocalStack_artefacts/Release/`. To build just the portable DSP tests,
@@ -381,7 +481,9 @@ and rejects invalid binary XML state.
 - `ProcessorRoutingState.h`: graph serialization and fixed FX automation mapping.
 - `VoiceBridge.h` / `VoiceMonitor.h`: atomic snapshots and snapshot-only motion UI.
 - `RoutingPanel.h`: native node canvas, inspectors, layout and edit history.
-- `DoublerPanel.h`: dedicated voice-card editor and Chorale controls.
+- `DoublerPanel.h` / `ParameterKnob.h`: shared Lead/voice rotary controls and Chorale.
+- `Modulation.h`: bounded fixed-clock LFO/Random plans, stable state and atomic snapshots.
+- `ModulationPanel.h` / `ModulationUI.h`: source inspector, assignment gestures and feedback.
 - `Metering.h`: reusable per-channel RMS, sample-peak and hold detectors.
 - `MeterBridge.h`: lock-free, best-effort audio-to-UI display snapshots.
 - `PluginProcessor`: host parameters, state compatibility and audio-thread meter
@@ -399,6 +501,28 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.5.0:** Release CLAP/VST3 built with MSVC 2026. All **16 focused CTest suites**
+passed, including **33 editor/state groups** covering both skins. New coverage
+includes Lead/global-Mix endpoints, resizing/tab persistence, shared voice controls,
+LFO/Random fixed-clock and publication stress, discrete dwell, assignment gestures
+(including EQ handles), extra mixer targets/aliases, legacy shape automation,
+Raw/quality switching, DC/finite output and RMS audition matching. The pinned
+neutral/default path remains bit-identical with unchanged latency.
+
+Both skins' Stack, Routing, LFO/Assignments, EQ, waveshaper and multiband renders
+were visually reviewed. Packaged and installed CLAP smoke checks passed; CLAP/VST3
+installed binaries match their refreshed packages by SHA256. The long legacy
+`VocalStackDSP` suite was excluded, not claimed passed. No Bitwig listening or
+transport-session check was performed.
+
+**CPU capacity is not a real-time guarantee:** the deliberately extreme stress
+patch (8 pitched voices, 16 FX including 15 serial 4x Multi Fold shapers, 16
+modulators/256 assignments) took about **1.4 seconds per audio second** in an
+isolated run on this machine. Such patches can overload real-time playback;
+reduce oversampling/FX/voices as needed. Timing is informational and machine-dependent.
+
+### Historical 1.4.1 verification
 
 **1.4.1:** Release CLAP/VST3 built with MSVC 2026. All **12 focused CTest suites**
 passed, including **26 editor/state test groups** in both skins. Coverage includes

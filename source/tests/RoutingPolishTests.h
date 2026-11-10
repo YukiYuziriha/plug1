@@ -272,6 +272,7 @@ void embeddedTabs() {
                 auto* advanced = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(*editor, [](auto&) { return true; });
                 expect(routing && advanced, "Editor must own its embedded routing and stack panels");
                 const auto before = graphText(owner.getRoutingGraph());
+                const auto windowBounds = editor->getLocalBounds();
                 const auto floatingWindows = [] {
                     int count = 0;
                     auto& desktop = juce::Desktop::getInstance();
@@ -287,8 +288,9 @@ void embeddedTabs() {
                     expect(routing->isShowing() && routing->getParentComponent() == editor.get()
                                && !routing->isOnDesktop() && routing->getPeer() == editor->getPeer(),
                            "Routing opened outside its editor");
-                    expect(editor->getWidth() == 940 && editor->getHeight() == 700
-                               && editor->getLocalBounds().contains(routing->getBounds()), "Embedded routing layout changed");
+                    expect(editor->getLocalBounds() == windowBounds
+                               && routing->getBounds() == editor->getLocalBounds().reduced(18).withTrimmedTop(82),
+                           "Embedded routing must use available window space without resizing it");
                     if (repeat == 0) firstLayout = owner.getRoutingLayout().toXmlString();
                     else expect(firstLayout == owner.getRoutingLayout().toXmlString(), "Tab switch refitted saved routing layout");
                     if (!expanded && !active && repeat == 0)
@@ -300,7 +302,7 @@ void embeddedTabs() {
                     action(*editor, "Stack");
                     pumpTimers();
                     expect(!routing->isVisible() && advanced->isVisible() == expanded, "Stack lost drawer visibility");
-                    expect(editor->getHeight() == (expanded ? 872 : 430), "Stack did not restore its previous height");
+                    expect(editor->getLocalBounds() == windowBounds, "Stack tab changed host window dimensions");
                     expect(findButton(*editor, "Stack")->getToggleState()
                                && !findButton(*editor, "Routing")->getToggleState(), "Stack tab selection not reflected");
                     expect(owner.isAdvancedVisible() == expanded && owner.settings().advanced == active,

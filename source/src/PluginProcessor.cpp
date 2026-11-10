@@ -7,10 +7,64 @@ namespace {
 using State = juce::AudioProcessorValueTreeState;
 constexpr auto stateType = "VocalStack";
 constexpr auto themeProperty = "flash";
+
+// JUCE AudioParameterInt supplies integer snapping/step counts, but inherits
+// isDiscrete() == false. Quality is explicitly stepped host automation.
+class DiscreteAudioParameterInt final : public juce::AudioParameterInt {
+public:
+    using juce::AudioParameterInt::AudioParameterInt;
+    bool isDiscrete() const override { return true; }
+};
+
+// Append-only wave parameters are bridged here rather than changing the legacy
+// 49-field tone layout (its indices are part of host/session compatibility).
+void boundProcessorTone(RoutingNode& node) {
+    const auto shape = node.waveshaper.shape;
+    processorRouting::boundToneSettings(node);
+    node.waveshaper.shape = std::clamp(shape, 0, 18);
+    node.waveshaper.shapeAmount = processorRouting::bounded(node.waveshaper.shapeAmount, 0, 1, 0.5f);
+    node.waveshaper.quality = std::clamp(node.waveshaper.quality, 0, 2);
+}
+auto processorToneValues(const RoutingNode& node) {
+    auto result = processorRouting::toneValues(node);
+    result[2] = float(std::clamp(node.waveshaper.shape, 0, 2));
+    return result;
+}
+juce::ValueTree encodeProcessorGraph(const Graph& graph, const char* type) {
+    auto result = processorRouting::encode(graph, type);
+    for (auto child : result) {
+        if (!child.hasType("Node")) continue;
+        for (const auto& node : graph.nodes) if (juce::int64(node.id) == juce::int64(child["id"])) {
+            auto wave = child.getChildWithName("Waveshaper");
+            wave.setProperty("raw", node.waveshaper.raw, nullptr);
+            wave.setProperty("shapeAmount", node.waveshaper.shapeAmount, nullptr);
+            wave.setProperty("quality", node.waveshaper.quality, nullptr);
+        }
+    }
+    return result;
+}
+bool decodeProcessorGraph(const juce::ValueTree& tree, Graph& graph) {
+    if (!processorRouting::decode(tree, graph)) return false;
+    for (auto& node : graph.nodes) for (const auto child : tree) {
+        if (!child.hasType("Node") || juce::int64(node.id) != juce::int64(child["id"])) continue;
+        const auto wave = child.getChildWithName("Waveshaper");
+        node.waveshaper.shape = int(wave.getProperty("shape", 0));
+        node.waveshaper.raw = wave.getProperty("raw", false);
+        node.waveshaper.shapeAmount = wave.getProperty("shapeAmount", 0.5f);
+        node.waveshaper.quality = int(wave.getProperty("quality", 0));
+        boundProcessorTone(node);
+    }
+    return true;
+}
 }
 
 juce::String toneParameterId(size_t slot, const char* field) {
     if (slot == 0 || slot > 15 || field == nullptr) return {};
+    if (std::string_view(field) == "WaveRaw") return parameterIds[waveExtraParameterStart + (slot - 1) * 2];
+    if (std::string_view(field) == "WaveShapeAmount") return parameterIds[waveExtraParameterStart + (slot - 1) * 2 + 1];
+    if (std::string_view(field) == "WaveQuality") return parameterIds[waveQualityParameterStart + slot - 1];
+    if (std::string_view(field) == "WaveLevelMatch") return parameterIds[waveLevelMatchParameterStart + slot - 1];
+    if (std::string_view(field) == "WaveAlgorithm") return parameterIds[waveAlgorithmParameterStart + slot - 1];
     for (size_t f = 0; f < toneParameterFields.size(); ++f)
         if (std::string_view(field) == toneParameterFields[f])
             return parameterIds[toneParameterIndex(slot, f)];
@@ -32,8 +86,17 @@ Processor::Processor()
       parameters(*this, nullptr, stateType, makeParameters()) {
     engine.setFxMonitor(&fxMonitor);
     setLatencySamples(VocalEngine::defaultLatency);
-    for (size_t i = 0; i < values.size(); ++i)
+    for (size_t i = 0; i < values.size(); ++i) {
         values[i] = parameters.getRawParameterValue(parameterIds[i]);
+        rangedParameters[i] = parameters.getParameter(parameterIds[i]);
+        // Cache off audio. Legacy integer parameters retain their original host
+        // metadata, but still need Schmitt/dwell protection in modulation.
+        steppedParameters[i] = rangedParameters[i]->isDiscrete()
+            || dynamic_cast<juce::AudioParameterInt*>(rangedParameters[i]) != nullptr;
+        const auto initial = values[i]->load();
+        snapshotBase[i].store(initial);
+        snapshotEffective[i].store(initial);
+    }
     for (size_t i = 10; i < 94; ++i)
         if (i < 43 || i >= 46) parameters.addParameterListener(parameterIds[i], this);
     startTimerHz(10);
@@ -64,7 +127,7 @@ State::ParameterLayout Processor::makeParameters() {
             juce::AudioParameterFloatAttributes{}.withLabel("%").withStringFromValueFunction(percentText)));
     };
     percent(0, "Leveler", 50);
-    percent(1, "Mix", 35);
+    percent(1, "Mix", 35); // UI label is Lead / Stack; preserve host metadata.
     percent(2, "Human", 35);
     percent(3, "Width", 65);
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -145,7 +208,7 @@ State::ParameterLayout Processor::makeParameters() {
         };
         addFloat(0, "Wave Drive", 0, 36, 0, "dB");
         addFloat(1, "Wave Output", -24, 12, 0, "dB");
-        addInt(2, "Wave Shape", 0, 2, 0);
+        addInt(2, "Wave Shape", 0, 2, 0); // Preserve legacy normalized automation.
         addFloat(3, "EQ Shift", -24, 24, 0, "st");
         addFloat(4, "EQ Gain", -24, 24, 0, "dB");
         addBool(5, "EQ Adaptive Q");
@@ -162,11 +225,61 @@ State::ParameterLayout Processor::makeParameters() {
             addInt(field + 4, bandName + "Mode", 0, 13, 0);
         }
     }
+    percent(int(globalMixParameterIndex), "Global Mix", 100);
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"leadOn", 1}, "Lead Active", true));
+    for (size_t f = 0; f < fields.size(); ++f)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{leadParameterIds[f + 1], 1}, "Lead " + juce::String(fields[f]),
+            juce::NormalisableRange<float>{minimum[f], maximum[f], interval[f]}, 0.0f,
+            juce::AudioParameterFloatAttributes{}.withLabel(units[f])));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"leadPitch", 1}, "Lead Pitch",
+        juce::NormalisableRange<float>{-36, 36, 0.01f}, 0.0f,
+        juce::AudioParameterFloatAttributes{}.withLabel("st")));
+    for (size_t slot = 1; slot < 16; ++slot) {
+        layout.add(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{toneParameterId(slot, "WaveRaw"), 1}, "FX " + juce::String(int(slot)) + " Wave Raw", false));
+        percent(int(waveExtraParameterStart + (slot - 1) * 2 + 1),
+            ("FX " + juce::String(int(slot)) + " Wave Shape Amount").toRawUTF8(), 50);
+    }
+    for (size_t slot = 1; slot < 16; ++slot)
+        layout.add(std::make_unique<DiscreteAudioParameterInt>(
+            juce::ParameterID{toneParameterId(slot, "WaveQuality"), 1},
+            "FX " + juce::String(int(slot)) + " Wave Quality", 0, 2, 0,
+            juce::AudioParameterIntAttributes{}.withStringFromValueFunction([](int value, int) {
+                return juce::String(Waveshaper::qualityNames[size_t(std::clamp(value, 0, 2))]);
+            }).withValueFromStringFunction([](const juce::String& text) {
+                if (text.trim().equalsIgnoreCase("2x")) return 1;
+                if (text.trim().equalsIgnoreCase("4x")) return 2;
+                return std::clamp(text.getIntValue(), 0, 2);
+            })));
+    for (size_t slot = 1; slot < 16; ++slot)
+        layout.add(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{toneParameterId(slot, "WaveLevelMatch"), 1},
+            "FX " + juce::String(int(slot)) + " Wave Level Match", false));
+    for (size_t slot = 0; slot < localMixParameterIdStorage.size(); ++slot)
+        percent(int(localMixParameterStart + slot), ("Mix " + juce::String(int(slot + 1)) + " Balance").toRawUTF8(), 50);
+    for (size_t slot = 1; slot < 16; ++slot)
+        layout.add(std::make_unique<DiscreteAudioParameterInt>(
+            juce::ParameterID{toneParameterId(slot, "WaveAlgorithm"), 1},
+            "FX " + juce::String(int(slot)) + " Wave Algorithm", 0, 19, 0,
+            juce::AudioParameterIntAttributes{}.withStringFromValueFunction([](int value, int) {
+                return value == 0 ? juce::String("Follow legacy Shape") : juce::String(Waveshaper::shapeNames[size_t(std::clamp(value - 1, 0, 18))]);
+            }).withValueFromStringFunction([](const juce::String& text) {
+                for (size_t i = 0; i < Waveshaper::shapeNames.size(); ++i)
+                    if (text.trim().equalsIgnoreCase(Waveshaper::shapeNames[i])) return int(i + 1);
+                return 0;
+            })));
     return layout;
 }
 
 Settings Processor::settings() const {
-    const auto value = [&](size_t i) { return values[i]->load(std::memory_order_relaxed); };
+    std::array<float, parameterIds.size()> raw{};
+    for (size_t i = 0; i < raw.size(); ++i) raw[i] = values[i]->load(std::memory_order_relaxed);
+    return settingsFromValues(raw);
+}
+
+Settings Processor::settingsFromValues(const std::array<float, parameterIds.size()>& raw) const {
+    const auto value = [&](size_t i) { return raw[i]; };
     Settings result;
     result.level = value(0) * 0.01f;
     result.doubles = value(1) * 0.01f;
@@ -192,10 +305,25 @@ Settings Processor::settings() const {
     processorRouting::applyFxSettings(result.fxSettings, [&](size_t slot, size_t field) {
         return value(slot == 0 ? 43 + field : 94 + (slot - 1) * 3 + field);
     });
-    for (size_t slot = 1; slot < 16; ++slot)
+    for (size_t slot = 1; slot < 16; ++slot) {
         processorRouting::applyToneSettings(result.fxSettings[slot], [&](size_t field) {
             return value(toneParameterIndex(slot, field));
         });
+        result.fxSettings[slot].waveshaper.raw = value(waveExtraParameterStart + (slot - 1) * 2) >= 0.5f;
+        result.fxSettings[slot].waveshaper.shapeAmount = value(waveExtraParameterStart + (slot - 1) * 2 + 1) * 0.01f;
+        // Raw overrides quality in Waveshaper; keep the requested quality saved.
+        result.fxSettings[slot].waveshaper.quality = std::clamp(int(value(waveQualityParameterStart + slot - 1)), 0, 2);
+        result.fxSettings[slot].waveshaper.levelMatch = value(waveLevelMatchParameterStart + slot - 1) >= 0.5f;
+        const int algorithm = std::clamp(int(value(waveAlgorithmParameterStart + slot - 1)), 0, 19);
+        if (algorithm > 0) result.fxSettings[slot].waveshaper.shape = algorithm - 1;
+    }
+    result.localMixAutomation = true;
+    for (size_t slot = 0; slot < result.localMix.size(); ++slot)
+        result.localMix[slot] = value(localMixParameterStart + slot) * 0.01f;
+    result.globalMix = value(globalMixParameterIndex) * 0.01f;
+    const auto i = leadParameterStart;
+    result.leadSettings = {value(i) >= 0.5f, value(i + 1), value(i + 2), value(i + 3), value(i + 4),
+        value(i + 5), value(i + 6), value(i + 7), value(i + 8), true};
     return result;
 }
 
@@ -208,6 +336,15 @@ bool Processor::isBusesLayoutSupported(const BusesLayout& layout) const {
 
 void Processor::prepareToPlay(double sampleRate, int) {
     const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+    processingSampleRate = sampleRate;
+    modulationSnapshotSequence.fetch_add(1);
+    modulation.prepare(sampleRate);
+    discreteHoldUntil.fill(0);
+    processedSamples = 0;
+    activeTargetMask.fill(false);
+    for (auto& target : snapshotTargeted) target.store(false);
+    modulationSnapshotSequence.fetch_add(1);
+    transportPlaying = false;
     engine.prepare(sampleRate, getTotalNumInputChannels(), getTotalNumOutputChannels(), settings());
     const auto restored = engine.requestGraph(routingActive);
     if (!restored) routingError = juce::String(restored.message);
@@ -220,24 +357,67 @@ void Processor::prepareToPlay(double sampleRate, int) {
 void Processor::reset() {
     const std::lock_guard<std::recursive_mutex> lock(controlMutex);
     if (prepared) {
+        modulationSnapshotSequence.fetch_add(1);
+        modulation.prepare(processingSampleRate);
+        discreteHoldUntil.fill(0);
+        processedSamples = 0;
+        activeTargetMask.fill(false);
+        for (auto& target : snapshotTargeted) target.store(false);
+        modulationSnapshotSequence.fetch_add(1);
         engine.reset(settings());
         voiceBridge.publish(engine.voiceSnapshots());
         metering.publish(engine.meters());
     }
 }
 
-void Processor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer&) { render(audio, false); }
+void Processor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi) { render(audio, midi, false); }
 
-void Processor::processBlockBypassed(juce::AudioBuffer<float>& audio, juce::MidiBuffer&) { render(audio, true); }
+void Processor::processBlockBypassed(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi) { render(audio, midi, true); }
 
-void Processor::render(juce::AudioBuffer<float>& audio, bool hostBypass) {
+void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, bool hostBypass) {
     juce::ScopedNoDenormals noDenormals;
     if (!prepared)
         return;
     if (meterResetRequested.exchange(false, std::memory_order_relaxed))
         engine.resetMeters();
-    engine.process(audio.getArrayOfReadPointers(), audio.getArrayOfWritePointers(),
-                   audio.getNumSamples(), settings(), hostBypass);
+    if (auto* playHead = getPlayHead()) {
+        if (auto position = playHead->getPosition()) {
+            if (auto bpm = position->getBpm()) modulation.setTempo(*bpm);
+            const bool playing = position->getIsPlaying();
+            if (playing && !transportPlaying) modulation.retrigger(ModulationRetrigger::transport);
+            transportPlaying = playing;
+        }
+    }
+    // With no modulators there is no control work or re-chunking of the legacy
+    // engine path. A newly published plan is picked up on the next host block.
+    if (modulation.isIdle()) {
+        engine.process(audio.getArrayOfReadPointers(), audio.getArrayOfWritePointers(),
+            audio.getNumSamples(), settings(), hostBypass);
+        processedSamples += uint64_t(audio.getNumSamples());
+        voiceBridge.publish(engine.voiceSnapshots());
+        metering.publish(engine.meters());
+        return;
+    }
+    const auto blockBaseSettings = settings();
+    auto event = midi.begin();
+    for (int offset = 0; offset < audio.getNumSamples();) {
+        while (event != midi.end() && (*event).samplePosition <= offset) {
+            const auto metadata = *event;
+            if (metadata.numBytes >= 3 && (metadata.data[0] & 0xf0) == 0x90 && metadata.data[2] != 0)
+                modulation.retrigger(ModulationRetrigger::note);
+            ++event;
+        }
+        if (modulation.samplesUntilTick() <= 0) updateModulationValues();
+        int count = std::min(modulation.samplesUntilTick(), audio.getNumSamples() - offset);
+        if (event != midi.end()) count = std::min(count, std::max(1, (*event).samplePosition - offset));
+        const float* input[2] = {audio.getReadPointer(0, offset), audio.getReadPointer(std::min(1, audio.getNumChannels() - 1), offset)};
+        float* output[2] = {audio.getWritePointer(0, offset), audio.getWritePointer(std::min(1, audio.getNumChannels() - 1), offset)};
+        engine.process(input, output, count, modulation.targets().empty()
+            ? blockBaseSettings : settingsFromValues(effectiveValues), hostBypass);
+        modulation.advance(count);
+        processedSamples += uint64_t(count);
+        offset += count;
+    }
     voiceBridge.publish(engine.voiceSnapshots());
     metering.publish(engine.meters());
 }
@@ -288,9 +468,36 @@ juce::ValueTree Processor::copyState() {
     state.removeChild(state.getChildWithName("RoutingGraph"), nullptr);
     state.removeChild(state.getChildWithName("ActiveRoutingGraph"), nullptr);
     state.removeChild(state.getChildWithName("RoutingLayout"), nullptr);
-    state.addChild(processorRouting::encode(routingDraft, "RoutingGraph"), -1, nullptr);
-    state.addChild(processorRouting::encode(routingActive, "ActiveRoutingGraph"), -1, nullptr);
+    state.addChild(encodeProcessorGraph(qualitySnapshot(routingDraft), "RoutingGraph"), -1, nullptr);
+    state.addChild(encodeProcessorGraph(qualitySnapshot(routingActive), "ActiveRoutingGraph"), -1, nullptr);
     state.addChild(routingLayout.createCopy(), -1, nullptr);
+    state.removeChild(state.getChildWithName("Modulation"), nullptr);
+    juce::ValueTree mods("Modulation");
+    for (const auto& m : modulationState.modulators) {
+        juce::ValueTree node("Modulator");
+        node.setProperty("id", juce::int64(m.id), nullptr);
+        node.setProperty("type", int(m.type), nullptr);
+        node.setProperty("rateHz", m.rateHz, nullptr);
+        node.setProperty("sync", m.sync, nullptr);
+        node.setProperty("division", m.division, nullptr);
+        node.setProperty("phase", m.phase, nullptr);
+        node.setProperty("depth", m.depth, nullptr);
+        node.setProperty("bipolar", m.bipolar, nullptr);
+        node.setProperty("retrigger", int(m.retrigger), nullptr);
+        node.setProperty("waveform", int(m.waveform), nullptr);
+        node.setProperty("shape", m.shape, nullptr);
+        node.setProperty("smoothing", m.smoothing, nullptr);
+        mods.addChild(node, -1, nullptr);
+    }
+    for (const auto& a : modulationState.assignments) {
+        juce::ValueTree node("Assignment");
+        node.setProperty("modulatorId", juce::int64(a.modulatorId), nullptr);
+        node.setProperty("targetParameterId", a.targetParameterId, nullptr);
+        node.setProperty("depth", a.depth, nullptr);
+        node.setProperty("enabled", a.enabled, nullptr);
+        mods.addChild(node, -1, nullptr);
+    }
+    state.addChild(mods, -1, nullptr);
     return state;
 }
 
@@ -304,15 +511,43 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
         return false;
     const std::lock_guard<std::recursive_mutex> lock(controlMutex);
     auto restored = juce::ValueTree::fromXml(xml);
+    ModulationState savedModulation;
+    const auto mods = restored.getChildWithName("Modulation");
+    if (mods.getNumChildren() > int(ModulationBackend::maxModulators + ModulationBackend::maxAssignments)) return false;
+    for (const auto& node : mods) {
+        if (node.hasType("Modulator")) {
+            Modulator m;
+            m.id = uint32_t(juce::int64(node.getProperty("id", 0)));
+            m.type = ModulatorType(int(node.getProperty("type", 0)));
+            m.rateHz = node.getProperty("rateHz", 1.0f);
+            m.sync = node.getProperty("sync", false);
+            m.division = node.getProperty("division", 1.0f);
+            m.phase = node.getProperty("phase", 0.0f);
+            m.depth = node.getProperty("depth", 1.0f);
+            m.bipolar = node.getProperty("bipolar", true);
+            m.retrigger = ModulationRetrigger(int(node.getProperty("retrigger", 0)));
+            m.waveform = ModulationWaveform(int(node.getProperty("waveform", 0)));
+            m.shape = node.getProperty("shape", 0.5f);
+            m.smoothing = node.getProperty("smoothing", 0.0f);
+            savedModulation.modulators.push_back(m);
+        } else if (node.hasType("Assignment")) {
+            savedModulation.assignments.push_back({uint32_t(juce::int64(node.getProperty("modulatorId", 0))),
+                node.getProperty("targetParameterId").toString(), float(node.getProperty("depth", 0.0f)),
+                bool(node.getProperty("enabled", true))});
+        } else return false;
+    }
+    juce::String modulationError;
+    if (!setModulationState(savedModulation, modulationError)) return false;
+    restored.removeChild(mods, nullptr);
     Graph draft = defaultGraph(), active = draft;
     const auto graphTree = restored.getChildWithName("RoutingGraph");
     const auto activeTree = restored.getChildWithName("ActiveRoutingGraph");
     juce::String graphError;
-    if (graphTree.isValid() && !processorRouting::decode(graphTree, draft)) {
+    if (graphTree.isValid() && !decodeProcessorGraph(graphTree, draft)) {
         draft = defaultGraph();
         graphError = "Malformed saved routing draft";
     }
-    if (!processorRouting::decode(activeTree, active) || !processorRouting::validate(active))
+    if (!decodeProcessorGraph(activeTree, active) || !processorRouting::validate(active))
         active = defaultGraph();
     const auto validation = processorRouting::validate(draft);
     if (validation && graphError.isEmpty()) active = draft;
@@ -354,13 +589,47 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                             : 100 * (field == 1 ? node.mix : node.motion);
             }
 
-            if (graphTree.isValid() && i >= 139) {
+            if (graphTree.isValid() && i >= 139 && i < originalParameterCount) {
                 const size_t slot = 1 + (i - 139) / toneParametersPerSlot;
                 const size_t field = (i - 139) % toneParametersPerSlot;
                 for (const auto& node : active.nodes)
                     if (processorRouting::isEffect(node.type) && node.type != NodeType::chorale
                         && processorRouting::fxSlot(node.id) == int(slot))
-                        initial = processorRouting::toneValues(node)[field];
+                        initial = processorToneValues(node)[field];
+            }
+            if (graphTree.isValid() && i >= waveExtraParameterStart && i < waveQualityParameterStart) {
+                const size_t slot = 1 + (i - waveExtraParameterStart) / 2;
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::waveshaper && processorRouting::fxSlot(node.id) == int(slot))
+                        initial = (i - waveExtraParameterStart) % 2 == 0
+                            ? (node.waveshaper.raw ? 1.0f : 0.0f) : node.waveshaper.shapeAmount * 100;
+            }
+            if (graphTree.isValid() && i >= waveQualityParameterStart && i < waveLevelMatchParameterStart) {
+                const size_t slot = 1 + i - waveQualityParameterStart;
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::waveshaper && processorRouting::fxSlot(node.id) == int(slot))
+                        initial = float(node.waveshaper.quality);
+            }
+            if (graphTree.isValid() && i >= waveLevelMatchParameterStart && i < localMixParameterStart) {
+                const size_t slot = 1 + i - waveLevelMatchParameterStart;
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::waveshaper && processorRouting::fxSlot(node.id) == int(slot))
+                        initial = node.waveshaper.levelMatch ? 1.0f : 0.0f;
+            }
+            if (graphTree.isValid() && i >= localMixParameterStart && i < waveAlgorithmParameterStart) {
+                const auto id = uint32_t(200 + i - localMixParameterStart);
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::mix && !node.mainControls && node.id == id)
+                        initial = node.mix * 100;
+            }
+            // Older three-shape sessions stay in Follow Legacy mode. A graph-only
+            // expanded curve can seed the new selector without remapping old automation.
+            if (graphTree.isValid() && i >= waveAlgorithmParameterStart) {
+                const size_t slot = 1 + i - waveAlgorithmParameterStart;
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::waveshaper && processorRouting::fxSlot(node.id) == int(slot)
+                        && node.waveshaper.shape > 2)
+                        initial = float(node.waveshaper.shape + 1);
             }
             initial = parameter->convertFrom0to1(parameter->convertTo0to1(initial));
             missing.setProperty("value", initial, nullptr);
@@ -455,6 +724,8 @@ void Processor::resetParameters() {
     }
     routingLayout = juce::ValueTree("RoutingLayout");
     juce::String error;
+    setModulationState({}, error);
+    endModulationAssignment();
     setRoutingGraphLocked(defaultGraph(), error);
     advancedInitialized.store(false, std::memory_order_relaxed);
 }
@@ -464,9 +735,26 @@ void Processor::timerCallback() {
     if (prepared) engine.collectRetiredGraphs();
 }
 
+Graph Processor::qualitySnapshot(Graph graph) const {
+    // Graph views/state show requested host/base quality, never a live modulated
+    // value. Keep Raw's dormant quality visible and persistent as well.
+    for (auto& node : graph.nodes) {
+        if (node.type == NodeType::mix && !node.mainControls && node.id >= 200 && node.id < 248)
+            node.mix = values[localMixParameterStart + node.id - 200]->load(std::memory_order_relaxed) * .01f;
+        if (node.type != NodeType::waveshaper) continue;
+        const int slot = processorRouting::fxSlot(node.id);
+        if (slot > 0 && slot < 16) {
+            node.waveshaper.quality = std::clamp(int(values[waveQualityParameterStart + size_t(slot - 1)]->load(
+                std::memory_order_relaxed)), 0, 2);
+            node.waveshaper.levelMatch = values[waveLevelMatchParameterStart + size_t(slot - 1)]->load(std::memory_order_relaxed) >= 0.5f;
+        }
+    }
+    return graph;
+}
+
 Graph Processor::getRoutingGraph() const {
     const std::lock_guard<std::recursive_mutex> lock(controlMutex);
-    return routingDraft;
+    return qualitySnapshot(routingDraft);
 }
 
 juce::String Processor::getRoutingError() const {
@@ -478,7 +766,7 @@ bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {
     // Visible topology is always the accepted running topology. Rejected edits
     // never leave fake cables in the editor or a separately saved draft.
     Graph boundedGraph = graph;
-    for (auto& node : boundedGraph.nodes) processorRouting::boundToneSettings(node);
+    for (auto& node : boundedGraph.nodes) boundProcessorTone(node);
     const auto sourceValidation = processorRouting::validate(boundedGraph);
     if (!sourceValidation) {
         error = routingError = juce::String(sourceValidation.message);
@@ -497,6 +785,36 @@ bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {
             return false;
         }
     }
+    // Retire assignments when an FX machine disappears or changes type; stable
+    // host slot IDs must never make a replacement inherit another machine's map.
+    auto retainedModulation = modulationState;
+    for (const auto& old : routingActive.nodes) {
+        if (!processorRouting::isEffect(old.type) && old.type != NodeType::mix) continue;
+        const auto same = std::find_if(candidate.nodes.begin(), candidate.nodes.end(),
+            [&](const RoutingNode& n) { return n.id == old.id && n.type == old.type; });
+        if (same != candidate.nodes.end()) continue;
+        if (old.type == NodeType::mix) {
+            const auto id = old.mainControls ? juce::String("double") : localMixParameterId(old.id);
+            auto& assignments = retainedModulation.assignments;
+            assignments.erase(std::remove_if(assignments.begin(), assignments.end(), [&](const Assignment& a) {
+                return a.targetParameterId == id;
+            }), assignments.end());
+            continue;
+        }
+        const int slot = processorRouting::fxSlot(old.id);
+        const auto prefix = slot == 0 ? juce::String("chorale") : "fx" + juce::String(slot);
+        auto& assignments = retainedModulation.assignments;
+        assignments.erase(std::remove_if(assignments.begin(), assignments.end(), [&](const Assignment& a) {
+            if (!a.targetParameterId.startsWith(prefix)) return false;
+            if (slot == 0) return true;
+            const auto suffix = a.targetParameterId.substring(prefix.length());
+            return !suffix.isEmpty() && !juce::CharacterFunctions::isDigit(suffix[0]);
+        }), assignments.end());
+    }
+    if (retainedModulation.assignments.size() != modulationState.assignments.size()) {
+        juce::String ignored;
+        setModulationState(retainedModulation, ignored);
+    }
     routingDraft = candidate;
     routingActive = std::move(candidate);
     routingError.clear();
@@ -508,12 +826,19 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
     bool accepted;
     {
         const std::lock_guard<std::recursive_mutex> lock(controlMutex);
-        const auto previous = routingActive;
+        const auto previous = qualitySnapshot(routingActive);
         accepted = setRoutingGraphLocked(graph, error);
         if (accepted) {
             // Only intentional inspector edits/new nodes update automation.
             // A cable-only edit must not overwrite host-automated FX values.
             for (const auto& node : routingActive.nodes) {
+                if (node.type == NodeType::mix && !node.mainControls && node.id >= 200 && node.id < 248) {
+                    const auto oldMix = std::find_if(previous.nodes.begin(), previous.nodes.end(), [&](const RoutingNode& n) {
+                        return n.id == node.id && n.type == NodeType::mix && !n.mainControls;
+                    });
+                    if (oldMix == previous.nodes.end() || oldMix->mix != node.mix)
+                        setParameterValue(parameterIds[localMixParameterStart + node.id - 200], node.mix * 100);
+                }
                 if (!processorRouting::isEffect(node.type)) continue;
                 const auto old = std::find_if(previous.nodes.begin(), previous.nodes.end(),
                     [&](const RoutingNode& n) { return n.id == node.id && n.type == node.type; });
@@ -525,8 +850,18 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
                 if (old == previous.nodes.end() || old->motion != node.motion)
                     setParameterValue(fxParameterId(slot, size_t(2)), node.motion * 100);
                 if (slot > 0 && node.type != NodeType::chorale) {
-                    const auto next = processorRouting::toneValues(node);
-                    const auto before = old == previous.nodes.end() ? next : processorRouting::toneValues(*old);
+                    const auto next = processorToneValues(node);
+                    const auto before = old == previous.nodes.end() ? next : processorToneValues(*old);
+                    if (node.type == NodeType::waveshaper && (old == previous.nodes.end() || node.waveshaper.shape != old->waveshaper.shape))
+                        setParameterValue(parameterIds[waveAlgorithmParameterStart + slot - 1], float(node.waveshaper.shape + 1));
+                    if (old == previous.nodes.end() || node.waveshaper.raw != old->waveshaper.raw)
+                        setParameterValue(parameterIds[waveExtraParameterStart + (slot - 1) * 2], node.waveshaper.raw ? 1 : 0);
+                    if (old == previous.nodes.end() || node.waveshaper.shapeAmount != old->waveshaper.shapeAmount)
+                        setParameterValue(parameterIds[waveExtraParameterStart + (slot - 1) * 2 + 1], node.waveshaper.shapeAmount * 100);
+                    if (old == previous.nodes.end() || node.waveshaper.quality != old->waveshaper.quality)
+                        setParameterValue(parameterIds[waveQualityParameterStart + slot - 1], float(node.waveshaper.quality));
+                    if (old == previous.nodes.end() || node.waveshaper.levelMatch != old->waveshaper.levelMatch)
+                        setParameterValue(parameterIds[waveLevelMatchParameterStart + slot - 1], node.waveshaper.levelMatch ? 1 : 0);
                     for (size_t f = 0; f < next.size(); ++f)
                         if (old == previous.nodes.end() || next[f] != before[f])
                             setParameterValue(parameterIds[toneParameterIndex(slot, f)], next[f]);
@@ -619,6 +954,12 @@ void Processor::removeVoice(size_t slot) {
     {
         const std::lock_guard<std::recursive_mutex> lock(controlMutex);
         setParameterValue(voicePresentParameterId(slot), 0);
+        auto state = modulationState;
+        const auto prefix = "voice" + juce::String(int(slot + 1));
+        state.assignments.erase(std::remove_if(state.assignments.begin(), state.assignments.end(),
+            [&](const Assignment& a) { return a.targetParameterId.startsWith(prefix); }), state.assignments.end());
+        juce::String modulationError;
+        setModulationState(state, modulationError);
         disconnectVoiceLocked(slot);
         juce::String error;
         setRoutingGraphLocked(routingDraft, error);
@@ -629,6 +970,155 @@ void Processor::removeVoice(size_t slot) {
 
 std::array<VoiceSnapshot, 8> Processor::getVoiceSnapshots() const {
     return voiceBridge.snapshot();
+}
+
+ModulationState Processor::getModulationState() const {
+    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+    return modulationState;
+}
+
+bool Processor::setModulationState(const ModulationState& state, juce::String& error) {
+    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+    error.clear();
+    const auto fail = [&](const char* text) { error = text; return false; };
+    if (state.modulators.size() > ModulationBackend::maxModulators
+        || state.assignments.size() > ModulationBackend::maxAssignments)
+        return fail("Modulation capacity exceeded (16 modulators / 256 assignments)");
+    ModulationBackend::Plan plan;
+    for (const auto& m : state.modulators) {
+        if (!m.id || !std::isfinite(m.rateHz) || m.rateHz < 0.001f || m.rateHz > 100
+            || !std::isfinite(m.division) || m.division < 0.015625f || m.division > 256
+            || !std::isfinite(m.phase) || m.phase < 0 || m.phase >= 1
+            || !std::isfinite(m.depth) || m.depth < 0 || m.depth > 1
+            || !std::isfinite(m.shape) || m.shape < 0 || m.shape > 1
+            || !std::isfinite(m.smoothing) || m.smoothing < 0 || m.smoothing > 1
+            || int(m.type) < 0 || int(m.type) > 1 || int(m.waveform) < 0 || int(m.waveform) > 3
+            || int(m.retrigger) < 0 || int(m.retrigger) > 2)
+            return fail("Invalid modulator controls or identity");
+        for (size_t i = 0; i < plan.modulatorCount; ++i)
+            if (plan.modulators[i].id == m.id) return fail("Duplicate modulator ID");
+        plan.modulators[plan.modulatorCount++] = m;
+    }
+    for (size_t aIndex = 0; aIndex < state.assignments.size(); ++aIndex) {
+        const auto& a = state.assignments[aIndex];
+        size_t source = plan.modulatorCount, target = parameterIds.size();
+        for (size_t i = 0; i < plan.modulatorCount; ++i) if (plan.modulators[i].id == a.modulatorId) source = i;
+        for (size_t i = 0; i < parameterIds.size(); ++i) if (a.targetParameterId == parameterIds[i]) target = i;
+        if (source == plan.modulatorCount || target == parameterIds.size()) return fail("Unknown modulation source or parameter ID");
+        if (target == 8 || target == 10 || (target >= 86 && target < 94))
+            return fail("Bypass and structural controls cannot be modulation targets");
+        if (!std::isfinite(a.depth) || std::abs(a.depth) > 1) return fail("Assignment depth must be -1..1");
+        for (size_t previous = 0; previous < aIndex; ++previous)
+            if (state.assignments[previous].modulatorId == a.modulatorId
+                && state.assignments[previous].targetParameterId == a.targetParameterId)
+                return fail("Duplicate modulation assignment");
+        if (a.enabled) plan.assignments[plan.assignmentCount++] = {
+            uint16_t(source), uint16_t(target), a.depth};
+    }
+    if (!modulation.publish(plan)) return fail("Modulation publication busy; retry the edit");
+    modulationState = state;
+    const auto assigning = assignmentId.load();
+    if (assigning && std::none_of(state.modulators.begin(), state.modulators.end(),
+        [=](const Modulator& m) { return m.id == assigning; })) assignmentId.store(0);
+    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+    return true;
+}
+
+void Processor::beginModulationAssignment(uint32_t id) {
+    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+    for (const auto& m : modulationState.modulators)
+        if (m.id == id) { assignmentId.store(id); return; }
+    assignmentId.store(0);
+}
+void Processor::endModulationAssignment() { assignmentId.store(0); }
+uint32_t Processor::modulationAssignmentId() const noexcept { return assignmentId.load(); }
+bool Processor::setModulationDepth(uint32_t id, const juce::String& parameterId, float depth) {
+    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+    auto state = modulationState;
+    auto found = std::find_if(state.assignments.begin(), state.assignments.end(),
+        [&](const Assignment& a) { return a.modulatorId == id && a.targetParameterId == parameterId; });
+    if (found != state.assignments.end()) found->depth = depth;
+    else state.assignments.push_back({id, parameterId, depth, true});
+    juce::String error;
+    return setModulationState(state, error);
+}
+
+void Processor::updateModulationValues() {
+    modulationSnapshotSequence.fetch_add(1);
+    modulation.tick(modulationContributions);
+    const auto targets = modulation.targets();
+    if (!targets.empty())
+        for (size_t i = 0; i < values.size(); ++i)
+            effectiveValues[i] = values[i]->load(std::memory_order_relaxed);
+    std::array<bool, parameterIds.size()> nextTargetMask{};
+    for (const size_t i : targets) {
+        nextTargetMask[i] = true;
+        const float raw = effectiveValues[i];
+        auto* parameter = rangedParameters[i];
+        const float base = parameter->convertTo0to1(raw);
+        const float normalized = std::clamp(base + modulationContributions[i], 0.0f, 1.0f);
+        float effective = parameter->convertFrom0to1(normalized);
+        // Keep the Schmitt state even when summed contributions cross zero.
+        // Dwell is measured in samples, not ticks: extra note ticks cannot
+        // shorten the switching interval or make it depend on host block size.
+        if (steppedParameters[i]) {
+            const float previousRaw = activeTargetMask[i] ? snapshotEffective[i].load() : raw;
+            const float previous = parameter->convertTo0to1(previousRaw);
+            const float proposed = parameter->convertTo0to1(effective);
+            const float step = 1.0f / float(std::max(1, parameter->getNumSteps() - 1));
+            if (proposed != previous) {
+                if (processedSamples < discreteHoldUntil[i] || std::abs(normalized - previous) < step * 0.6f)
+                    effective = previousRaw;
+                else discreteHoldUntil[i] = processedSamples + uint64_t(processingSampleRate * 0.020);
+            }
+        }
+        effectiveValues[i] = effective;
+        snapshotBase[i].store(raw);
+        snapshotEffective[i].store(effective);
+        snapshotTargeted[i].store(true);
+    }
+    for (size_t i = 0; i < values.size(); ++i)
+        if (activeTargetMask[i] && !nextTargetMask[i]) {
+            snapshotTargeted[i].store(false);
+            discreteHoldUntil[i] = 0;
+        }
+    activeTargetMask = nextTargetMask;
+    modulationSnapshotSequence.fetch_add(1);
+}
+
+ModulationSnapshot Processor::getModulationSnapshot() const {
+    ModulationSnapshot result;
+    result.targets.reserve(parameterIds.size());
+    std::array<float, parameterIds.size()> baseRaw{}, effectiveRaw{};
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const auto before = modulationSnapshotSequence.load();
+        if (before & 1) continue;
+        bool sourcesConsistent = false;
+        result.modulators = modulation.snapshots(&sourcesConsistent);
+        result.targets.clear();
+        if (!sourcesConsistent) continue;
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i == 8 || i == 10 || (i >= 86 && i < 94)) continue;
+            const bool assigned = snapshotTargeted[i].load();
+            const float raw = assigned ? snapshotBase[i].load() : values[i]->load(std::memory_order_relaxed);
+            baseRaw[i] = raw;
+            effectiveRaw[i] = assigned ? snapshotEffective[i].load() : raw;
+        }
+        if (before != modulationSnapshotSequence.load()) continue;
+        // Finish expensive normalization/String construction only after copying
+        // a stable frame; a UI read need not fit those operations between ticks.
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i == 8 || i == 10 || (i >= 86 && i < 94)) continue;
+            const float base = rangedParameters[i]->convertTo0to1(baseRaw[i]);
+            const float effective = rangedParameters[i]->convertTo0to1(effectiveRaw[i]);
+            result.targets.push_back({parameterIds[i], base, effective, effective - base});
+        }
+        return result;
+    }
+    result.consistent = false;
+    result.modulators.clear();
+    result.targets.clear();
+    return result;
 }
 
 juce::AudioProcessorEditor* Processor::createEditor() { return new Editor(*this); }

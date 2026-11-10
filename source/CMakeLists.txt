@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.4.1 LANGUAGES C CXX)
+project(VocalStack VERSION 1.5.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -45,6 +45,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
         FORMATS VST3
         VST3_CATEGORIES Fx Tools
         VST3_AUTO_MANIFEST FALSE
+        NEEDS_MIDI_INPUT TRUE
         EDITOR_WANTS_KEYBOARD_FOCUS FALSE
         COPY_PLUGIN_AFTER_BUILD FALSE)
     target_sources(VocalStack PRIVATE src/PluginProcessor.cpp src/PluginEditor.cpp src/MeterPanel.cpp)
@@ -69,7 +70,7 @@ if(VOCALSTACK_BUILD_TESTS)
     add_executable(vocalstack_fxmonitor_tests tests/FxMonitorTests.cpp)
     target_link_libraries(vocalstack_fxmonitor_tests PRIVATE vocalstack_dsp)
     add_test(NAME VocalStackFxMonitor COMMAND vocalstack_fxmonitor_tests)
-    foreach(suite IN ITEMS RoutingBackend VoiceBackend FxAutomation PitchResolution FormantRatio ToneEffects Multiband)
+    foreach(suite IN ITEMS RoutingBackend VoiceBackend FxAutomation PitchResolution FormantRatio ToneEffects Multiband LeadMixBackend WaveshaperExpansion)
         string(TOLOWER "${suite}" suite_lower)
         add_executable(vocalstack_${suite_lower}_tests tests/${suite}Tests.cpp)
         target_link_libraries(vocalstack_${suite_lower}_tests PRIVATE vocalstack_dsp)
@@ -101,5 +102,17 @@ if(VOCALSTACK_BUILD_TESTS)
         target_link_libraries(VocalStackEditorTests PRIVATE VocalStack vocalstack_dsp
             juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
         add_test(NAME VocalStackEditor COMMAND VocalStackEditorTests)
+
+        juce_add_console_app(VocalStackModulationTests PRODUCT_NAME "Vocal Stack Modulation Tests")
+        target_sources(VocalStackModulationTests PRIVATE tests/ModulationBackendTests.cpp)
+        target_include_directories(VocalStackModulationTests PRIVATE src)
+        target_link_libraries(VocalStackModulationTests PRIVATE juce::juce_core juce::juce_recommended_config_flags)
+        add_test(NAME VocalStackModulation COMMAND VocalStackModulationTests)
+
+        juce_add_console_app(VocalStackModulationProcessorTests PRODUCT_NAME "Vocal Stack Modulation Processor Tests")
+        target_sources(VocalStackModulationProcessorTests PRIVATE tests/ModulationProcessorTests.cpp)
+        target_link_libraries(VocalStackModulationProcessorTests PRIVATE VocalStack vocalstack_dsp
+            juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
+        add_test(NAME VocalStackModulationProcessor COMMAND VocalStackModulationProcessorTests)
     endif()
 endif()

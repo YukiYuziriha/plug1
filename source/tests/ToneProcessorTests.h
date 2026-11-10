@@ -39,7 +39,7 @@ inline Graph graph(NodeType type) {
 
 inline void parameterContract() {
     Processor p;
-    require(p.getParameters().size() == 874 && parameterIds.size() == 874, "Incorrect tone host count");
+    require(p.getParameters().size() == 1007 && parameterIds.size() == 1007, "Incorrect tone host count");
     std::unordered_set<std::string> unique;
     for (size_t i = 0; i < parameterIds.size(); ++i) {
         require(unique.insert(parameterIds[i]).second, "Duplicate host ID");
@@ -77,7 +77,8 @@ inline void parameterContract() {
 
 inline void stateAndLegacyMigration() {
     Processor source;
-    for (size_t i = 139; i < parameterIds.size(); ++i) {
+    // This fixture dirties the original tone block, not later Lead/global controls.
+    for (size_t i = 139; i < originalParameterCount; ++i) {
         auto* parameter = source.parameters.getParameter(parameterIds[i]);
         parameter->setValueNotifyingHost((i % 3 == 0) ? 0.19f : 0.81f);
     }
@@ -88,7 +89,7 @@ inline void stateAndLegacyMigration() {
     restored.setStateInformation(binary.getData(), int(binary.getSize()));
     Processor pasted;
     require(pasted.pasteSettings(source.settingsText()), "Tone paste failed");
-    for (size_t i = 139; i < parameterIds.size(); ++i) {
+    for (size_t i = 139; i < originalParameterCount; ++i) {
         const auto* id = parameterIds[i];
         const auto raw = read(source, id);
         near(float(saved.getChildWithProperty("id", id).getProperty("value")), raw, "Tone state is not raw");

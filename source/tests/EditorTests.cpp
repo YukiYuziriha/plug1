@@ -50,7 +50,10 @@ void advancedParameterContract() {
     Processor owner;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 874, "Expected 139 original + 735 appended tone host parameters");
+    expect(owner.getParameters().size() == 1007, "Expected 874 preserved + 133 appended parameters");
+        for (size_t slot = 1; slot < 16; ++slot)
+            expect(parameter(owner, vocalstack::toneParameterId(slot, "WaveQuality")).getParameterIndex() == 914 + int(slot - 1),
+                   "WaveQuality append-only host index changed");
     constexpr std::array<const char*, 46> originalIds{
         "level", "double", "human", "width", "formant", "levelOn", "doubleOn", "formantOn", "bypass", "outputGain",
         "advancedOn",
@@ -412,11 +415,9 @@ void editorTransportAndTextEntryForSkin(bool neon) {
                "Editor consumed Return outside text entry");
     };
     expectTransport();
-    juce::Slider* output = nullptr;
-    for (int i = 0; i < editor->getNumChildComponents(); ++i)
-        if (auto* slider = dynamic_cast<juce::Slider*>(editor->getChildComponent(i));
-            slider != nullptr && slider->getName() == "Output")
-            output = slider;
+    auto* output = vocalstack::toneUiTests::find<juce::Slider>(*editor, [](auto& slider) {
+        return slider.getComponentID() == "outputGain";
+    });
     expect(output != nullptr && output->isTextBoxEditable(), "Output numeric entry was disabled");
     const auto enter = [&](const juce::String& value) {
         output->showTextBox();
@@ -526,19 +527,23 @@ void editorSkin(bool neon) {
     editor->setVisible(true);
     expectPassiveControls(*editor);
 
-    constexpr std::array<const char*, 6> names{"Leveler", "Mix", "Human", "Width", "Formant", "Output"};
+    constexpr std::array<const char*, 7> names{"Leveler", "Lead / Stack", "Human", "Width", "Formant", "Output", "Mix"};
     std::array<juce::Slider*, names.size()> knobs{};
     std::vector<juce::Component*> controls;
     MeterPanel* meters = nullptr;
     int sliderCount = 0;
-    for (int i = 0; i < editor->getNumChildComponents(); ++i) {
-        auto* child = editor->getChildComponent(i);
+    auto& canvas = *vocalstack::toneUiTests::slider(*editor, "outputGain").getParentComponent();
+    for (auto* child : canvas.getChildren()) {
         if (!child->isVisible() || dynamic_cast<juce::TooltipWindow*>(child) != nullptr)
             continue; // Hidden drawer and transient tooltip do not participate in collapsed layout.
         const auto description = skin + " / " + componentName(*child);
         expect(!child->getBounds().isEmpty(), description + " has empty bounds");
-        expect(editor->getLocalBounds().contains(child->getBounds()), description + " lies outside the editor");
-        if (auto* slider = dynamic_cast<juce::Slider*>(child)) {
+        expect(canvas.getLocalBounds().contains(child->getBounds()), description + " lies outside the design canvas");
+        auto* slider = vocalstack::toneUiTests::find<juce::Slider>(*child, [](auto& candidate) {
+            return candidate.getComponentID() == "globalMix";
+        });
+        if (!slider) slider = dynamic_cast<juce::Slider*>(child);
+        if (slider) {
             ++sliderCount;
             bool recognised = false;
             for (size_t index = 0; index < names.size(); ++index) {
@@ -549,7 +554,7 @@ void editorSkin(bool neon) {
                 }
             }
             expect(recognised, description + " is an unexpected direct slider");
-            controls.push_back(slider);
+            controls.push_back(child);
         } else if (dynamic_cast<juce::Button*>(child) != nullptr) {
             controls.push_back(child);
         } else if (auto* panel = dynamic_cast<MeterPanel*>(child)) {
@@ -558,16 +563,16 @@ void editorSkin(bool neon) {
             controls.push_back(panel);
         }
     }
-    expect(sliderCount == 6, skin + " must have exactly six direct sliders");
+    expect(sliderCount == 7, skin + " must have six main rotaries and one nested global Mix");
     expect(meters != nullptr, skin + " is missing its MeterPanel child");
     for (size_t i = 0; i < knobs.size(); ++i) {
         expect(knobs[i] != nullptr, skin + " is missing knob " + names[i]);
         expect(knobs[i]->isDoubleClickReturnEnabled(), skin + " knob does not reset on double-click: " + names[i]);
-        const auto& target = parameter(owner, vocalstack::knobParameterIds[i]);
+        const auto& target = parameter(owner, i < vocalstack::knobParameterIds.size() ? vocalstack::knobParameterIds[i] : "globalMix");
         const auto expected = i == 4 || i == 5 ? 0.0f : target.convertFrom0to1(target.getDefaultValue());
         expectNear(knobs[i]->getDoubleClickReturnValue(), expected, skin + " knob double-click default: " + names[i]);
     }
-    // Only direct interactive controls participate; slider textboxes and labels are not siblings to test.
+    // Compare sibling control bounds, including the global Mix wrapper, not its nested slider.
     for (size_t i = 0; i < controls.size(); ++i)
         for (size_t j = i + 1; j < controls.size(); ++j)
             expect(!controls[i]->getBounds().intersects(controls[j]->getBounds()),
@@ -596,30 +601,33 @@ void editorSkin(bool neon) {
     meters->setMeters(syntheticMeters());
     saveSnapshot(*editor, neon ? "editor-neon.png" : "editor-device.png");
     const int collapsedHeight = editor->getHeight();
+    const int windowWidth = editor->getWidth();
     auto* show = findButton(*editor, "Show Advanced");
     expect(show != nullptr, "Missing drawer visibility control");
     show->onClick();
     expect(owner.isAdvancedVisible() && !owner.settings().advanced, "Showing drawer changed activation");
-    expect(collapsedHeight == 430 && editor->getWidth() == 940 && editor->getHeight() == 872,
-               "Drawer must expand 940x430 to 940x872");
+    expect(editor->isResizable() && collapsedHeight == 700 && windowWidth == 940,
+           "Fresh editor must be resizable at 940x700");
+    expect(editor->getWidth() == windowWidth && editor->getHeight() == collapsedHeight && canvas.getHeight() == 872,
+           "Drawer must expand the design canvas without resizing the host window");
     int advancedSliders = 0, advancedButtons = 0, choraleSliders = 0, choraleButtons = 0;
-    for (auto* child : editor->getChildren()) {
+    for (auto* child : canvas.getChildren()) {
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
             checkDrawerControls(owner, *child, advancedSliders, advancedButtons);
         if (dynamic_cast<vocalstack::ChoralePanel*>(child))
             checkDrawerControls(owner, *child, choraleSliders, choraleButtons);
     }
-    expect(advancedSliders == 16 && advancedButtons == 3, "Fresh drawer must contain two complete eight-slider voice cards");
+    expect(advancedSliders == 24 && advancedButtons == 4, "Fresh drawer must contain Lead and two complete eight-rotary voice cards");
     expect(choraleSliders == 2 && choraleButtons == 1, "Chorale controls missing");
     auto* addVoice = findButton(*editor, "+ Add voice");
     expect(addVoice != nullptr, "Missing Add voice action");
     for (int i = 0; i < 6; ++i) addVoice->onClick();
     expect(!addVoice->isEnabled(), "Add voice action remained enabled at capacity");
     advancedSliders = advancedButtons = 0;
-    for (auto* child : editor->getChildren())
+    for (auto* child : canvas.getChildren())
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
             checkDrawerControls(owner, *child, advancedSliders, advancedButtons);
-    expect(advancedSliders == 64 && advancedButtons == 9, "Eight complete stable voice cards missing");
+    expect(advancedSliders == 72 && advancedButtons == 10, "Lead and eight complete stable voice cards missing");
     expectPassiveControls(*editor);
     auto* advanced = findButton(*editor, "Voice stack");
     expect(advanced != nullptr, "Missing Advanced activation switch");
@@ -634,24 +642,32 @@ void editorSkin(bool neon) {
     expectBasicVoices(owner, owner.settings().human);
     expect(owner.settings().advanced, "UI Reset to Basic disabled Advanced");
     expectPassiveControls(*editor);
+    for (const auto* id : vocalstack::leadParameterIds) {
+        auto& p = parameter(owner, id);
+        p.setValueNotifyingHost(p.getDefaultValue());
+    }
+    editor->setSize(940, 872);
     saveSnapshot(*editor, neon ? "editor-neon-advanced.png" : "editor-device-advanced.png");
     for (int i = 0; i < 6; ++i) addVoice->onClick();
     expectPassiveControls(*editor);
     saveSnapshot(*editor, neon ? "editor-neon-eight-voices.png" : "editor-device-eight-voices.png");
     basic->onClick();
     expectBasicVoices(owner, owner.settings().human);
+    editor->setSize(windowWidth, collapsedHeight);
     show->onClick();
     expect(!owner.isAdvancedVisible() && owner.settings().advanced, "Hiding drawer changed activation");
-    expect(editor->getHeight() == collapsedHeight, "Drawer did not collapse editor");
+    expect(editor->getHeight() == collapsedHeight && canvas.getHeight() == 430,
+               "Closing drawer must collapse only the design canvas");
     show->onClick();
     editor.reset();
     editor.reset(owner.createEditor());
-    expect(editor->getHeight() == collapsedHeight + 442, "Editor reopen lost drawer visibility");
+    expect(editor->getHeight() == collapsedHeight && owner.isAdvancedVisible(), "Editor reopen lost dimensions or drawer visibility");
     expectPassiveControls(*editor);
 }
 
 #include "ProcessorUiRegressionTests.h"
 #include "RoutingPolishTests.h"
+#include "StackModulationUiTests.h"
 
 void deviceEditor() { editorSkin(false); }
 void neonEditor() { editorSkin(true); }
@@ -663,7 +679,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 26> tests{{
+    const std::array<Test, 33> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -688,6 +704,13 @@ int main() {
         {"Multiband output edits preserve other ports", routingPolish::multibandOutputs},
         {"Routing voice visibility follows presence, not mute", routingPolish::voiceVisibility},
         {"Canonical Chorale folding edits the real graph and follows host", routingPolish::foldedMainChorale},
+        {"Waveshaper Raw disables Quality without erasing it", stackModulationUi::waveQualityRaw},
+        {"Global Mix binding and bypass disable in both skins", stackModulationUi::globalMixBypass},
+        {"Resizable Stack canvas and full-size Routing retain window", stackModulationUi::resizeTabs},
+        {"Shared Lead/voice controls and inspector selection", stackModulationUi::sharedInspectors},
+        {"Modulation gestures and Controls/Assignments removal", stackModulationUi::modulationInspector},
+        {"EQ handles assign modulation without host base writes", stackModulationUi::eqModulationGestures},
+        {"Local mixer knob, modulation and machine aliases", stackModulationUi::localMixerInspector},
         {"Device editor and PNG", deviceEditor},
         {"Neon editor and PNG", neonEditor}
     }};

@@ -3,10 +3,12 @@
 #include "PluginProcessor.h"
 #include "Equalizer.h"
 #include "FxVisuals.h"
+#include "ModulationUI.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include <cmath>
 #include <functional>
+#include <utility>
 #include <vector>
 
 namespace vocalstack {
@@ -94,7 +96,16 @@ public:
         changed |= nextRate != sampleRate;
         settings = next;
         sampleRate = nextRate;
-        if (changed || force) { rebuildPaths(); repaint(); }
+        if (changed || force) rebuildPaths();
+        // The panel's UI timer owns feedback reads; paint never requests audio state.
+        auto snapshot = owner.getModulationSnapshot();
+        if (snapshot.consistent) {
+            modulationSnapshot = std::move(snapshot);
+            modulationState = owner.getModulationState();
+            const auto assigning = owner.modulationAssignmentId();
+            feedbackSource = assigning ? assigning : modulationui::selectedModulator(owner);
+            repaint();
+        } else if (changed || force) repaint();
     }
     void paint(juce::Graphics& g) override {
         const auto bounds = getLocalBounds().toFloat();
@@ -136,6 +147,7 @@ public:
             if (!settings.bands[b].enabled) continue;
             const auto p = bandPoint(b);
             const auto colour = bandColour(b);
+            paintModulation(g, b, p);
             g.setColour(colour.withAlpha(b == selected ? 0.22f : 0.1f));
             g.fillEllipse(p.x - 12, p.y - 12, 24, 24);
             g.setColour(colour);
@@ -160,7 +172,10 @@ public:
     void mouseMove(const juce::MouseEvent& e) override {
         const bool onBand = hit(e.position) >= 0;
         const int mode = edgeMode(e.position);
-        const juce::String next = onBand ? "Drag: frequency / gain | wheel: Q"
+        const juce::String next = owner.modulationAssignmentId() != 0
+            ? (onBand ? "Assign: drag X = frequency depth, Y = gain depth (bell/shelves); wheel = Q depth. Signed normalized range; base unchanged."
+                      : "Assign: drag an existing band or wheel over it for Q depth. Adding bands is disabled.")
+            : onBand ? "Drag: frequency / gain | wheel: Q"
             : mode == 13 ? "Click: bell | drag inward: notch"
             : mode == 1 || mode == 2 ? "Click: bell | drag curve end: shelf"
             : mode >= 0 ? "Click: bell | drag edge: cut" : "Click empty space: add bell";
@@ -175,13 +190,40 @@ public:
         if (!e.mods.isLeftButtonDown() || e.getNumberOfClicks() > 1) return;
         refresh();
         const int found = hit(e.position);
-        if (found >= 0) { choose(size_t(found)); dragBand = found; return; }
+        dragAssignment = owner.modulationAssignmentId();
+        if (found >= 0) {
+            choose(size_t(found)); dragBand = found;
+            if (dragAssignment) {
+                const auto state = owner.getModulationState();
+                dragFrequencyDepth = depthFor(state, dragAssignment, eqBandParameterId(slot, size_t(found), "Frequency"));
+                dragGainDepth = depthFor(state, dragAssignment, eqBandParameterId(slot, size_t(found), "Gain"));
+                dragStart = e.position;
+            }
+            return;
+        }
+        if (dragAssignment) return;
         pendingMode = edgeMode(e.position);
         pendingClick = plot().contains(e.position);
     }
     void mouseDrag(const juce::MouseEvent& e) override {
         if (!e.mods.isLeftButtonDown() || e.getDistanceFromDragStart() < 3) return;
         pendingClick = false;
+        if (dragAssignment) {
+            if (owner.modulationAssignmentId() != dragAssignment || dragBand < 0) return;
+            const auto b = size_t(dragBand);
+            const auto frequencyId = eqBandParameterId(slot, b, "Frequency");
+            const auto gainId = eqBandParameterId(slot, b, "Gain");
+            assignDepth(dragAssignment, frequencyId, dragFrequencyDepth
+                + normalized(frequencyId, unshiftedFrequency(e.position.x))
+                - normalized(frequencyId, unshiftedFrequency(dragStart.x)));
+            if (hasGain(settings.bands[b].mode))
+                assignDepth(dragAssignment, gainId, dragGainDepth
+                    + normalized(gainId, gainFor(e.position.y)) - normalized(gainId, gainFor(dragStart.y)));
+            refresh();
+            return;
+        }
+        // Entering Assign during an ordinary drag must never continue base edits.
+        if (owner.modulationAssignmentId()) { finishGesture(); pendingMode = -1; return; }
         if (dragBand < 0 && pendingMode >= 0) {
             dragBand = create(pendingMode, e.position);
             pendingMode = -1;
@@ -195,7 +237,8 @@ public:
         moveBand(size_t(dragBand), e.position);
     }
     void mouseUp(const juce::MouseEvent& e) override {
-        const bool add = pendingClick && e.getNumberOfClicks() == 1
+        const bool add = !dragAssignment && !owner.modulationAssignmentId()
+            && pendingClick && e.getNumberOfClicks() == 1
             && e.getDistanceFromDragStart() < 3 && plot().contains(e.position);
         finishGesture(); pendingMode = -1; pendingClick = false;
         if (add) {
@@ -212,6 +255,13 @@ public:
         if (found < 0 || wheel.deltaY == 0 || !gestures.empty()) return;
         choose(size_t(found));
         const auto id = eqBandParameterId(slot, selected, "Q");
+        if (const auto source = owner.modulationAssignmentId()) {
+            assignDepth(source, id, depthFor(owner.getModulationState(), source, id) + wheel.deltaY * 0.1f);
+            refresh();
+            return;
+        }
+        // Do not turn a cancelled assignment drag into a base-value wheel edit.
+        if (dragAssignment) return;
         const auto q = value(owner, id, 0.707f);
         // A wheel event is a complete, balanced host gesture, including trackpads.
         edit(owner, id, juce::jlimit(0.1f, 18.0f, q * std::exp(wheel.deltaY * 2.0f)));
@@ -222,10 +272,88 @@ private:
         // Component is deliberately not a keyboard command target.
         const juce::String instructions = "Single-click empty space: bell. Click a band: select. Drag a curve end: shelf. "
             "Drag a side edge: cut. Drag bottom edge: notch. Wheel on a band: Q. "
+            "Assign mode: drag an existing band horizontally for frequency depth, vertically for gain depth (bell/shelves); "
+            "wheel over a band for Q depth. Depth is signed normalized target range; base values stay unchanged. "
+            "No bands are added in Assign mode. Solid numbered handle: requested; outlined dot: effective; purple/pink lines: selected source range. "
             "Left scale: requested EQ gain dB. Right: live FFT peak dBFS, Hann window, stereo power. "
             "Input dim, output bright; FFT is independent of the +/-24 dB response scale.";
         setDescription(instructions);
         setTooltip(instructions);
+    }
+    static float depthFor(const ModulationState& state, uint32_t source, const juce::String& id) {
+        for (const auto& a : state.assignments)
+            if (a.modulatorId == source && a.targetParameterId == id) return a.depth;
+        return 0;
+    }
+    float normalized(const juce::String& id, float actual) const {
+        if (const auto* parameter = owner.parameters.getParameter(id)) return parameter->convertTo0to1(actual);
+        return 0;
+    }
+    void assignDepth(uint32_t source, const juce::String& id, float depth) {
+        owner.setModulationDepth(source, id, juce::jlimit(-1.0f, 1.0f, depth));
+    }
+    float effectiveActual(const juce::String& id, float fallback) const {
+        if (const auto* parameter = owner.parameters.getParameter(id))
+            for (const auto& target : modulationSnapshot.targets)
+                if (target.parameterId == id) return parameter->convertFrom0to1(target.effectiveNormalized);
+        return fallback;
+    }
+    float shiftedFrequency(float frequency, float shift) const {
+        return float(juce::jlimit(10.0, sampleRate * 0.45, double(frequency) * std::exp2(double(shift) / 12.0)));
+    }
+    void paintModulation(juce::Graphics& g, size_t b, juce::Point<float> base) const {
+        const auto frequencyId = eqBandParameterId(slot, b, "Frequency");
+        const auto gainId = eqBandParameterId(slot, b, "Gain");
+        bool assigned = false;
+        for (const auto& a : modulationState.assignments)
+            if (a.enabled && (a.targetParameterId == frequencyId || a.targetParameterId == gainId
+                || a.targetParameterId == eqBandParameterId(slot, b, "Q")
+                || a.targetParameterId == eqBandParameterId(slot, b, "Mode")
+                || a.targetParameterId == toneParameterId(slot, "EqShift"))) assigned = true;
+        bool bipolar = true;
+        float sourceDepth = 1;
+        for (const auto& m : modulationState.modulators)
+            if (m.id == feedbackSource) { bipolar = m.bipolar; sourceDepth = m.depth; break; }
+        const auto drawRange = [&](const juce::String& id, float actual, bool horizontal) {
+            for (const auto& a : modulationState.assignments) {
+                if (!a.enabled || a.modulatorId != feedbackSource || a.targetParameterId != id) continue;
+                const auto* parameter = owner.parameters.getParameter(id);
+                if (!parameter) return;
+                const float centre = parameter->convertTo0to1(actual);
+                const float depth = a.depth * sourceDepth;
+                const float lo = bipolar ? centre - std::abs(depth) : centre + juce::jmin(0.0f, depth);
+                const float hi = bipolar ? centre + std::abs(depth) : centre + juce::jmax(0.0f, depth);
+                // Frequency depth is parameter-normalized, NOT log-plot distance.
+                const auto coordinate = [&](float n) {
+                    const float v = parameter->convertFrom0to1(juce::jlimit(0.0f, 1.0f, n));
+                    return horizontal ? xFor(shiftedFrequency(v, settings.shiftSemitones)) : yFor(v);
+                };
+                const float start = coordinate(lo), end = coordinate(hi);
+                g.setColour(juce::Colour(a.depth < 0 ? 0xffff96c8 : 0xffb798ff));
+                if (horizontal) {
+                    g.drawLine(start, base.y, end, base.y, 2.5f);
+                    g.drawLine(start, base.y - 4, start, base.y + 4, 1);
+                    g.drawLine(end, base.y - 4, end, base.y + 4, 1);
+                } else {
+                    g.drawLine(base.x, start, base.x, end, 2.5f);
+                    g.drawLine(base.x - 4, start, base.x + 4, start, 1);
+                    g.drawLine(base.x - 4, end, base.x + 4, end, 1);
+                }
+                return;
+            }
+        };
+        drawRange(frequencyId, settings.bands[b].frequency, true);
+        if (hasGain(settings.bands[b].mode)) drawRange(gainId, settings.bands[b].gainDb, false);
+        if (!assigned) return;
+        const auto frequency = effectiveActual(frequencyId, settings.bands[b].frequency);
+        const auto gain = effectiveActual(gainId, settings.bands[b].gainDb);
+        const auto shift = effectiveActual(toneParameterId(slot, "EqShift"), settings.shiftSemitones);
+        const int mode = int(std::lround(effectiveActual(eqBandParameterId(slot, b, "Mode"), float(settings.bands[b].mode))));
+        const juce::Point<float> effective{xFor(shiftedFrequency(frequency, shift)), yFor(hasGain(mode) ? gain : 0.0f)};
+        g.setColour(bandColour(b).withAlpha(0.65f));
+        g.drawLine(base.x, base.y, effective.x, effective.y, 1);
+        g.setColour(bandColour(b));
+        g.drawEllipse(effective.x - 4, effective.y - 4, 8, 8, 1.5f);
     }
     int edgeMode(juce::Point<float> p) const {
         const auto area = plot();
@@ -270,6 +398,7 @@ private:
     }
     void choose(size_t b) { selected = b; if (onSelect) onSelect(b); rebuildPaths(); repaint(); }
     int create(int mode, juce::Point<float> position) {
+        if (owner.modulationAssignmentId()) return -1;
         refresh();
         for (size_t b = 0; b < settings.bands.size(); ++b) {
             if (settings.bands[b].enabled) continue;
@@ -299,6 +428,7 @@ private:
         for (auto* p : gestures) p->endChangeGesture();
         gestures.clear();
         dragBand = -1;
+        dragAssignment = 0;
     }
     float responseDb(double frequency, const EqualizerSettings& s) const {
         const auto magnitude = Equalizer::frequencyResponse(frequency, sampleRate, s);
@@ -325,6 +455,11 @@ private:
     Processor& owner;
     size_t slot, selected = 0;
     EqualizerSettings settings;
+    ModulationSnapshot modulationSnapshot;
+    ModulationState modulationState;
+    uint32_t feedbackSource = 0, dragAssignment = 0;
+    float dragFrequencyDepth = 0, dragGainDepth = 0;
+    juce::Point<float> dragStart;
     double sampleRate = 48000;
     bool pendingClick = false;
     int dragBand = -1, pendingMode = -1;

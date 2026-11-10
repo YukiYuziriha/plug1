@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ToneEffectPanel.h"
+#include "ModulationPanel.h"
 #include <map>
 
 namespace vocalstack {
@@ -12,6 +13,8 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         juce::ValueTree layout;
         std::array<std::array<float, 3>, 16> fxValues{};
         std::array<std::array<float, toneParametersPerSlot>, 15> toneValues{};
+                std::array<std::array<float, 2>, 15> waveValues{};
+                        std::array<float, 15> qualityValues{}, levelMatchValues{};
         unsigned fxOnUndoMask = 0;
     };
     class Canvas final : public juce::Component {
@@ -29,14 +32,36 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         RoutingPanel& panel;
     } canvas;
 public:
-    explicit RoutingPanel(Processor& processor) : canvas(*this), owner(processor) {
+    explicit RoutingPanel(Processor& processor) : canvas(*this), owner(processor), modulationPanel(processor) {
         setName("Audio routing canvas and inspector");
         setSize(1280, 800);
         addAndMakeVisible(canvas);
         addAndMakeVisible(inspector);
         addAndMakeVisible(status);
+                addAndMakeVisible(modulatorViewport); modulatorViewport.setViewedComponent(&modulatorStrip, false);
+                modulatorViewport.setScrollBarsShown(false, true);
+                addAndMakeVisible(addModulator); addModulator.setButtonText("+ Modulator");
+                addModulator.onClick = [this] { showModulatorMenu(); };
+                addChildComponent(assignmentBanner);
+                assignmentBanner.onClick = [this] { owner.endModulationAssignment(); refreshAssignmentBanner(); };
+                modulationPanel.onDeleted = [this] {
+                            selectedModulator = 0;
+                            if (!modulationui::selectedModulator(owner)) modulationui::selectModulator(owner, 0);
+                            rebuildModulatorStrip(); rebuildInspector(); saveLayout();
+                        };
+                modulationPanel.onReveal = [this](const juce::String& id) { revealTarget(id); };
         status.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
         status.setFont(juce::Font(juce::FontOptions(12.0f)));
+        inspectorTitle.setTooltip("Double-click a machine title to rename it. Stable voice/parameter identities do not change.");
+        inspectorTitle.onTextChange = [this] {
+            const auto* selected = node(selectedNode);
+            if (!selected || selectedModulator) return;
+            const auto name = inspectorTitle.getText().trim().substring(0, 48);
+            remember();
+            if (name.isEmpty()) names.erase(selectedNode); else names[selectedNode] = name;
+            inspectorTitle.setText(title(*selected), juce::dontSendNotification);
+            saveLayout(); updateButtons(); canvas.repaint();
+        };
         for (auto* b : {&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn}) addAndMakeVisible(*b);
         add.setButtonText("+ Node"); undo.setButtonText("Undo"); redo.setButtonText("Redo");
         remove.setButtonText("Delete node"); bypass.setButtonText("Bypass FX");
@@ -60,6 +85,7 @@ public:
         graph = owner.getRoutingGraph();
         loadLayout(owner.getRoutingLayout());
         ensurePositions();
+        rebuildModulatorStrip();
         showStatus();
         rebuildInspector();
         lastSignature = signature(graph);
@@ -67,9 +93,10 @@ public:
         lastLayoutSignature = owner.getRoutingLayout().toXmlString();
         setNeon(owner.isFlash());
         detail::passiveControl(*this);
+        refreshAssignmentBanner();
         startTimerHz(15);
     }
-    ~RoutingPanel() override { nodeValue.setLookAndFeel(nullptr); }
+    ~RoutingPanel() override { toneViewport.setViewedComponent(nullptr, false); modulatorViewport.setViewedComponent(nullptr, false); nodeValue.setLookAndFeel(nullptr); }
     // Call only after the embedded canvas has its final bounds.
     void fitIfUnpositioned() {
         const auto savedLayout = owner.getRoutingLayout();
@@ -79,15 +106,24 @@ public:
     }
     void setNeon(bool value) {
         neon = value;
-        for (auto* b : {&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn, &disconnect}) {
+        for (auto* b : std::initializer_list<juce::TextButton*>{&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn, &disconnect, &addModulator, &assignmentBanner}) {
             b->setColour(juce::TextButton::buttonColourId, juce::Colour(neon ? 0xff202e47 : 0xff3b413a));
             b->setColour(juce::TextButton::buttonOnColourId, juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b));
             b->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
             b->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
         }
+        for (auto& button : modulatorButtons) {
+            button->setColour(juce::TextButton::buttonColourId, juce::Colour(neon ? 0xff202e47 : 0xff3b413a));
+            button->setColour(juce::TextButton::buttonOnColourId, juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b));
+            button->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
+            button->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
+        }
         for (auto& field : fields) field->setNeon(neon);
         if (tonePanel) tonePanel->setNeon(neon);
-        detail::styleSlider(nodeValue, neon);
+                if (voiceControls) voiceControls->setNeon(neon);
+                if (mixControl) mixControl->setNeon(neon);
+                modulationPanel.setNeon(neon);
+        modulationui::styleRotary(nodeValue, neon);
         repaint(); canvas.repaint();
     }
     void paint(juce::Graphics& g) override {
@@ -104,30 +140,122 @@ public:
             const int width = b == &zoomIn || b == &zoomOut ? 30 : b == &remove ? 102 : b == &bypass ? 90 : 66;
             b->setBounds(toolbar.removeFromLeft(width)); toolbar.removeFromLeft(6);
         }
-        const int inspectorWidth = juce::jlimit(340, 400, getWidth() - 564);
-        canvas.setBounds(12, 70, juce::jmax(100, getWidth() - inspectorWidth - 40), juce::jmax(100, getHeight() - 112));
-        inspector.setBounds(getWidth() - inspectorWidth - 12, 76, inspectorWidth, juce::jmax(100, getHeight() - 118));
+        const int inspectorWidth = 400;
+        canvas.setBounds(12, 70, juce::jmax(100, getWidth() - inspectorWidth - 40), juce::jmax(100, getHeight() - 156));
+        const int x = getWidth() - inspectorWidth - 12;
+        assignmentBanner.setBounds(x, 44, inspectorWidth, 27);
+        inspector.setBounds(x, 76, inspectorWidth, juce::jmax(100, getHeight() - 162));
+        addModulator.setBounds(x, getHeight() - 78, inspectorWidth, 32);
+        modulatorViewport.setBounds(12, getHeight() - 80, juce::jmax(100, x - 32), 36);
+        modulatorStrip.setSize(juce::jmax(modulatorViewport.getWidth(), int(modulatorButtons.size()) * 112), 32);
         status.setBounds(8, getHeight() - 33, getWidth() - 16, 28);
         layoutInspector();
     }
+public:
+    // Editor bridge: -1 = Lead, 0..7 = generated voice. Does not end Assign.
+    void selectVoice(int slot) {
+        for (const auto& n : graph.nodes)
+            if ((slot < 0 && n.type == NodeType::lead) || (n.type == NodeType::voice && int(n.voiceSlot) == slot)) {
+                selectedNode = n.id; selectedLink = -1; selectedModulator = 0;
+                rebuildInspector(); saveLayout(); canvas.repaint(); return;
+            }
+    }
+    uint32_t selectedModulationId() const { return modulationui::selectedModulator(owner); }
+        std::function<void(int)> onSelectVoice;
+    std::function<void(const juce::String&)> onRevealParameter;
 private:
+    void refreshAssignmentBanner() {
+        if (isShowing() && juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::escapeKey)) owner.endModulationAssignment();
+        juce::String text;
+        for (const auto& m : owner.getModulationState().modulators)
+            if (m.id == owner.modulationAssignmentId()) text = "Assigning: " + modulatorName(m) + "  /  Escape or click to cancel";
+        assignmentBanner.setButtonText(text); assignmentBanner.setVisible(text.isNotEmpty());
+    }
+    void showModulatorMenu() {
+        juce::PopupMenu menu; menu.addItem(1, "Classic LFO"); menu.addItem(2, "Random");
+        juce::Component::SafePointer<RoutingPanel> safe(this);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(addModulator), [safe](int result) {
+            if (!safe || result == 0) return;
+            auto state = safe->owner.getModulationState(); Modulator m;
+            m.id = 1; for (const auto& existing : state.modulators) m.id = juce::jmax(m.id, existing.id + 1);
+            m.type = result == 1 ? ModulatorType::lfo : ModulatorType::random;
+            state.modulators.push_back(m); juce::String error;
+            if (!safe->owner.setModulationState(state, error)) { safe->error = error; safe->showStatus(); return; }
+            safe->selectedModulator = m.id; safe->selectedNode = 0; safe->selectedLink = -1;
+            safe->rebuildModulatorStrip(); safe->rebuildInspector(); safe->saveLayout();
+        });
+    }
+    void rebuildModulatorStripIfChanged() {
+        juce::String signature;
+        for (const auto& m : owner.getModulationState().modulators) signature += juce::String(m.id) + ":" + juce::String(int(m.type)) + ";";
+        if (signature == modulatorSignature) return;
+        modulatorSignature = signature; rebuildModulatorStrip();
+        if (selectedModulator) {
+            bool found = false; for (const auto& m : owner.getModulationState().modulators) found |= m.id == selectedModulator;
+            if (!found) { selectedModulator = 0; rebuildInspector(); }
+        }
+    }
+    void rebuildModulatorStrip() {
+        modulatorButtons.clear();
+        for (const auto& m : owner.getModulationState().modulators) {
+            auto button = std::make_unique<juce::TextButton>(modulatorName(m));
+            button->setTooltip("Select modulator controls / assignments; audio routing selection never cancels Assign");
+            button->setBounds(int(modulatorButtons.size()) * 112, 0, 108, 30);
+            button->onClick = [this, id = m.id] {
+                selectedModulator = id; selectedNode = 0; selectedLink = -1;
+                rebuildInspector(); saveLayout(); canvas.repaint();
+            };
+            detail::passiveControl(*button); modulatorStrip.addAndMakeVisible(*button); modulatorButtons.push_back(std::move(button));
+        }
+        resized(); setNeon(neon);
+    }
+    void revealTarget(const juce::String& id) {
+        if (id.startsWith("voice")) { selectVoice(id.substring(5).getIntValue() - 1); }
+        else if (id.startsWith("lead")) selectVoice(-1);
+        else {
+            for (const auto& n : graph.nodes) {
+                const bool fx = id.startsWith("fx") && isEffect(n.type) && fxSlot(n) == id.substring(2).getIntValue();
+                const bool legacyFx = id.startsWith("chorale") && n.type == NodeType::chorale && n.mainControls;
+                const bool mix = n.type == NodeType::mix && (n.mainControls ? id == "double" : id == localMixParameterId(n.id));
+                const bool output = id == "outputGain" && n.type == NodeType::output;
+                if (fx || legacyFx || mix || output) { selectedModulator = 0; selectedNode = n.id; selectedLink = -1; rebuildInspector(); break; }
+            }
+        }
+        if (tonePanel) tonePanel->revealParameter(id);
+        std::function<juce::Component*(juce::Component&)> find = [&](juce::Component& c) -> juce::Component* {
+            if (c.getComponentID() == id) return &c;
+            for (auto* child : c.getChildren()) if (auto* match = find(*child)) return match;
+            return nullptr;
+        };
+        if (auto* target = find(inspector)) {
+            if (auto* content = toneViewport.getViewedComponent(); content && content->isParentOf(target)) {
+                const auto bounds = content->getLocalArea(target, target->getLocalBounds());
+                toneViewport.setViewPosition(0, juce::jmax(0, bounds.getY() - 48));
+            }
+            addChildComponent(revealBubble);
+            juce::AttributedString text; text.append("Target: " + id, juce::Font(juce::FontOptions(12.0f)), juce::Colours::white);
+            revealBubble.showAt(target, text, 1600, true, false);
+        } else if (onRevealParameter) onRevealParameter(id);
+        saveLayout(); canvas.repaint();
+    }
     static juce::String signature(const Graph& g) {
         juce::String s;
         for (const auto& n : g.nodes)
             s += juce::String(n.id) + ":" + juce::String(int(n.type)) + ":" + juce::String(n.voiceSlot) + ":"
-                + juce::String(int(n.enabled)) + ":" + juce::String(n.mix, 6) + ":" + juce::String(n.motion, 6)
+                + juce::String(int(n.enabled)) + ":" + juce::String(n.type == NodeType::mix && !localMixParameterId(n.id).isEmpty() ? 0.0f : n.mix, 6) + ":" + juce::String(n.motion, 6)
                 + ":" + juce::String(int(n.mainControls)) + ":" + juce::String(n.referencePower, 6) + ":" + juce::String(n.latencySamples) + ";";
         s += "|";
         for (const auto& l : g.links) s += juce::String(l.source) + ":" + juce::String(l.sourcePin) + ">" + juce::String(l.destination) + ":" + juce::String(l.inputPin) + ";";
         return s;
     }
-    static juce::String title(const RoutingNode& n) {
+    juce::String title(const RoutingNode& n) const {
+        if (const auto alias = names.find(n.id); alias != names.end()) return alias->second;
         switch (n.type) {
         case NodeType::lead: return "LEAD";
         case NodeType::voice: return "VOICE " + juce::String(n.voiceSlot + 1);
         case NodeType::chorale: return n.mainControls ? "CHORALE / MAIN" : "CHORALE " + juce::String(int(n.id) - 98);
         case NodeType::sum: return {}; // Legacy nodes are stripped by the processor.
-        case NodeType::mix: return n.mainControls ? "MAIN DRY / WET" : "DRY / WET MIX";
+        case NodeType::mix: return n.mainControls ? "LEAD / STACK" : "DRY / WET MIX";
         case NodeType::output: return "OUTPUT";
         case NodeType::waveshaper: return "WAVESHAPER " + juce::String(routingFxSlot(n.id));
         case NodeType::equalizer: return "EQ8 " + juce::String(routingFxSlot(n.id));
@@ -356,7 +484,8 @@ private:
         }
     }
     void canvasDown(const juce::MouseEvent& e) {
-        pointer = e.position; dragStart = e.position; startPan = pan;
+        selectedModulator = 0;
+                pointer = e.position; dragStart = e.position; startPan = pan;
         draggingNode = 0; connecting = 0; connectingPin = 0; panning = false; rewiringLink = -1; rewiringSource = false;
         const auto world = toWorld(e.position);
         if (e.mods.isMiddleButtonDown() || e.mods.isAltDown()) { panning = true; return; }
@@ -486,7 +615,7 @@ private:
         if (draggingNode && e.position.getDistanceFrom(dragStart) > 2) {
             undoStates.push_back(dragBefore); limitHistory(); redoStates.clear(); saveLayout(); updateButtons();
         }
-        if (panning) saveLayout();
+        if (!cableEdit) saveLayout();
         connecting = 0; connectingPin = 0; draggingNode = 0; rewiringLink = -1; rewiringSource = false; panning = false;
         if (cableEdit) rebuildInspector();
         canvas.repaint();
@@ -505,16 +634,32 @@ private:
         saveLayout(); canvas.repaint();
     }
     juce::ValueTree layout() const {
-        juce::ValueTree tree("RoutingLayout");
+        auto tree = owner.getRoutingLayout().createCopy();
+        if (!tree.isValid()) tree = juce::ValueTree("RoutingLayout");
+        for (int i = tree.getNumChildren(); --i >= 0;) if (tree.getChild(i).hasType("NODE")) tree.removeChild(i, nullptr);
+        tree.setProperty("selectedNode", int(selectedNode), nullptr);
+        tree.setProperty("selectedModulator", int(selectedModulator), nullptr);
+        if (const auto* n = node(selectedNode); n && (n->type == NodeType::voice || n->type == NodeType::lead))
+            tree.setProperty("selectedVoiceSlot", n->type == NodeType::lead ? -1 : int(n->voiceSlot), nullptr);
         tree.setProperty("zoom", zoom, nullptr); tree.setProperty("panX", pan.x, nullptr); tree.setProperty("panY", pan.y, nullptr);
         for (const auto& p : positions) {
             juce::ValueTree child("NODE"); child.setProperty("id", int(p.first), nullptr);
-            child.setProperty("x", p.second.x, nullptr); child.setProperty("y", p.second.y, nullptr); tree.addChild(child, -1, nullptr);
+            child.setProperty("x", p.second.x, nullptr); child.setProperty("y", p.second.y, nullptr);
+                        if (const auto alias = names.find(p.first); alias != names.end()) child.setProperty("name", alias->second, nullptr);
+                        tree.addChild(child, -1, nullptr);
         }
         return tree;
     }
     void loadLayout(const juce::ValueTree& tree) {
-        positions.clear();
+        positions.clear(); names.clear();
+        selectedNode = uint32_t(int(tree.getProperty("selectedNode", 0)));
+        selectedModulator = uint32_t(int(tree.getProperty("selectedModulator", 0)));
+        const int voice = int(tree.getProperty("selectedVoiceSlot", -2));
+        if (voice != lastSelectedVoiceSlot && voice >= -1 && voice < 8) {
+            lastSelectedVoiceSlot = voice; selectedModulator = 0;
+            for (const auto& n : graph.nodes)
+                if ((voice == -1 && n.type == NodeType::lead) || (n.type == NodeType::voice && int(n.voiceSlot) == voice)) selectedNode = n.id;
+        }
         zoom = juce::jlimit(0.35f, 1.8f, float(tree.getProperty("zoom", 0.72f)));
         pan = {float(tree.getProperty("panX", 20.0f)), float(tree.getProperty("panY", 18.0f))};
         if (!std::isfinite(zoom)) zoom = 0.72f;
@@ -522,7 +667,11 @@ private:
         for (const auto& c : tree) {
             const int id = int(c.getProperty("id"));
             const float x = float(c.getProperty("x")), y = float(c.getProperty("y"));
-            if (id > 0 && std::isfinite(x) && std::isfinite(y)) positions[std::uint32_t(id)] = {x, y};
+            if (id > 0 && std::isfinite(x) && std::isfinite(y)) {
+                positions[std::uint32_t(id)] = {x, y};
+                const auto alias = c.getProperty("name").toString().trim().substring(0, 48);
+                if (alias.isNotEmpty()) names[std::uint32_t(id)] = alias;
+            }
         }
     }
     void ensurePositions() {
@@ -550,7 +699,7 @@ private:
         lastLayoutSignature = saved.toXmlString();
     }
     EditState state() const {
-        EditState result{graph, layout(), {}};
+        EditState result{owner.getRoutingGraph(), layout(), {}};
         for (size_t slot = 0; slot < 16; ++slot)
             for (size_t field = 0; field < 3; ++field)
                 if (const auto* p = owner.parameters.getRawParameterValue(fxParameterId(slot, field))) result.fxValues[slot][field] = p->load();
@@ -558,6 +707,16 @@ private:
             for (size_t field = 0; field < toneParametersPerSlot; ++field)
                 if (const auto* p = owner.parameters.getRawParameterValue(parameterIds[toneParameterIndex(slot, field)]))
                     result.toneValues[slot - 1][field] = p->load();
+        for (size_t slot = 1; slot < 16; ++slot)
+            for (size_t field = 0; field < 2; ++field)
+                if (const auto* p = owner.parameters.getRawParameterValue(parameterIds[waveExtraParameterStart + (slot - 1) * 2 + field]))
+                    result.waveValues[slot - 1][field] = p->load();
+        for (size_t slot = 1; slot < 16; ++slot)
+            if (const auto* p = owner.parameters.getRawParameterValue(toneParameterId(slot, "WaveQuality")))
+                result.qualityValues[slot - 1] = p->load();
+        for (size_t slot = 1; slot < 16; ++slot)
+            if (const auto* p = owner.parameters.getRawParameterValue(toneParameterId(slot, "WaveLevelMatch")))
+                result.levelMatchValues[slot - 1] = p->load();
         return result;
     }
     void limitHistory() { if (undoStates.size() > 80) undoStates.erase(undoStates.begin()); }
@@ -591,9 +750,14 @@ private:
                 if (const auto* p = owner.parameters.getRawParameterValue(parameter); p && p->load() != s.fxValues[slot][field])
                     setParameter(parameter, s.fxValues[slot][field]);
             }
-            if (slot > 0 && lifecycleChange)
+            if (slot > 0 && lifecycleChange) {
                 for (size_t field = 0; field < toneParametersPerSlot; ++field)
                     setParameter(parameterIds[toneParameterIndex(slot, field)], s.toneValues[slot - 1][field]);
+                for (size_t field = 0; field < 2; ++field)
+                    setParameter(parameterIds[waveExtraParameterStart + (slot - 1) * 2 + field], s.waveValues[slot - 1][field]);
+                setParameter(toneParameterId(slot, "WaveQuality"), s.qualityValues[slot - 1]);
+                setParameter(toneParameterId(slot, "WaveLevelMatch"), s.levelMatchValues[slot - 1]);
+            }
         }
         rebuildInspector();
     }
@@ -607,6 +771,11 @@ private:
     }
     bool publish(bool discardUndoOnReject = true) {
         ensurePositions();
+        // Parameter-bound mixers follow current base automation on cable edits;
+        // stale node copies must never rewind a knob or rebuild while dragging.
+        const auto current = owner.getRoutingGraph();
+        for (auto& n : graph.nodes) if (n.type == NodeType::mix && !localMixParameterId(n.id).isEmpty())
+            for (const auto& old : current.nodes) if (old.id == n.id && old.type == n.type) { n.mix = old.mix; break; }
         juce::String problem;
         const bool accepted = owner.setRoutingGraph(graph, problem);
         error = problem;
@@ -636,7 +805,7 @@ private:
         remember(); const auto id = selectedNode;
         graph.links.erase(std::remove_if(graph.links.begin(), graph.links.end(), [id](const auto& l) { return l.source == id || l.destination == id; }), graph.links.end());
         graph.nodes.erase(std::remove_if(graph.nodes.begin(), graph.nodes.end(), [id](const auto& item) { return item.id == id; }), graph.nodes.end());
-        positions.erase(id); selectedNode = 0; selectedLink = -1; publish(); rebuildInspector();
+        positions.erase(id); names.erase(id); selectedNode = 0; selectedLink = -1; publish(); rebuildInspector();
     }
     void setParameter(const juce::String& id, float value) {
         if (auto* p = owner.parameters.getParameter(id)) {
@@ -735,8 +904,19 @@ private:
     }
     void rebuildInspector() {
         validateSelection();
+        inspectorTitle.setEditable(false, selectedModulator == 0 && node(selectedNode) != nullptr, false);
         toneViewport.setViewedComponent(nullptr, false);
-        tonePanel.reset(); fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
+        tonePanel.reset(); voiceControls.reset(); mixControl.reset(); fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
+                if (selectedModulator) {
+                    modulationui::selectModulator(owner, selectedModulator);
+                    inspector.addAndMakeVisible(inspectorTitle);
+                    for (const auto& m : owner.getModulationState().modulators) if (m.id == selectedModulator)
+                        inspectorTitle.setText(modulatorName(m), juce::dontSendNotification);
+                    modulationPanel.select(selectedModulator);
+                    inspector.addAndMakeVisible(toneViewport);
+                    toneViewport.setScrollBarsShown(true, false); toneViewport.setViewedComponent(&modulationPanel, false);
+                    setNeon(neon); layoutInspector(); return;
+                }
         inspector.addAndMakeVisible(inspectorTitle); inspector.addAndMakeVisible(inspectorInfo);
         inspectorTitle.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
         inspectorInfo.setColour(juce::Label::textColourId, juce::Colour(0xffaebaca));
@@ -744,6 +924,15 @@ private:
         nodeValue.onValueChange = nullptr; nodeValue.onDragStart = nullptr; nodeValue.onDragEnd = nullptr;
         nodeValue.setLookAndFeel(&nodeStyle);
         const auto* n = node(selectedNode);
+        if (n && (n->type == NodeType::voice || n->type == NodeType::lead)) {
+            const int slot = n->type == NodeType::lead ? -1 : int(n->voiceSlot);
+            if (slot != lastSelectedVoiceSlot) {
+                lastSelectedVoiceSlot = slot;
+                auto saved = owner.getRoutingLayout().createCopy(); saved.setProperty("selectedVoiceSlot", slot, nullptr);
+                owner.setRoutingLayout(saved); lastLayoutSignature = saved.toXmlString();
+                if (onSelectVoice) onSelectVoice(slot);
+            }
+        }
         inspectorTitle.setText(n ? title(*n) : selectedLink >= 0 ? "AUDIO CONNECTION" : "ROUTING INSPECTOR", juce::dontSendNotification);
         juce::String info = "Select a machine to edit its controls.\n\nInputs accept multiple voices with automatic merge compensation. Each output (each Multiband band) has one outgoing cable. Dragging it to another input replaces its existing links; dropping on empty space disconnects them. Saved fanout remains until that output is edited. A click without dragging leaves wiring unchanged.\n\nDrag an occupied input end to reconnect; drop it on empty space to disconnect that cable. Ctrl/Command-drag an output to move a cable's source. Wheel zooms at the cursor; Alt/middle-drag pans.\n\nAbsent voices and the untouched bypassed main Chorale are hidden without changing routing. Muted voices stay visible. Unconnected inputs receive silence; rejected edits retain accepted routing.";
         if (n) {
@@ -752,14 +941,15 @@ private:
                 const int slot = fxSlot(*n);
                 info += "\nIndependent FX slot " + juce::String(slot);
                 if (slot >= 0) {
-                    fxOn.setButtonText("FX enabled"); fxOn.setClickingTogglesState(true); inspector.addAndMakeVisible(fxOn);
+                    fxOn.setModulationOwner(owner);
+                                        fxOn.setButtonText("FX enabled"); fxOn.setClickingTogglesState(true); inspector.addAndMakeVisible(fxOn);
                     fxOn.setComponentID(fxParameterId(size_t(slot), size_t(0)));
                     const auto* on = owner.parameters.getRawParameterValue(fxParameterId(size_t(slot), size_t(0)));
                     fxOn.setToggleState(on ? on->load() > 0.5f : n->enabled, juce::dontSendNotification);
                     fxOn.onClick = [this] { toggleBypass(); };
                     if (n->type == NodeType::chorale) {
                         for (int f = 1; f <= 2; ++f) {
-                            fields.push_back(std::make_unique<detail::ParameterSlider>(owner, fxParameterId(size_t(slot), f), f == 1 ? "Mix" : "Motion", "%"));
+                            fields.push_back(std::make_unique<ParameterKnob>(owner, fxParameterId(size_t(slot), f), f == 1 ? "Mix" : "Motion", "%"));
                             inspector.addAndMakeVisible(*fields.back());
                         }
                         info += "\nOne independent machine; routing chooses its input.\nNew Chorale slots start On / 25% Mix / 35% Motion.";
@@ -775,14 +965,25 @@ private:
                 } else info += "\nNo matching host automation slot.";
             } else if (n->type == NodeType::mix) {
                 inspector.addAndMakeVisible(nodeValue);
-                nodeValue.setSliderStyle(juce::Slider::LinearHorizontal);
+                nodeValue.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
                 nodeValue.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 100, 24);
                 nodeValue.setScrollWheelEnabled(false);
                 if (n->type == NodeType::mix && n->mainControls) {
-                    nodeValueLink = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner.parameters, "double", nodeValue);
-                    info += "\nMain Mix (%)\nDry pin 0 / Wet pin 1";
+                    inspector.removeChildComponent(&nodeValue);
+                    mixControl = std::make_unique<ParameterKnob>(owner, "double", "Lead / Stack", "%");
+                    inspector.addAndMakeVisible(*mixControl);
+                    info += "\nLead / Stack balance\nLead pin 0 / Stack pin 1";
+                } else if (localMixParameterId(n->id).isNotEmpty()) {
+                    inspector.removeChildComponent(&nodeValue);
+                    mixControl = std::make_unique<ParameterKnob>(owner, localMixParameterId(n->id), "Dry / Wet", "%");
+                    inspector.addAndMakeVisible(*mixControl);
+                    info += "\nAutomatable / modulatable Dry pin 0 / Wet pin 1";
                 } else {
+                    nodeValue.setDoubleClickReturnValue(true, 50);
+                    nodeValue.setVelocityModeParameters(1.0, 1, 0.0, true,
+                        static_cast<juce::ModifierKeys::Flags>(juce::ModifierKeys::shiftModifier | juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::commandModifier));
                     nodeValue.setRange(0, 100, 0.1);
+                    nodeValue.setTooltip("Graph-local mix; not a host parameter or modulation target. Main Lead / Stack is modulatable.");
                     nodeValue.setValue(n->mix * 100, juce::dontSendNotification);
                     info += "\nMix (%)\nDry pin 0 / Wet pin 1. Each pin accepts multiple sources.";
                     nodeValue.onDragStart = [this] { remember(); inspectorDragging = true; };
@@ -795,8 +996,17 @@ private:
                         }
                     };
                 }
-            } else if (n->type == NodeType::voice) info += "\nStable voice " + juce::String(n->voiceSlot + 1) + ".\nUse Advanced for Pitch, gain, pan and motion. Muted slots stay visible; absent slots and their stored cables are hidden. Source identity and dormant routing are preserved.";
-            else if (n->type == NodeType::output) info += "\nFinal Output trim and meters remain in the main editor. Exactly one Output is required.";
+            } else if (n->type == NodeType::voice || n->type == NodeType::lead) {
+                            voiceControls = std::make_unique<VoiceControls>(owner, n->type == NodeType::lead ? -1 : int(n->voiceSlot));
+                            toneViewport.setViewedComponent(voiceControls.get(), false); toneViewport.setScrollBarsShown(true, false);
+                            inspector.addAndMakeVisible(toneViewport);
+                            info += "\nShared Stack controls / stable host parameters";
+                        }
+            else if (n->type == NodeType::output) {
+                            mixControl = std::make_unique<ParameterKnob>(owner, "outputGain", "Output trim", "dB");
+                            inspector.addAndMakeVisible(*mixControl);
+                            info += "\nFinal output trim; meters remain in the main editor. Exactly one Output is required.";
+                        }
             else info += "\nProcessed lead source. Connecting this output elsewhere moves its cable; inputs accept multiple sources.";
         } else if (selectedLink >= 0 && selectedLink < int(graph.links.size())) {
             DisplayLink item;
@@ -820,22 +1030,32 @@ private:
     }
     void layoutInspector() {
         inspectorTitle.setBounds(0, 0, inspector.getWidth(), 30);
+                if (selectedModulator || voiceControls) {
+                    const int top = 36;
+                    toneViewport.setBounds(0, top, inspector.getWidth(), juce::jmax(0, inspector.getHeight() - top));
+                    auto* content = selectedModulator ? static_cast<juce::Component*>(&modulationPanel) : static_cast<juce::Component*>(voiceControls.get());
+                    content->setSize(juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness()),
+                                     juce::jmax(selectedModulator ? ModulationPanel::preferredHeight : 390, toneViewport.getHeight()));
+                    return;
+                }
         fxOn.setBounds(4, 34, 160, 26);
         disconnect.setBounds(4, 34, 130, 28);
         if (tonePanel) {
             const bool crossover = node(selectedNode) && node(selectedNode)->type == NodeType::crossover;
             const int footerHeight = crossover ? 79 : 28;
             const int available = juce::jmax(0, inspector.getHeight() - 68 - footerHeight);
-            toneViewport.setBounds(0, 68, inspector.getWidth(), juce::jmin(available, ToneEffectPanel::preferredHeight));
-            tonePanel->setBounds(0, 0, juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness()), ToneEffectPanel::preferredHeight);
+            toneViewport.setBounds(0, 68, inspector.getWidth(), available);
+            tonePanel->setBounds(0, 0, juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness()), juce::jmax(available, ToneEffectPanel::preferredHeight));
             inspectorInfo.setFont(juce::Font(juce::FontOptions(11.0f)));
-            inspectorInfo.setBounds(0, 68 + juce::jmin(available, ToneEffectPanel::preferredHeight) + 4, inspector.getWidth(), footerHeight - 4);
+            inspectorInfo.setBounds(0, 68 + available + 4, inspector.getWidth(), footerHeight - 4);
             return;
         }
         int y = 76;
-        for (auto& field : fields) { field->setBounds(0, y, inspector.getWidth(), 34); y += 40; }
-        nodeValue.setBounds(0, 40, inspector.getWidth(), 64);
-        const int infoY = fields.empty() ? (nodeValue.getParentComponent() == &inspector ? 118 : selectedLink >= 0 ? 76 : 40) : y + 12;
+        for (size_t i = 0; i < fields.size(); ++i) fields[i]->setBounds(int(i % 3) * 128, y + int(i / 3) * 104, 124, 100);
+        if (!fields.empty()) y += int((fields.size() + 2) / 3) * 104;
+        nodeValue.setBounds(0, 40, 140, 110);
+        if (mixControl) mixControl->setBounds(0, 40, 140, 110);
+        const int infoY = fields.empty() ? (nodeValue.getParentComponent() == &inspector || mixControl ? 160 : selectedLink >= 0 ? 76 : 40) : y + 12;
         inspectorInfo.setBounds(0, infoY, inspector.getWidth(), juce::jmax(20, inspector.getHeight() - infoY));
     }
     juce::String portSignature() const {
@@ -847,6 +1067,12 @@ private:
         return result;
     }
     void timerCallback() override {
+        refreshAssignmentBanner();
+        rebuildModulatorStripIfChanged();
+        const auto modulators = owner.getModulationState().modulators;
+        for (size_t i = 0; i < modulatorButtons.size() && i < modulators.size(); ++i)
+            modulatorButtons[i]->setToggleState(modulators[i].id == selectedModulationId(), juce::dontSendNotification);
+        modulationui::refreshWithSelection(inspector, owner, owner.getModulationSnapshot(), owner.getModulationState(), owner.modulationAssignmentId());
         // Host presence, bank, band-count and On changes apply even during a
         // cable gesture. Cancel it rather than dropping onto a now-hidden pin.
         const auto ports = portSignature();
@@ -885,6 +1111,7 @@ private:
     Processor& owner;
     Graph graph;
     std::map<std::uint32_t, juce::Point<float>> positions;
+    std::map<std::uint32_t, juce::String> names;
     float zoom = 0.72f;
     juce::Point<float> pan{20, 18}, pointer, dragStart, startPan, startNode;
     std::uint32_t selectedNode = 0, draggingNode = 0, connecting = 0;
@@ -894,14 +1121,26 @@ private:
     juce::String error, lastSignature, lastLayoutSignature, lastPortSignature;
     std::vector<EditState> undoStates, redoStates;
     EditState dragBefore;
-    juce::TextButton add, undo, redo, remove, bypass, fit, zoomOut, zoomIn, fxOn, disconnect;
+    juce::TextButton add, undo, redo, remove, bypass, fit, zoomOut, zoomIn, disconnect;
+        modulationui::Button fxOn;
     juce::Component inspector;
     juce::Label inspectorTitle, inspectorInfo, status;
-    detail::ParameterLookAndFeel nodeStyle;
+    modulationui::RotaryStyle nodeStyle;
     juce::Slider nodeValue;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> nodeValueLink;
 
-    std::vector<std::unique_ptr<detail::ParameterSlider>> fields;
+    std::vector<std::unique_ptr<ParameterKnob>> fields;
+        std::unique_ptr<ParameterKnob> mixControl;
+        std::unique_ptr<VoiceControls> voiceControls;
+        ModulationPanel modulationPanel;
+        uint32_t selectedModulator = 0;
+            int lastSelectedVoiceSlot = -2;
+        juce::String modulatorSignature;
+        juce::Component modulatorStrip;
+        juce::Viewport modulatorViewport;
+        juce::TextButton addModulator, assignmentBanner;
+            juce::BubbleMessageComponent revealBubble;
+        std::vector<std::unique_ptr<juce::TextButton>> modulatorButtons;
     std::unique_ptr<ToneEffectPanel> tonePanel;
     juce::Viewport toneViewport;
 };

@@ -17,6 +17,10 @@ inline float visualParameter(Processor& owner, const juce::String& id, float fal
     }
     return fallback;
 }
+inline int effectiveWaveShape(Processor& owner, size_t slot) {
+    const int algorithm = std::clamp(int(visualParameter(owner, toneParameterId(slot, "WaveAlgorithm"))), 0, 19);
+    return algorithm > 0 ? algorithm - 1 : std::clamp(int(visualParameter(owner, toneParameterId(slot, "WaveShape"))), 0, 2);
+}
 inline juce::Colour visualAccent(bool neon) { return juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b); }
 inline juce::Colour crossoverColour(int band) {
     constexpr std::array<juce::uint32, 3> colours{0xfff5a24b, 0xff64d5ba, 0xffa99afa};
@@ -184,31 +188,33 @@ public:
     WaveshaperVisual(Processor& owner, size_t slot) : FxMonitorView(owner, slot, false) {
         setName("Waveshaper transfer and stereo waveforms");
         setInterceptsMouseClicks(true, false);
-        setTooltip("Settled static transfer includes drive, output, mix and bypass. Dynamic ADAA output differs. Below: actual pre/post L and R, fixed amplitude scale; no stereo summing.");
+        setTooltip("Static memoryless transfer includes drive, shape amount, output, mix and bypass. Raw uses this curve at project rate regardless of Quality. Off/2x/4x use ADAA, with IIR oversampling at 2x/4x. All have zero explicit integer delay, not zero phase; parallel paths may comb. ADAA, resampling, DC removal and optional RMS level matching are dynamic and are not simulated here. Below: actual pre/post L and R, fixed amplitude scale; no stereo summing.");
     }
-    // Matches Waveshaper::transfer; kept UI-local because the DSP helper is private.
-    // This is the settled requested curve, not an ADAA simulation or live DSP state.
-    static double settledTransfer(double x, double driveDb, double outputDb, double mix, int shape, bool enabled) {
+    // Requested memoryless curve, not an ADAA/DC simulation or live DSP state.
+    static double settledTransfer(double x, double driveDb, double outputDb, double mix, int shape, bool enabled,
+                                  double shapeAmount = 0.5) {
         if (!enabled) return x;
         const double driven = x * std::pow(10.0, driveDb / 20);
-        double wet = std::tanh(driven);
-        if (shape == 1) wet = std::clamp(driven, -1.0, 1.0);
-        if (shape == 2) {
-            const double bias = std::tanh(0.5);
-            wet = (std::tanh(driven + 0.5) - bias) / (1 - bias * bias);
-        }
+        const double wet = Waveshaper::transfer(driven, shape, shapeAmount);
         return x * (1 - mix) + wet * std::pow(10.0, outputDb / 20) * mix;
     }
     void paint(juce::Graphics& g) override {
         paintBackground(g);
         const bool enabled = visualParameter(monitorOwner, fxParameterId(monitorSlot, "On"), 1) >= 0.5f;
         auto bounds = getLocalBounds().reduced(7);
-        g.drawText(enabled ? "SETTLED STATIC TRANSFER (ADAA differs)" : "BYPASS | settled unity transfer", bounds.removeFromTop(16), juce::Justification::centredLeft);
+        const bool raw = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveRaw")) >= 0.5f;
+        const int quality = std::clamp(int(visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveQuality"))), 0, 2);
+        const bool matched = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveLevelMatch")) >= 0.5f;
+                const juce::String mode = (raw ? juce::String("Raw @ 1x") : juce::String("ADAA / ") + Waveshaper::qualityNames[size_t(quality)])
+                    + (matched ? " | pre-match curve" : "");
+        g.drawText(enabled ? "STATIC | " + mode
+                           : juce::String("BYPASS | unity transfer"), bounds.removeFromTop(16), juce::Justification::centredLeft);
         auto curve = bounds.removeFromTop(91).toFloat().withTrimmedLeft(24).withTrimmedRight(7);
         const double drive = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveDrive"));
         const double outputDb = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveOutput"));
         const double mix = juce::jlimit(0.0, 1.0, double(visualParameter(monitorOwner, fxParameterId(monitorSlot, "Mix"), 100)) / 100);
-        const int shape = int(visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveShape")));
+        const int shape = effectiveWaveShape(monitorOwner, monitorSlot);
+        const double shapeAmount = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveShapeAmount"), 50) * 0.01;
         auto yFor = [&](double y) { return curve.getCentreY() - float(juce::jlimit(-1.0, 1.0, y)) * curve.getHeight() * 0.5f; };
         g.setColour(juce::Colour(0xff819398).withAlpha(0.25f));
         g.drawHorizontalLine(int(curve.getCentreY()), curve.getX(), curve.getRight());
@@ -218,7 +224,7 @@ public:
         bool outside = false;
         for (int i = 0; i <= 256; ++i) {
             const double x = double(i) / 128 - 1;
-            const double y = settledTransfer(x, drive, outputDb, mix, shape, enabled);
+            const double y = settledTransfer(x, drive, outputDb, mix, shape, enabled, shapeAmount);
             outside |= std::abs(y) > 1;
             const float px = curve.getX() + curve.getWidth() * float(i) / 256;
             if (i == 0) p.startNewSubPath(px, yFor(y)); else p.lineTo(px, yFor(y));

@@ -260,13 +260,13 @@ inline void eqPanel(bool neon) {
     Processor owner;
     write(owner, fxParameterId(1, "On"), 1);
     ToneEffectPanel panel(owner, 1, NodeType::equalizer);
-    panel.setSize(400, 550);
+    panel.setSize(400, 650);
     panel.setNeon(neon);
     panel.setVisible(true);
     panel.addToDesktop(0);
     auto* graph = find<toneui::EqGraph>(panel, [](auto&) { return true; });
     require(graph != nullptr && graph->getWidth() >= 350 && plot(*graph).getHeight() >= 210,
-            "EQ plot too small at 400 x 550");
+            "EQ plot too small at 400 x 650");
     visibleLayout(panel);
     transport(panel);
     auto& mode = combo(panel, eqBandParameterId(1, 0, "Mode"));
@@ -416,7 +416,7 @@ inline void waveAndCrossover(bool neon) {
         Processor owner;
         if (type == NodeType::crossover) write(owner, toneParameterId(1, "BandCount"), 3);
         ToneEffectPanel panel(owner, 1, type);
-        panel.setSize(400, 550);
+        panel.setSize(400, 650);
         panel.setNeon(neon);
         panel.setVisible(true);
         panel.addToDesktop(0);
@@ -430,13 +430,13 @@ inline void waveAndCrossover(bool neon) {
         near(float(bound.getValue()), requested, "host-to-slider attachment", 0.1f);
         enterValue(bound, requested + 2);
         near(read(owner, id), requested + 2, "slider-to-host attachment", 0.1f);
-        const auto choice = toneParameterId(1, type == NodeType::waveshaper ? "WaveShape" : "BandCount");
+        const auto choice = toneParameterId(1, type == NodeType::waveshaper ? "WaveAlgorithm" : "BandCount");
         auto& menu = combo(panel, choice);
-        require(menu.getNumItems() == (type == NodeType::waveshaper ? 3 : 2), "wrong shape/band choice count");
+        require(menu.getNumItems() == (type == NodeType::waveshaper ? 20 : 2), "wrong shape/band choice count");
         menu.sendLookAndFeelChange();
         transport(panel);
-        menu.setSelectedId(type == NodeType::waveshaper ? 3 : 2, juce::sendNotificationSync);
-        near(read(owner, choice), type == NodeType::waveshaper ? 2.0f : 3.0f, "choice raw parameter mapping");
+        menu.setSelectedId(type == NodeType::waveshaper ? 4 : 2, juce::sendNotificationSync);
+        near(read(owner, choice), 3.0f, "choice raw parameter mapping");
         if (type == NodeType::waveshaper) {
             enterValue(slider(panel, fxParameterId(1, "Mix")), 63);
             near(read(owner, fxParameterId(1, "Mix")), 63, "waveshaper dry/wet attachment");
@@ -452,7 +452,7 @@ inline void waveAndCrossover(bool neon) {
     Processor two;
     write(two, toneParameterId(1, "BandCount"), 2);
     ToneEffectPanel panel(two, 1, NodeType::crossover);
-    panel.setSize(400, 550);
+    panel.setSize(400, 650);
     panel.setNeon(neon);
     require(!slider(panel, toneParameterId(1, "CrossoverHigh")).isEnabled(), "2-band high crossover must be inactive");
     visibleLayout(panel);
@@ -491,7 +491,7 @@ inline int links(Processor& owner, std::uint32_t source, std::uint32_t destinati
 }
 inline juce::Component& canvas(RoutingPanel& panel) {
     auto* result = find<juce::Component>(panel, [](auto& c) { return c.getName() == "Routing node canvas"; });
-    require(result != nullptr && result->getBounds() == juce::Rectangle<int>(12, 70, 840, 688), "routing canvas bounds changed");
+    require(result != nullptr && result->getBounds() == juce::Rectangle<int>(12, 70, panel.getWidth() - 440, panel.getHeight() - 156), "routing canvas bounds changed");
     return *result;
 }
 inline void routingPorts(bool neon) {

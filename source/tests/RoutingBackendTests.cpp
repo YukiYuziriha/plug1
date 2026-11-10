@@ -354,7 +354,7 @@ void activePlanTails() {
     Graph serial{{{1,NodeType::lead},{100,NodeType::chorale},{101,NodeType::waveshaper},
         {102,NodeType::equalizer},{103,NodeType::crossover},{2,NodeType::output}},
         {{1,100,0},{100,101,0},{101,102,0},{102,103,0},{103,2,0}}};
-    install(serial, .040+.020+256+8);
+    install(serial, .040+1.0+256+8);
     auto parallel = serial;
     parallel.links = {{1,100,0},{1,101,0},{1,102,0},{1,103,0},
         {100,2,0},{101,2,0},{102,2,0},{103,2,0}};
@@ -386,7 +386,7 @@ void activePlanTails() {
     tailNear(engine.tailSeconds(),defaultTail-.040,"engine did not use active routing tail");
     check(bool(engine.requestGraph(serial)),"engine tail serial request");
     audio = true; engine.process(in,out,64,settings); audio = false;
-    tailNear(engine.tailSeconds(),defaultTail-.040+.040+.020+256+8,"engine serial tail forwarding");
+    tailNear(engine.tailSeconds(),defaultTail-.040+.040+1.0+256+8,"engine serial tail forwarding");
     check(allocations == 0 && destructions == 0,"tail publication allocated/destroyed on audio");
 }
 int main() {

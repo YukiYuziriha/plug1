@@ -17,7 +17,9 @@ inline float bounded(float value, float low, float high, float fallback) noexcep
 inline void boundToneSettings(RoutingNode& n) noexcept {
     n.waveshaper.driveDb = bounded(n.waveshaper.driveDb, 0, 36, 0);
     n.waveshaper.outputDb = bounded(n.waveshaper.outputDb, -24, 12, 0);
-    n.waveshaper.shape = std::clamp(n.waveshaper.shape, 0, 2);
+    n.waveshaper.shape = std::clamp(n.waveshaper.shape, 0, 18);
+        n.waveshaper.quality = std::clamp(n.waveshaper.quality, 0, 2);
+        n.waveshaper.shapeAmount = bounded(n.waveshaper.shapeAmount, 0, 1, 0.5f);
     n.waveshaper.mix = bounded(n.waveshaper.mix, 0, 1, 1);
     n.eq.shiftSemitones = bounded(n.eq.shiftSemitones, -24, 24, 0);
     n.eq.gainDb = bounded(n.eq.gainDb, -24, 24, 0);
@@ -100,6 +102,10 @@ inline juce::ValueTree encode(const Graph& graph, const char* type) {
         wave.setProperty("outputDb", n.waveshaper.outputDb, nullptr);
         wave.setProperty("mix", n.waveshaper.mix, nullptr);
         wave.setProperty("shape", n.waveshaper.shape, nullptr);
+        wave.setProperty("raw", n.waveshaper.raw, nullptr);
+        wave.setProperty("shapeAmount", n.waveshaper.shapeAmount, nullptr);
+                wave.setProperty("quality", n.waveshaper.quality, nullptr);
+                wave.setProperty("levelMatch", n.waveshaper.levelMatch, nullptr);
         node.addChild(wave, -1, nullptr);
         juce::ValueTree eq("Equalizer");
         eq.setProperty("enabled", n.eq.enabled, nullptr);
@@ -156,6 +162,10 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
             n.waveshaper.outputDb = wave.getProperty("outputDb", n.waveshaper.outputDb);
             n.waveshaper.mix = wave.getProperty("mix", n.waveshaper.mix);
             n.waveshaper.shape = wave.getProperty("shape", n.waveshaper.shape);
+            n.waveshaper.raw = wave.getProperty("raw", n.waveshaper.raw);
+            n.waveshaper.shapeAmount = wave.getProperty("shapeAmount", n.waveshaper.shapeAmount);
+                        n.waveshaper.quality = wave.getProperty("quality", 0);
+                        n.waveshaper.levelMatch = wave.getProperty("levelMatch", false);
             const auto eq = child.getChildWithName("Equalizer");
             n.eq.enabled = eq.getProperty("enabled", n.eq.enabled);
             n.eq.shiftSemitones = eq.getProperty("shiftSemitones", n.eq.shiftSemitones);

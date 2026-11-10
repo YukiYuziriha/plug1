@@ -34,6 +34,8 @@ Settings boundedSettings(Settings s) {
     s.human = unit(s.human, 0.35f); s.width = unit(s.width, 0.65f);
     s.formant = std::isfinite(s.formant) ? std::clamp(s.formant, -24.0f, 24.0f) : 0;
     s.outputGainDb = std::isfinite(s.outputGainDb) ? s.outputGainDb : 0;
+    s.globalMix = unit(s.globalMix, 1);
+    s.leadSettings = bounded(s.leadSettings);
     return s;
 }
 
@@ -119,6 +121,10 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     for (auto* delays : {&dryDelay, &levelDelay})
         for (auto& delay : *delays)
             delay.prepare(latencySamples + 2);
+    for (size_t channel = 0; channel < 2; ++channel) {
+        leadHarmony[channel].prepare(rate, latencySamples);
+        leadLocalDelay[channel].prepare(maxDoubleDelay + 2);
+    }
     articulationDelay.prepare(latencySamples + maxDoubleDelay + 2);
 
     parameterStep = coefficient(0.018);
@@ -145,6 +151,22 @@ void VocalEngine::reset(const Settings& requested) {
     const auto settings = boundedSettings(requested);
     lead.reset();
     lead.setFormantBase(static_cast<float>(150.0 / rate));
+    leadMotion.controls = settings.leadSettings;
+    leadMotion.amplitude = settings.leadSettings.enabled ? dbToGain(settings.leadSettings.gainDb) : 0;
+    leadMotion.delaySamples = float(rate * 0.001) * settings.leadSettings.delayMs;
+    leadMotion.random = leadMotion.initialSeed;
+    leadMotion.time = leadMotion.pitch = leadMotion.tone = leadMotion.remaining = 0;
+    leadMotion.targetTime = leadMotion.targetPitch = leadMotion.targetTone = 0;
+    leadMotion.appliedPitch = leadMotion.appliedDetune = leadMotion.appliedFormant = 0;
+    leadLocalBlend = 0;
+    leadHarmonyRunning = settings.leadSettings.pitchSemitones != 0;
+    leadPitchBlend = leadHarmonyRunning ? 1.0f : 0.0f;
+    leadHarmonyWarmup = 0;
+    globalMix = settings.globalMix;
+    for (size_t channel = 0; channel < 2; ++channel) {
+        leadHarmony[channel].reset();
+        leadLocalDelay[channel].clear();
+    }
     const auto initialVoices = settings.advanced ? settings.voiceSettings : basicVoiceSettings(settings.human);
     for (size_t index = 0; index < voices.size(); ++index) {
         auto& voice = voices[index];
@@ -282,7 +304,19 @@ void VocalEngine::process(const float* const* input, float* const* output, int c
     for (int offset = 0; offset < count;) {
         if (untilUpdate == 0) {
             const float seconds = static_cast<float>(quantum / rate);
-            lead.setFormantSemitones(controls.formant);
+            auto& lv = leadMotion.controls;
+            leadMotion.advance(seconds * lv.rateHz, controls.human);
+            const float fine = lv.detuneCents * 0.01f + leadMotion.pitch * 0.245f * controls.human * lv.depth;
+            const float localFormant = lv.formantSemitones + leadMotion.tone * 0.36f * controls.human * lv.depth;
+            const bool local = std::abs(localFormant) > 0.00001f || std::abs(lv.pitchSemitones + fine) > 0.00001f;
+            const float color = (local ? controls.formant * controls.formantMix : controls.formant) + localFormant;
+            leadMotion.appliedPitch = lv.pitchSemitones;
+            leadMotion.appliedDetune = fine * 100.0f;
+            leadMotion.appliedFormant = color;
+            leadLocalBlend = std::min(1.0f, 5.0f * (std::abs(localFormant) + std::abs(fine) + std::abs(lv.pitchSemitones)));
+            lead.setTransposeSemitones(fine);
+            lead.setFormantSemitones(color, local);
+            for (auto& harmony : leadHarmony) harmony.setSemitones(lv.pitchSemitones + fine, color);
             for (size_t index = 0; index < voices.size(); ++index) {
                 auto& voice = voices[index];
                 const auto& v = voice.controls;
@@ -340,6 +374,28 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
     const float* leadIn[] = {leadInput[0].data(), leadInput[1].data()};
     float* leadOut[] = {leadRendered[0].data(), leadRendered[1].data()};
     lead.process(leadIn, count, leadOut, count);
+    const bool leadMusical = std::abs(leadMotion.appliedPitch) > 0.00001f;
+    if (leadMusical && !leadHarmonyRunning) {
+        for (auto& harmony : leadHarmony) harmony.reset();
+        leadHarmonyRunning = true;
+        leadHarmonyWarmup = latencySamples;
+    }
+    if (leadHarmonyRunning) {
+        // reset() clears ratios as well as history; restore the cached controls
+        // immediately, not up to one control quantum later.
+        for (auto& harmony : leadHarmony)
+            harmony.setSemitones(leadMotion.appliedPitch + leadMotion.appliedDetune * 0.01f,
+                                  leadMotion.appliedFormant);
+        for (int i = 0; i < count; ++i) {
+            if (leadHarmonyWarmup) --leadHarmonyWarmup;
+            else leadPitchBlend = mix(leadPitchBlend, leadMusical ? 1.0f : 0.0f, parameterStep);
+            if (std::abs(leadPitchBlend - (leadMusical ? 1.0f : 0.0f)) < 0.00001f)
+                leadPitchBlend = leadMusical ? 1.0f : 0.0f;
+            for (int channel = 0; channel < inChannels; ++channel)
+                leadRendered[channel][i] = mix(leadRendered[channel][i], leadHarmony[size_t(channel)].process(leadInput[channel][i]), leadPitchBlend);
+        }
+        if (!leadMusical && leadPitchBlend == 0) leadHarmonyRunning = false;
+    }
     const float* voiceIn[] = {monoInput.data()};
     const auto chunkTargets = targets.advanced ? targets.voiceSettings : basicVoiceSettings(controls.human);
     for (size_t index = 0; index < voices.size(); ++index) {
@@ -391,6 +447,8 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
     // rebuild or module reset is needed for live FX automation.
     routingControls.fxSettings = targets.fxSettings;
     routingControls.fxAutomation = targets.fxAutomation;
+    routingControls.localMix = targets.localMix;
+    routingControls.localMixAutomation = targets.localMixAutomation;
     for (int i = 0; i < count; ++i) {
         const float mixTarget = targets.doubleOn ? std::clamp(targets.doubles, 0.0f, 1.0f) : 0.0f;
         controls.doubles = mix(controls.doubles, mixTarget, parameterStep);
@@ -410,7 +468,19 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         const float outputGain = dbToGain(static_cast<float>(controls.outputGainDb));
         articulationDelay.push(articulationInput[i]);
 
-        const float formantBlend = controls.formantMix * std::min(1.0f, std::abs(controls.formant) * 5.0f);
+        auto& lv = leadMotion.controls;
+        const auto lt = targets.leadSettings;
+        for (auto member : {&VoiceSettings::gainDb, &VoiceSettings::pan, &VoiceSettings::delayMs,
+                            &VoiceSettings::detuneCents, &VoiceSettings::formantSemitones,
+                            &VoiceSettings::depth, &VoiceSettings::rateHz, &VoiceSettings::pitchSemitones})
+            lv.*member = mix(lv.*member, lt.*member, parameterStep);
+        const float leadAmplitudeTarget = lt.enabled ? dbToGain(lv.gainDb) : 0;
+        leadMotion.amplitude = mix(leadMotion.amplitude, leadAmplitudeTarget, parameterStep);
+        if (std::abs(leadMotion.amplitude - leadAmplitudeTarget) < 0.000001f) leadMotion.amplitude = leadAmplitudeTarget;
+        // Only actual local shifts select the spectral path. Depth with a
+        // stopped motion clock must not leak a disabled shared Formant effect.
+        const float formantBlend = std::max(controls.formantMix * std::min(1.0f, std::abs(controls.formant) * 5.0f),
+            leadLocalBlend);
         const int rightChannel = inChannels == 2 ? 1 : 0;
         const float referenceLeft = alignedLevel[0][i];
         const float referenceRight = alignedLevel[rightChannel][i];
@@ -425,7 +495,16 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         const float timeStep = (6.0f + 5.0f * controls.human) / static_cast<float>(rate);
         const auto voiceTargets = targets.advanced ? targets.voiceSettings : basicVoiceSettings(controls.human);
         RoutingSources sources;
-        sources.lead = {leadLeft, leadRight};
+        const float timeStepLead = (6.0f + 5.0f * controls.human) / float(rate);
+        leadMotion.time = mix(leadMotion.time, leadMotion.targetTime, std::min(1.0f, timeStepLead * lv.rateHz));
+        const float leadDelayTarget = std::clamp(float(rate * 0.001) *
+            (lv.delayMs + leadMotion.time * 7.0f * controls.human * lv.depth), 0.0f, float(maxDoubleDelay));
+        leadMotion.delaySamples += std::clamp(leadDelayTarget - leadMotion.delaySamples, -0.125f, 0.125f);
+        leadLocalDelay[0].push(leadLeft);
+        leadLocalDelay[1].push(leadRight);
+        sources.lead = {
+            leadLocalDelay[0].read(leadMotion.delaySamples) * leadMotion.amplitude * std::min(1.0f, 1.0f - lv.pan),
+            leadLocalDelay[1].read(leadMotion.delaySamples) * leadMotion.amplitude * std::min(1.0f, 1.0f + lv.pan)};
         for (size_t index = 0; index < voices.size(); ++index) {
             auto& voice = voices[index];
             const auto target = bounded(voiceTargets[index]);
@@ -471,11 +550,17 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         routingControls.mix = controls.doubles;
         const auto routed = routing.process(sources, routingControls);
         const float left = routed.left, right = routed.right;
-        // Trim only the wet path; select dry directly at full bypass for bit-exact identity.
+        globalMix = mix(globalMix, targets.globalMix, parameterStep);
+        if (std::abs(globalMix - targets.globalMix) < 0.00001f) globalMix = targets.globalMix;
+        const float wetLeft = globalMix == 0 ? alignedDry[0][i]
+            : globalMix == 1 ? left * outputGain : mix(alignedDry[0][i], left * outputGain, globalMix);
+        const float wetRight = globalMix == 0 ? alignedDry[rightChannel][i]
+            : globalMix == 1 ? right * outputGain : mix(alignedDry[rightChannel][i], right * outputGain, globalMix);
+        // Whole-plugin bypass remains untouched, independent of saved global Mix.
         const float finalLeft = controls.bypass == 1.0f ? alignedDry[0][i]
-            : mix(left * outputGain, alignedDry[0][i], controls.bypass);
+            : mix(wetLeft, alignedDry[0][i], controls.bypass);
         const float finalRight = controls.bypass == 1.0f ? alignedDry[rightChannel][i]
-            : mix(right * outputGain, alignedDry[rightChannel][i], controls.bypass);
+            : mix(wetRight, alignedDry[rightChannel][i], controls.bypass);
         if (outChannels == 1) {
             const float result = 0.5f * (finalLeft + finalRight);
             output[0][offset + i] = result;
