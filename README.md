@@ -1,9 +1,14 @@
-# Vocal Stack 1.5.0
+# Vocal Stack 1.5.1
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-1.5.0 adds resizable Stack/Routing views, an independently editable Lead, shared
+1.5.1 separates waveform-tile modulators on the left and their bottom control strip
+from the full-height node inspector. Stack is always visible with compact two-column
+sliders; Lead joins the motion monitor. Waveshaper curves follow live modulation,
+and node/empty-canvas context menus open at the cursor.
+
+1.5.0 added resizable Stack/Routing views, an independently editable Lead, shared
 rotary voice/FX inspectors, global dry/wet Mix, Classic LFO/Random modulation,
 and 19 waveshapers with Raw, 2x/4x quality, and optional RMS level matching.
 Final release verification is recorded below. Bitwig listening/transport checks
@@ -77,12 +82,15 @@ The preview uses synthetic readings to demonstrate peak hold and clip indication
 ### Window and control layout
 
 Drag the window corner to resize (940x560 minimum, 2400x2200 maximum). Stack
-scales its complete design proportionally, including Advanced; unmatched space
-is letterboxed, never stretched. Routing keeps controls/nodes unscaled and expands
-the canvas and inspector height. Small inspectors scroll. Window size and graph
-pan/zoom are saved; tab/drawer changes do not resize the window or refit the graph.
-Voice cards use two rows of four knobs; selecting a Lead/Voice node opens the same
-controls on the right. Selection follows between views. Numeric entry, double-click
+fits its complete design proportionally up to native size; unmatched space
+is letterboxed, never stretched or enlarged vertically. Routing keeps controls/nodes unscaled and expands
+the canvas and inspector height. The inspector defaults to 320 px wide; drag its
+left divider to resize between 320 and 480 px. Width is saved, and dragging neither
+refits the graph nor rebuilds the selected effect. Small inspectors scroll. Window size and graph
+pan/zoom are saved; tab changes do not resize the window or refit the graph.
+Stack cards use four rows of two horizontal sliders in narrower, unchanged-height
+cards. Selecting a Lead/Voice node opens the same parameters as larger two-row
+rotary controls on the right. Selection follows between views. Numeric entry, double-click
 reset, and modifier fine adjustment remain available without stealing idle DAW keys.
 
 ### Mix and Leveler
@@ -110,8 +118,11 @@ Use Output for manual trim. Other modules can still change final output level.
 ### Advanced Doubler
 
 The embedded **Stack / Routing** top tabs select the editor view, never the
-processing mode or sound. The separate **Voice stack** switch selects the saved
-custom stack instead of Basic's first two voices. Present but muted voices remain
+processing mode or sound. Voice controls are always shown in Stack; the old
+Show Advanced, Voice stack, and duplicate Open Routing buttons are removed.
+Clicking a generated-voice card activates custom voices when needed, initializing
+from current Basic settings on first activation. Merely opening the editor does
+not change legacy-session sound. Present but muted voices remain
 visible in the stack, routing view, and Voice Motion; absent slots are hidden.
 Basic routing displays only the first two generated voices plus Lead. Fresh
 Advanced configurations show an editable Lead card, two generated voice cards,
@@ -150,7 +161,7 @@ formant adds to the enabled shared formant. Negative-formant algorithms/ranges
 are otherwise unchanged in this release.
 
 First UI activation initializes voices from current Human unless you have already
-edited or restored custom voices. Later toggles preserve custom edits. Host
+edited or restored custom voices. Later activations preserve custom edits. Host
 automation of Advanced uses stored voice settings without rewriting parameters.
 **Reset to Basic** restores current Human-derived two-voice settings and removes
 extra cards/connections, without changing activation, Mix, Width, Leveler, Chorale
@@ -176,7 +187,8 @@ of its asymmetric range.
 
 The monitor shows measured DSP snapshots: effective pan horizontally and live fine
 detune (±150 ct) vertically. Musical Pitch is shown separately in the selected
-voice readout so octave intervals do not obscure fine movement. Dot numbers/colors
+voice readout so octave intervals do not obscure fine movement. The gold **L** dot
+shows actual Lead processing/activity and selects its card. Dot numbers/colors
 are stable, brightness follows measured voice activity, and trails follow actual
 modulation. Click a dot to reveal its card; click a card to select its dot. The
 readout includes extra delay (not algorithmic latency), effective formant and gain.
@@ -295,9 +307,11 @@ including bypass, rather than an animation inferred from the curve.
 
 ### LFO and Random modulation
 
-In Routing, use **+ Modulator** at the bottom right to add Classic LFO or Random.
-The persistent bottom strip selects existing modulators. The right inspector has
-**Controls / Assignments** tabs. Up to 16 independent monophonic sources and 256
+In Routing, use **+ Modulator** above the left rail to add Classic LFO or Random.
+Waveform tiles in that vertically scrolling rail select existing modulators.
+The canvas-width bottom strip has **Controls / Assignments** tabs and horizontal
+overflow scrolling; its controls keep fixed sizes. The right inspector remains
+available at full height for the selected audio node, independently of LFO selection. Up to 16 independent monophonic sources and 256
 assignments are supported.
 
 Classic LFO provides sine/triangle/saw/square, phase skew, phase, amount and polarity.
@@ -501,6 +515,14 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.5.1:** Release CLAP/VST3 builds and all **16 focused CTest suites passed**,
+including **39 editor/state test groups**. Coverage includes compact Stack sliders,
+independent LFO/node selection, canvas-only modulation controls, inspector resizing
+and width recall without graph changes, cursor menus, effective waveshaper curves,
+and Lead snapshot publication/monitor selection. Both skins were visually reviewed.
+The long legacy `VocalStackDSP` suite was excluded; actual Bitwig listening remains
+manual validation.
 
 **1.5.0:** Release CLAP/VST3 built with MSVC 2026. All **16 focused CTest suites**
 passed, including **33 editor/state groups** covering both skins. New coverage

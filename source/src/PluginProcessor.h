@@ -227,6 +227,7 @@ public:
     bool addVoice();
     void removeVoice(size_t slot);
     std::array<VoiceSnapshot, 8> getVoiceSnapshots() const;
+    VoiceSnapshot getLeadSnapshot() const;
     void retainFxMonitor(size_t slot);
     void releaseFxMonitor(size_t slot);
     bool readFxMonitor(size_t slot, FxMonitorFrame& out) const;

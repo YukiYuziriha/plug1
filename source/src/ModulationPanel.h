@@ -149,16 +149,23 @@ public:
         for (auto* c : {&rate, &division, &phase, &depth, &shape, &smooth})
             c->slider.setDoubleClickReturnValue(true, c == &rate || c == &division || c == &depth ? 1 : c == &shape ? .5 : 0);
         content.addAndMakeVisible(waveform); content.addAndMakeVisible(retrigger); content.addAndMakeVisible(divisions); content.addAndMakeVisible(output);
+        content.addAndMakeVisible(title);
         content.addAndMakeVisible(message); message.setJustificationType(juce::Justification::topLeft);
-        rowsViewport.setViewedComponent(&rowsArea, false); rowsViewport.setScrollBarsShown(true, false); content.addAndMakeVisible(rowsViewport);
+        rowsViewport.setViewedComponent(&rowsArea, false); rowsViewport.setScrollBarsShown(false, true); content.addAndMakeVisible(rowsViewport);
         contentViewport.setViewedComponent(&content, false);
-        contentViewport.setScrollBarsShown(true, false);
+        contentViewport.setScrollBarsShown(true, true);
         juce::Component::addAndMakeVisible(contentViewport);
         detail::passiveControl(*this); startTimerHz(20);
     }
     ~ModulationPanel() override { contentViewport.setViewedComponent(nullptr, false); rowsViewport.setViewedComponent(nullptr, false); }
-    static constexpr int preferredHeight = 570;
-    void select(uint32_t id) { selected = id; refresh(); }
+    static constexpr int preferredHeight = 224;
+    void select(uint32_t id) {
+        if (selected != id) {
+            output.history.clear(); output.output = output.phase = 0;
+            contentViewport.setViewPosition(0, 0); rowsViewport.setViewPosition(0, 0);
+        }
+        selected = id; refresh();
+    }
     uint32_t selectedId() const { return selected; }
     void setNeon(bool neon) {
         this->neon = neon;
@@ -174,34 +181,40 @@ public:
     std::function<void()> onDeleted;
     void resized() override {
         contentViewport.setBounds(getLocalBounds());
-        const int height = juce::jmax(preferredHeight, getHeight());
-        const int scrollbar = height > getHeight() ? contentViewport.getScrollBarThickness() : 0;
-        content.setSize(juce::jmax(1, getWidth() - scrollbar), height);
+        // Keep control geometry stable; small windows scroll instead of shrinking knobs.
+        const int scrollbar = contentViewport.getScrollBarThickness();
+        content.setSize(juce::jmax(1160, getWidth() - scrollbar), preferredHeight - scrollbar);
+        contentViewport.setSingleStepSizes(32, 32);
         layoutContent();
     }
 private:
     void layoutContent() {
-        auto a = content.getLocalBounds().reduced(4); auto tabs = a.removeFromTop(28);
-        controlsTab.setBounds(tabs.removeFromLeft(tabs.getWidth() / 2)); assignmentsTab.setBounds(tabs);
-        a.removeFromTop(6); auto actions = a.removeFromTop(28);
-        assign.setBounds(actions.removeFromLeft(110)); remove.setBounds(actions.removeFromRight(145));
+        auto a = content.getLocalBounds().reduced(6);
+        auto header = a.removeFromTop(28);
+        title.setBounds(header.removeFromLeft(140));
+        controlsTab.setBounds(header.removeFromLeft(100)); header.removeFromLeft(4);
+        assignmentsTab.setBounds(header.removeFromLeft(110)); header.removeFromLeft(12);
+        assign.setBounds(header.removeFromLeft(100)); header.removeFromLeft(8);
+        remove.setBounds(header.removeFromLeft(145));
         a.removeFromTop(6);
+        message.setBounds(a.removeFromBottom(36));
         if (assignments) {
-            message.setBounds(a.removeFromBottom(48)); rowsViewport.setBounds(a);
-            rowsArea.setSize(juce::jmax(1, a.getWidth() - rowsViewport.getScrollBarThickness()), int(rows.size()) * 104);
-            int y = 0; for (auto& row : rows) { row->setBounds(0, y, rowsArea.getWidth(), 100); y += 104; }
+            rowsViewport.setBounds(a);
+            rowsArea.setSize(juce::jmax(a.getWidth(), int(rows.size()) * 320), 106);
+            int x = 0; for (auto& row : rows) { row->setBounds(x, 0, 312, 106); x += 320; }
             return;
         }
-        output.setBounds(a.removeFromTop(96)); a.removeFromTop(6);
-        waveform.setBounds(a.removeFromTop(26)); a.removeFromTop(5);
-        retrigger.setBounds(a.removeFromTop(26)); a.removeFromTop(5);
-        divisions.setBounds(a.removeFromTop(26)); a.removeFromTop(5);
-                auto switches = a.removeFromTop(26); sync.setBounds(switches.removeFromLeft(switches.getWidth() / 2)); bipolar.setBounds(switches);
-        auto grid = a.removeFromTop(218); int i = 0;
+        output.setBounds(a.removeFromLeft(220).withHeight(116)); a.removeFromLeft(8);
+        auto options = a.removeFromLeft(192);
+        waveform.setBounds(options.removeFromTop(26)); options.removeFromTop(4);
+        retrigger.setBounds(options.removeFromTop(26)); options.removeFromTop(4);
+        divisions.setBounds(options.removeFromTop(26)); options.removeFromTop(4);
+        auto switches = options.removeFromTop(26);
+        sync.setBounds(switches.removeFromLeft(100)); bipolar.setBounds(switches);
+        a.removeFromLeft(8);
         for (auto* c : {&rate, &division, &phase, &depth, &shape, &smooth}) {
-            c->setBounds(grid.getX() + (i % 3) * grid.getWidth() / 3, grid.getY() + (i / 3) * 109, grid.getWidth() / 3, 107); ++i;
+            c->setBounds(a.removeFromLeft(116).withHeight(116)); a.removeFromLeft(2);
         }
-        message.setBounds(a);
     }
 private:
     juce::String targetName(const juce::String& id) const {
@@ -248,6 +261,7 @@ private:
     void refresh() {
         const auto state = owner.getModulationState(); loading = true;
         for (const auto& m : state.modulators) if (m.id == selected) {
+            title.setText(modulatorName(m), juce::dontSendNotification);
             rate.slider.setValue(m.rateHz, juce::dontSendNotification); division.slider.setValue(m.division, juce::dontSendNotification);
             phase.slider.setValue(m.phase, juce::dontSendNotification); depth.slider.setValue(m.depth, juce::dontSendNotification);
             shape.slider.setValue(m.shape, juce::dontSendNotification); smooth.slider.setValue(m.smoothing, juce::dontSendNotification);
@@ -294,7 +308,7 @@ private:
         PassiveCombo waveform, retrigger, divisions;
     juce::Component content;
     juce::Viewport contentViewport;
-    juce::Label message;
+    juce::Label title, message;
     juce::Component rowsArea;
     juce::Viewport rowsViewport;
     std::vector<std::unique_ptr<AssignmentRow>> rows;

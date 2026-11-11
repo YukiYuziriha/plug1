@@ -301,7 +301,7 @@ void embeddedTabs() {
                                && !findButton(*editor, "Stack")->getToggleState(), "Routing tab selection not reflected");
                     action(*editor, "Stack");
                     pumpTimers();
-                    expect(!routing->isVisible() && advanced->isVisible() == expanded, "Stack lost drawer visibility");
+                    expect(!routing->isVisible() && advanced->isVisible(), "Stack must stay visible regardless of legacy drawer state");
                     expect(editor->getLocalBounds() == windowBounds, "Stack tab changed host window dimensions");
                     expect(findButton(*editor, "Stack")->getToggleState()
                                && !findButton(*editor, "Routing")->getToggleState(), "Stack tab selection not reflected");

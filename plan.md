@@ -4,6 +4,31 @@
 
 This document records the staged implementation plan and the subsequent control-design decisions.
 
+### 1.5.1 — routing layout and compact Stack polish
+
+Validation: Release CLAP/VST3 rebuilt; all 16 focused CTest suites passed,
+including 39 editor/state groups. Both skins visually checked. Long legacy DSP
+suite excluded; no actual Bitwig listening check.
+
+This section supersedes the historical UI requirements below:
+
+- Left, vertically scrolling LFO/Random waveform tiles, with + Modulator above.
+- Selected modulator Controls/Assignments in a canvas-width bottom strip; fixed-size
+  controls scroll horizontally rather than stretching. Node inspector remains
+  independent and full-height on the right, defaulting to 320 px (20% narrower).
+  Its left divider resizes between 320 and 480 px with saved width, without
+  topology changes, graph refitting, or inspector object reconstruction.
+- Context menus on nodes and empty canvas open at the cursor.
+- Waveshaper transfer curves follow coherent effective modulation snapshots,
+  without writing modulation into base parameters.
+- Always-visible Stack controls; remove Show Advanced, Voice stack and redundant
+  Open Routing buttons. Retain legacy Advanced host/state compatibility; generated
+  card interaction activates custom processing when necessary, not editor opening.
+- Compact 172x278 Stack cards with two columns/four rows of horizontal sliders,
+  including zero-centered bipolar fills. Node inspectors retain larger knobs.
+- Stack fits down proportionally, never enlarges controls beyond native size.
+- Lead motion/activity snapshot, gold L marker, trail, readout and card selection.
+
 ### 1.5.0 — resizing, Lead, modulation, and waveshapers
 
 **Status: implemented, validated, packaged and installed as 1.5.0.** This

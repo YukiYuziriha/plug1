@@ -396,12 +396,12 @@ void routingUiRegression() {
         vocalstack::RoutingPanel panel(owner);
         panel.addToDesktop(0);
         auto* canvas = panel.getChildComponent(0);
-        expect(canvas != nullptr && canvas->getBounds() == juce::Rectangle<int>(12, 70, 840, 644),
-               "Routing canvas must reserve the 400px inspector and bottom modulator strip");
+        expect(canvas != nullptr && canvas->getBounds() == juce::Rectangle<int>(156, 70, 772, 682),
+               "Routing canvas must reserve the left modulator rail and default 320px inspector");
         auto* addModulator = findButton(panel, "+ Modulator");
-        expect(addModulator && addModulator->getBounds() == juce::Rectangle<int>(868, 722, 400, 32)
-                   && canvas->getBottom() < addModulator->getY(),
-               "Bottom modulator strip overlaps audio canvas or inspector width changed");
+        expect(addModulator && addModulator->getBounds() == juce::Rectangle<int>(12, 72, 132, 28)
+                   && addModulator->getRight() < canvas->getX(),
+               "Modulator action must stay in the left rail outside the audio canvas");
         const auto click = [&](const char* text) {
             auto* button = findButton(panel, text);
             expect(button != nullptr && button->isEnabled(), "Unavailable routing action: " + juce::String(text));

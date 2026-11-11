@@ -158,6 +158,7 @@ void VocalEngine::reset(const Settings& requested) {
     leadMotion.time = leadMotion.pitch = leadMotion.tone = leadMotion.remaining = 0;
     leadMotion.targetTime = leadMotion.targetPitch = leadMotion.targetTone = 0;
     leadMotion.appliedPitch = leadMotion.appliedDetune = leadMotion.appliedFormant = 0;
+    leadMotion.measuredEnergy = 0;
     leadLocalBlend = 0;
     leadHarmonyRunning = settings.leadSettings.pitchSemitones != 0;
     leadPitchBlend = leadHarmonyRunning ? 1.0f : 0.0f;
@@ -194,6 +195,8 @@ void VocalEngine::reset(const Settings& requested) {
     articulationDelay.clear();
     routing.reset();
     snapshots = {};
+    leadState = {true, settings.leadSettings.enabled, leadMotion.controls.pan, 0, 0,
+        leadMotion.controls.delayMs, 0, leadMotion.controls.gainDb, 0};
     longInputEnergy = longOutputEnergy = longWeight = 0;
     normalizationDb = 0;
     leadMatch = {};
@@ -505,6 +508,17 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         sources.lead = {
             leadLocalDelay[0].read(leadMotion.delaySamples) * leadMotion.amplitude * std::min(1.0f, 1.0f - lv.pan),
             leadLocalDelay[1].read(leadMotion.delaySamples) * leadMotion.amplitude * std::min(1.0f, 1.0f + lv.pan)};
+        // Meter the actual stereo lead source after its delay, envelope and pan,
+        // before graph routing (like generated voices, independent of final Mix).
+        const float leadPower = 0.5f * (sources.lead.left * sources.lead.left
+            + sources.lead.right * sources.lead.right);
+        leadMotion.measuredEnergy = mix(leadMotion.measuredEnergy, leadPower, activityStep);
+        leadState = {true, lt.enabled, lv.pan,
+            formantBlend > 0 && leadPitchBlend > 0 ? leadMotion.appliedPitch : 0,
+            formantBlend > 0 ? leadMotion.appliedDetune : 0,
+            leadMotion.delaySamples * static_cast<float>(1000.0 / rate),
+            formantBlend > 0 ? leadMotion.appliedFormant : 0, lv.gainDb,
+            std::sqrt(std::max(0.0f, leadMotion.measuredEnergy))};
         for (size_t index = 0; index < voices.size(); ++index) {
             auto& voice = voices[index];
             const auto target = bounded(voiceTargets[index]);

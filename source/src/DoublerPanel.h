@@ -141,7 +141,10 @@ class VoiceControls final : public juce::Component {
             remove.setTooltip("Remove this stable voice slot; surviving voices are not renumbered");
             remove.onClick = [&owner, index] { owner.removeVoice(size_t(index)); };
             if (index >= 2) addAndMakeVisible(remove);
-            selectionClicks.onClick = [this] { if (onSelect) onSelect(); };
+            selectionClicks.onClick = [this, &owner, index] {
+                            if (index >= 0 && !owner.settings().advanced) owner.setAdvancedEnabled(true);
+                            if (onSelect) onSelect();
+            };
             addMouseListener(&selectionClicks, true);
             detail::passiveControl(*this);
         }
@@ -149,15 +152,21 @@ class VoiceControls final : public juce::Component {
         void resized() override {
             auto area = getLocalBounds().reduced(8);
             auto header = area.removeFromTop(25);
-            remove.setBounds(header.removeFromRight(64));
-            header.removeFromLeft(112);
-            enabled.setBounds(header.removeFromLeft(54));
+            remove.setBounds(0, 0, 0, 0);
+                        if (!compact) remove.setBounds(header.removeFromRight(64));
+                        else if (voiceSlot >= 2) remove.setBounds(getWidth() - 58, 35, 50, 18);
+            header.removeFromLeft(compact ? 70 : 112);
+            enabled.setBounds(header.removeFromLeft(44));
             area.removeFromTop(5);
             std::array<ParameterKnob*, 8> controls{&pitch, fields[3].get(), fields[4].get(), fields[0].get(),
                 fields[1].get(), fields[2].get(), fields[5].get(), fields[6].get()};
-            const int width = area.getWidth() / 4, height = area.getHeight() / 2;
+            const int columns = compact ? 2 : 4;
+            if (compact) area.removeFromTop(14);
+            const int width = area.getWidth() / columns;
+            const int height = compact ? 54 : 104;
             for (size_t i = 0; i < controls.size(); ++i)
-                controls[i]->setBounds(area.getX() + int(i % 4) * width, area.getY() + int(i / 4) * height, width, height);
+                controls[i]->setBounds(area.getX() + int(i % size_t(columns)) * width,
+                    area.getY() + int(i / size_t(columns)) * height, width, height);
         }
 
         void paint(juce::Graphics& g) override {
@@ -176,7 +185,13 @@ class VoiceControls final : public juce::Component {
             g.setColour(juce::Colour(0xffe4e9ee));
             g.drawText(voiceSlot < 0 ? "LEAD" : "VOICE", 42, 10, 66, 22, juce::Justification::centredLeft);
         }
-        void setSelected(bool value) { selected = value; repaint(); }
+        void setCompact(bool value) {
+                    compact = value;
+                    pitch.setLinear(value);
+                    for (auto& field : fields) field->setLinear(value);
+                    resized();
+                }
+                void setSelected(bool value) { selected = value; repaint(); }
         void setNeon(bool value) {
             neon = value;
             for (auto* button : std::array<juce::TextButton*, 2>{&enabled, &remove}) {
@@ -190,7 +205,7 @@ class VoiceControls final : public juce::Component {
         std::function<void()> onSelect;
     private:
         const int voiceSlot;
-        bool neon = false, selected = false;
+        bool neon = false, selected = false, compact = false;
         modulationui::Button enabled;
         juce::TextButton remove;
         ParameterKnob pitch;
@@ -208,16 +223,9 @@ class DoublerPanel final : public juce::Component {
 public:
     explicit DoublerPanel(Processor& processor) : owner(processor), lead(processor, -1) {
         setName("Advanced Doubler drawer");
-        enabled.setComponentID("advancedOn");
-        enabled.setButtonText("Voice stack");
-        enabled.setName("Advanced voice stack enabled");
-        enabled.setClickingTogglesState(true);
-        enabled.onClick = [this] { owner.setAdvancedEnabled(enabled.getToggleState()); };
-        enabled.setTooltip("Use stored voice settings instead of Basic; disabling preserves edits");
+
         reset.setButtonText("Reset to Basic");
-        openRouting.setButtonText("Open Routing");
-        openRouting.setTooltip("Open the audio graph and independent effect controls");
-        openRouting.onClick = [this] { if (onOpenRouting) onOpenRouting(); };
+
         reset.setTooltip("Restore two Basic-derived voices; unrelated modules stay unchanged");
         reset.onClick = [this] { owner.resetVoicesToBasic(); sync(); };
         add.setButtonText("+ Add voice");
@@ -228,9 +236,11 @@ public:
                     for (size_t i = 0; i < cards.size(); ++i)
                         if (!before.voiceSettings[i].present) { select(i, true); break; }
                 };
-        for (auto* button : {&enabled, &reset, &add, &openRouting}) addAndMakeVisible(*button);
+        for (auto* button : {&reset, &add}) addAndMakeVisible(*button);
         addAndMakeVisible(monitor);
-        monitor.onSelect = [this](size_t slot) { select(slot, true); };
+        monitor.onSelect = [this](size_t slot) {
+                    if (slot == VoiceMonitor::leadSlot) selectLead(true); else select(slot, true);
+                };
         viewport.setViewedComponent(&cardArea, false);
         viewport.setScrollBarsShown(false, true);
         viewport.setScrollBarThickness(12);
@@ -243,11 +253,13 @@ public:
         };
         for (size_t v = 0; v < cards.size(); ++v) {
             cards[v] = std::make_unique<VoiceControls>(owner, int(v));
-            cards[v]->onSelect = [this, v] { select(v, false); };
+            cards[v]->setCompact(true);
+                        cards[v]->onSelect = [this, v] { select(v, false); };
             cards[v]->addMouseListener(&clicks, true);
             cardArea.addAndMakeVisible(*cards[v]);
         }
-        lead.onSelect = [this] { selectLead(false); };
+        lead.setCompact(true);
+                lead.onSelect = [this] { selectLead(false); };
         lead.addMouseListener(&clicks, true);
         cardArea.addAndMakeVisible(lead);
         sync();
@@ -261,7 +273,7 @@ public:
     }
     void sync() {
         const auto settings = owner.settings();
-        enabled.setToggleState(settings.advanced, juce::dontSendNotification);
+
         bool changed = false;
         int count = 0;
         for (size_t i = 0; i < cards.size(); ++i) {
@@ -275,19 +287,19 @@ public:
         if (selectedSlot < 8 && !settings.voiceSettings[selectedSlot].present)
             for (size_t i = 0; i < cards.size(); ++i)
                 if (settings.voiceSettings[i].present) { select(i, false); break; }
-        monitor.update(owner.getVoiceSnapshots());
+        monitor.update(owner.getVoiceSnapshots(), owner.getLeadSnapshot());
     }
     void setNeon(bool neon) {
-        for (auto* button : {&enabled, &reset, &add, &openRouting}) {
+        for (auto* button : {&reset, &add}) {
             button->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
             button->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
         }
-        openRouting.setColour(juce::TextButton::textColourOffId, juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b));
+
         monitor.setNeon(neon);
         lead.setNeon(neon);
         for (auto& card : cards) card->setNeon(neon);
     }
-    std::function<void()> onOpenRouting;
+
     std::function<void(int)> onVoiceSelected;
     // Mirroring Routing selection must not emit another selection request.
     void selectVoice(int slot, bool reveal = true, bool notify = true) {
@@ -295,20 +307,18 @@ public:
         else if (slot < 8) select(size_t(slot), reveal, notify);
     }
     void resized() override {
-        enabled.setBounds(0, 0, 164, 26);
+
         auto actions = getLocalBounds().removeFromTop(26);
         reset.setBounds(actions.removeFromRight(116));
         actions.removeFromRight(12);
-        openRouting.setBounds(actions.removeFromRight(128));
-        actions.removeFromRight(8);
         add.setBounds(actions.removeFromRight(116));
         monitor.setBounds(0, 32, getWidth(), 100);
         viewport.setBounds(0, 140, getWidth(), juce::jmax(0, getHeight() - 140));
-        lead.setBounds(0, 0, 290, 278);
-        int x = 298;
+        lead.setBounds(0, 0, 172, 278);
+        int x = 180;
         for (auto& card : cards) if (card->isVisible()) {
-            card->setBounds(x, 0, 290, 278);
-            x += 298;
+            card->setBounds(x, 0, 172, 278);
+            x += 180;
         }
         cardArea.setSize(juce::jmax(getWidth(), x - 8), 278);
     }
@@ -323,7 +333,8 @@ private:
         if (notify && onVoiceSelected) onVoiceSelected(int(slot));
     }
     void selectLead(bool reveal, bool notify = true) {
-        selectedSlot = 8;
+        selectedSlot = VoiceMonitor::leadSlot;
+        monitor.select(VoiceMonitor::leadSlot);
         lead.setSelected(true);
         for (auto& card : cards) card->setSelected(false);
         if (reveal) viewport.setViewPosition(0, 0);
@@ -331,7 +342,7 @@ private:
     }
     Processor& owner;
     size_t selectedSlot = 0;
-    juce::TextButton enabled, reset, add, openRouting;
+    juce::TextButton reset, add;
     VoiceMonitor monitor;
     juce::Component cardArea;
     juce::Viewport viewport;

@@ -128,10 +128,7 @@ Editor::Editor(Processor& processor)
         paste.setButtonText(owner.pasteSettings(SystemClipboard::getTextFromClipboard()) ? "Pasted" : "Invalid");
         feedbackTicks = 48;
     };
-    drawer.setName("Show Advanced");
-    drawer.setTooltip("Show or hide voice controls without changing Advanced Doubler activation or sound");
-    drawer.onClick = [this] { owner.setAdvancedVisible(!owner.isAdvancedVisible()); syncDrawer(); };
-    layoutCanvas.addAndMakeVisible(drawer);
+    // Stack controls are always visible; legacy activation/state remains host-compatible.
     stackTab.setButtonText("Stack");
     stackTab.setTooltip("Show the vocal stack controls");
     stackTab.onClick = [this] { routingVisible = false; syncDrawer(); };
@@ -141,7 +138,7 @@ Editor::Editor(Processor& processor)
     layoutCanvas.addAndMakeVisible(stackTab);
     layoutCanvas.addAndMakeVisible(routingTab);
     addChildComponent(routingPanel);
-    advancedPanel.onOpenRouting = [this] { openRouting(); };
+
     layoutCanvas.addChildComponent(advancedPanel);
     advancedPanel.onVoiceSelected = [this](int slot) {
         selectedVoiceSlot = slot;
@@ -164,7 +161,7 @@ Editor::Editor(Processor& processor)
     syncDrawer();
     applyTheme();
     setSize(juce::jlimit(940, 2400, int(savedLayout.getProperty("editorWidth", editorWidth))),
-            juce::jlimit(560, 2200, int(savedLayout.getProperty("editorHeight", owner.isAdvancedVisible() ? editorHeight + drawerHeight : 700))));
+            juce::jlimit(560, 2200, int(savedLayout.getProperty("editorHeight", editorHeight + drawerHeight))));
     restoringWindow = false;
     bypassUiLink = std::make_unique<ParameterAttachment>(*owner.parameters.getParameter("bypass"),
         [this](float value) { updateBypassControls(value); }, nullptr);
@@ -211,7 +208,7 @@ void Editor::applyTheme() {
         knob.setColour(Slider::textBoxHighlightColourId, rgb(style.flash ? 0x34496a : 0x4b5175));
         knob.repaint();
     }
-    for (auto* button : {&theme, &reset, &copy, &paste, &drawer, &stackTab, &routingTab}) {
+    for (auto* button : {&theme, &reset, &copy, &paste, &stackTab, &routingTab}) {
         button->setColour(TextButton::textColourOffId, foreground);
         button->setColour(TextButton::textColourOnId, rgb(0x17171c));
         button->repaint();
@@ -229,8 +226,8 @@ void Editor::applyTheme() {
 
 void Editor::resized() {
     if (getWidth() <= 0 || getHeight() <= 0) return;
-    const int designHeight = editorHeight + (owner.isAdvancedVisible() ? drawerHeight : 0);
-    layoutScale = routingVisible ? 1.0f : jmin(float(getWidth()) / float(editorWidth), float(getHeight()) / float(designHeight));
+    const int designHeight = editorHeight + drawerHeight;
+    layoutScale = routingVisible ? 1.0f : jmin(1.0f, jmin(float(getWidth()) / float(editorWidth), float(getHeight()) / float(designHeight)));
     layoutOffset = routingVisible ? Point<float>() : Point<float>((float(getWidth()) - editorWidth * layoutScale) * 0.5f,
         (float(getHeight()) - designHeight * layoutScale) * 0.5f);
     layoutCanvas.setTransform(AffineTransform());
@@ -252,7 +249,7 @@ void Editor::resized() {
     copy.setBounds(100, 306, 105, 23);
     paste.setBounds(215, 306, 64, 23);
     meterPanel.setBounds(678, 76, 244, 246);
-    drawer.setBounds(300, 306, 144, 23);
+
     stackTab.setBounds(382, 26, 70, 26);
     routingTab.setBounds(458, 26, 78, 26);
     routingPanel.setBounds(18, 100, jmax(0, getWidth() - 36), jmax(0, getHeight() - 118));
@@ -264,20 +261,20 @@ void Editor::resized() {
 }
 
 void Editor::syncDrawer() {
-    const bool visible = owner.isAdvancedVisible();
+
     for (auto& knob : knobs) knob.setVisible(!routingVisible);
     for (auto& label : labels) label.setVisible(!routingVisible);
     for (size_t i = 0; i < switches.size() - 1; ++i)
         switches[i].setVisible(!routingVisible);
-    for (auto* button : {&theme, &reset, &copy, &paste, &drawer})
+    for (auto* button : {&theme, &reset, &copy, &paste})
         button->setVisible(!routingVisible);
     meterPanel.setVisible(!routingVisible);
     choralePanel.setVisible(!routingVisible);
-    advancedPanel.setVisible(!routingVisible && visible);
+    advancedPanel.setVisible(!routingVisible);
     routingPanel.setVisible(routingVisible);
     stackTab.setToggleState(!routingVisible, dontSendNotification);
     routingTab.setToggleState(routingVisible, dontSendNotification);
-    drawer.setButtonText(visible ? "Hide Advanced" : "Show Advanced");
+
     if (!routingVisible) {
         const auto tree = owner.getRoutingLayout();
         selectedVoiceSlot = jlimit(-1, 7, int(tree.getProperty("selectedVoiceSlot", selectedVoiceSlot)));
@@ -296,7 +293,7 @@ void Editor::updateBypassControls(float bypassValue) {
 }
 
 void Editor::timerCallback() {
-    if (advancedPanel.isVisible() != (!routingVisible && owner.isAdvancedVisible()))
+    if (advancedPanel.isVisible() != !routingVisible)
         syncDrawer();
     advancedPanel.sync();
     if (owner.isFlash() != style.flash)

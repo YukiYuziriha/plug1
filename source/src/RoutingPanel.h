@@ -31,15 +31,91 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
     private:
         RoutingPanel& panel;
     } canvas;
+    class InspectorDivider final : public juce::Component {
+    public:
+        explicit InspectorDivider(RoutingPanel& p) : panel(p) {
+            setName("Resize node inspector");
+            setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
+            detail::passiveControl(*this);
+        }
+        void mouseDown(const juce::MouseEvent&) override {
+            startWidth = panel.inspector.getWidth();
+            panel.resizingInspector = true;
+        }
+        void mouseDrag(const juce::MouseEvent& e) override {
+            const int width = panel.constrainedInspectorWidth(startWidth - e.getDistanceFromDragStartX());
+            if (width == panel.inspector.getWidth()) return;
+            panel.desiredInspectorWidth = juce::jlimit(320, 480, width);
+            panel.resized();
+            panel.repaint();
+        }
+        void mouseUp(const juce::MouseEvent&) override {
+            panel.resizingInspector = false;
+            panel.saveInspectorWidth();
+        }
+    private:
+        RoutingPanel& panel;
+        int startWidth = 320;
+    };
+    class ModulatorTile final : public juce::TextButton {
+    public:
+        explicit ModulatorTile(const Modulator& m) : TextButton(modulatorName(m)), model(m) {}
+        Modulator model;
+        float phase = 0;
+        std::vector<float> history;
+        void paintButton(juce::Graphics& g, bool hovered, bool down) override {
+            auto bounds = getLocalBounds().toFloat().reduced(1);
+            const auto accent = findColour(juce::TextButton::buttonOnColourId);
+            g.setColour(findColour(juce::TextButton::buttonColourId).brighter(hovered || down ? .15f : 0));
+            g.fillRoundedRectangle(bounds, 5);
+            g.setColour(getToggleState() ? accent : accent.withAlpha(.25f));
+            g.drawRoundedRectangle(bounds, 5, getToggleState() ? 2.0f : 1.0f);
+            g.setColour(findColour(juce::TextButton::textColourOffId));
+            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            g.drawText(getButtonText(), bounds.removeFromTop(22), juce::Justification::centred);
+            const auto plot = bounds.reduced(7, 6);
+            g.setColour(accent.withAlpha(.2f));
+            g.drawHorizontalLine(int(plot.getCentreY()), plot.getX(), plot.getRight());
+            juce::Path path;
+            const bool random = model.type == ModulatorType::random;
+            const size_t count = random ? history.size() : 65;
+            for (size_t i = 0; i < count; ++i) {
+                const float t = float(i) / float(random ? 63 : 64);
+                float value = random ? history[i] : 0;
+                if (!random) {
+                    const float pivot = .01f + .98f * model.shape;
+                    const float x = t < pivot ? .5f * t / pivot : .5f + .5f * (t - pivot) / (1 - pivot);
+                    switch (model.waveform) {
+                        case ModulationWaveform::sine: value = std::sin(juce::MathConstants<float>::twoPi * x); break;
+                        case ModulationWaveform::triangle: value = 1 - 4 * std::abs(x - .5f); break;
+                        case ModulationWaveform::saw: value = 2 * x - 1; break;
+                        case ModulationWaveform::square: value = x < .5f ? 1.0f : -1.0f; break;
+                    }
+                    if (!model.bipolar) value = .5f * (value + 1);
+                    value *= model.depth;
+                }
+                const float x = plot.getX() + t * plot.getWidth();
+                const float y = plot.getCentreY() - value * plot.getHeight() * .45f;
+                if (i == 0) path.startNewSubPath(x, y); else path.lineTo(x, y);
+            }
+            g.setColour(accent); g.strokePath(path, juce::PathStrokeType(1.5f));
+            if (!random) {
+                g.setColour(accent.withAlpha(.6f));
+                const float x = plot.getX() + juce::jlimit(0.0f, 1.0f, phase) * plot.getWidth();
+                g.drawLine(x, plot.getY(), x, plot.getBottom(), 1);
+            }
+        }
+    };
 public:
-    explicit RoutingPanel(Processor& processor) : canvas(*this), owner(processor), modulationPanel(processor) {
+    explicit RoutingPanel(Processor& processor) : canvas(*this), owner(processor), inspectorDivider(*this), modulationPanel(processor) {
         setName("Audio routing canvas and inspector");
-        setSize(1280, 800);
         addAndMakeVisible(canvas);
         addAndMakeVisible(inspector);
+        addAndMakeVisible(inspectorDivider);
+        addChildComponent(modulationPanel);
         addAndMakeVisible(status);
                 addAndMakeVisible(modulatorViewport); modulatorViewport.setViewedComponent(&modulatorStrip, false);
-                modulatorViewport.setScrollBarsShown(false, true);
+                modulatorViewport.setScrollBarsShown(true, false);
                 addAndMakeVisible(addModulator); addModulator.setButtonText("+ Modulator");
                 addModulator.onClick = [this] { showModulatorMenu(); };
                 addChildComponent(assignmentBanner);
@@ -47,7 +123,7 @@ public:
                 modulationPanel.onDeleted = [this] {
                             selectedModulator = 0;
                             if (!modulationui::selectedModulator(owner)) modulationui::selectModulator(owner, 0);
-                            rebuildModulatorStrip(); rebuildInspector(); saveLayout();
+                            rebuildModulatorStrip(); updateModulationPanel(); saveLayout();
                         };
                 modulationPanel.onReveal = [this](const juce::String& id) { revealTarget(id); };
         status.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
@@ -55,7 +131,7 @@ public:
         inspectorTitle.setTooltip("Double-click a machine title to rename it. Stable voice/parameter identities do not change.");
         inspectorTitle.onTextChange = [this] {
             const auto* selected = node(selectedNode);
-            if (!selected || selectedModulator) return;
+            if (!selected) return;
             const auto name = inspectorTitle.getText().trim().substring(0, 48);
             remember();
             if (name.isEmpty()) names.erase(selectedNode); else names[selectedNode] = name;
@@ -94,6 +170,8 @@ public:
         setNeon(owner.isFlash());
         detail::passiveControl(*this);
         refreshAssignmentBanner();
+        // setSize invokes resized(); wait until the viewports and saved layout are ready.
+        setSize(1280, 800);
         startTimerHz(15);
     }
     ~RoutingPanel() override { toneViewport.setViewedComponent(nullptr, false); modulatorViewport.setViewedComponent(nullptr, false); nodeValue.setLookAndFeel(nullptr); }
@@ -129,7 +207,7 @@ public:
     void paint(juce::Graphics& g) override {
         g.fillAll(juce::Colour(neon ? 0xff090d17 : 0xff292b2a));
         g.setColour(juce::Colour(neon ? 0xff2b3a53 : 0xff515850));
-        g.drawVerticalLine(inspector.getX() - 8, 46.0f, float(getHeight() - 36));
+        g.drawVerticalLine(inspectorDivider.getBounds().getCentreX(), 46.0f, float(inspector.getBottom()));
         g.setColour(juce::Colour(0xffaebaca));
         g.setFont(juce::Font(juce::FontOptions(11.5f)));
         g.drawText("Output drag: move / empty drop disconnects  |  Ctrl/Cmd+drag output: source  |  Wheel: zoom  |  Alt/middle drag: pan", 12, 43, getWidth() - 24, 22, juce::Justification::centredLeft);
@@ -140,14 +218,21 @@ public:
             const int width = b == &zoomIn || b == &zoomOut ? 30 : b == &remove ? 102 : b == &bypass ? 90 : 66;
             b->setBounds(toolbar.removeFromLeft(width)); toolbar.removeFromLeft(6);
         }
-        const int inspectorWidth = 400;
-        canvas.setBounds(12, 70, juce::jmax(100, getWidth() - inspectorWidth - 40), juce::jmax(100, getHeight() - 156));
+        const int inspectorWidth = constrainedInspectorWidth(desiredInspectorWidth);
+        const int railWidth = 132;
+        const int bottom = getHeight() - 40;
+        const int stripTop = selectedModulator ? bottom - ModulationPanel::preferredHeight : bottom;
         const int x = getWidth() - inspectorWidth - 12;
+        canvas.setBounds(railWidth + 24, 70, juce::jmax(100, x - railWidth - 44), juce::jmax(0, stripTop - 78));
         assignmentBanner.setBounds(x, 44, inspectorWidth, 27);
-        inspector.setBounds(x, 76, inspectorWidth, juce::jmax(100, getHeight() - 162));
-        addModulator.setBounds(x, getHeight() - 78, inspectorWidth, 32);
-        modulatorViewport.setBounds(12, getHeight() - 80, juce::jmax(100, x - 32), 36);
-        modulatorStrip.setSize(juce::jmax(modulatorViewport.getWidth(), int(modulatorButtons.size()) * 112), 32);
+        inspector.setBounds(x, 76, inspectorWidth, juce::jmax(0, bottom - 84));
+        inspectorDivider.setBounds(x - 13, 44, 10, juce::jmax(0, bottom - 52));
+        addModulator.setBounds(12, 72, railWidth, 28);
+        modulatorViewport.setBounds(12, 106, railWidth, juce::jmax(0, bottom - 106));
+        modulatorStrip.setSize(railWidth - modulatorViewport.getScrollBarThickness(), int(modulatorButtons.size()) * 88);
+        for (size_t i = 0; i < modulatorButtons.size(); ++i)
+            modulatorButtons[i]->setBounds(0, int(i) * 88, modulatorStrip.getWidth(), 82);
+        modulationPanel.setBounds(railWidth + 24, stripTop, canvas.getWidth(), ModulationPanel::preferredHeight);
         status.setBounds(8, getHeight() - 33, getWidth() - 16, 28);
         layoutInspector();
     }
@@ -156,7 +241,7 @@ public:
     void selectVoice(int slot) {
         for (const auto& n : graph.nodes)
             if ((slot < 0 && n.type == NodeType::lead) || (n.type == NodeType::voice && int(n.voiceSlot) == slot)) {
-                selectedNode = n.id; selectedLink = -1; selectedModulator = 0;
+                selectedNode = n.id; selectedLink = -1;
                 rebuildInspector(); saveLayout(); canvas.repaint(); return;
             }
     }
@@ -164,6 +249,20 @@ public:
         std::function<void(int)> onSelectVoice;
     std::function<void(const juce::String&)> onRevealParameter;
 private:
+    int constrainedInspectorWidth(int desired) const {
+        // Match resized(): rail 132 + margins/gap 56 + canvas minimum 100.
+        const int available = juce::jmax(0, getWidth() - 288);
+        return juce::jmin(juce::jlimit(320, 480, desired), available);
+    }
+    void saveInspectorWidth() {
+        auto saved = owner.getRoutingLayout();
+        const bool currentLayout = saved.toXmlString() == lastLayoutSignature;
+        if (!saved.isValid()) saved = juce::ValueTree("RoutingLayout");
+        saved.setProperty("inspectorWidth", desiredInspectorWidth, nullptr);
+        owner.setRoutingLayout(saved);
+        // Do not hide a pending external layout change from the timer.
+        if (currentLayout) lastLayoutSignature = saved.toXmlString();
+    }
     void refreshAssignmentBanner() {
         if (isShowing() && juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::escapeKey)) owner.endModulationAssignment();
         juce::String text;
@@ -181,8 +280,8 @@ private:
             m.type = result == 1 ? ModulatorType::lfo : ModulatorType::random;
             state.modulators.push_back(m); juce::String error;
             if (!safe->owner.setModulationState(state, error)) { safe->error = error; safe->showStatus(); return; }
-            safe->selectedModulator = m.id; safe->selectedNode = 0; safe->selectedLink = -1;
-            safe->rebuildModulatorStrip(); safe->rebuildInspector(); safe->saveLayout();
+            safe->selectedModulator = m.id;
+            safe->rebuildModulatorStrip(); safe->updateModulationPanel(); safe->saveLayout();
         });
     }
     void rebuildModulatorStripIfChanged() {
@@ -192,22 +291,34 @@ private:
         modulatorSignature = signature; rebuildModulatorStrip();
         if (selectedModulator) {
             bool found = false; for (const auto& m : owner.getModulationState().modulators) found |= m.id == selectedModulator;
-            if (!found) { selectedModulator = 0; rebuildInspector(); }
+            if (!found) { selectedModulator = 0; updateModulationPanel(); saveLayout(); }
         }
     }
     void rebuildModulatorStrip() {
         modulatorButtons.clear();
         for (const auto& m : owner.getModulationState().modulators) {
-            auto button = std::make_unique<juce::TextButton>(modulatorName(m));
+            auto button = std::make_unique<ModulatorTile>(m);
             button->setTooltip("Select modulator controls / assignments; audio routing selection never cancels Assign");
-            button->setBounds(int(modulatorButtons.size()) * 112, 0, 108, 30);
+
             button->onClick = [this, id = m.id] {
-                selectedModulator = id; selectedNode = 0; selectedLink = -1;
-                rebuildInspector(); saveLayout(); canvas.repaint();
+                selectedModulator = id;
+                updateModulationPanel(); saveLayout();
             };
             detail::passiveControl(*button); modulatorStrip.addAndMakeVisible(*button); modulatorButtons.push_back(std::move(button));
         }
         resized(); setNeon(neon);
+    }
+    void updateModulationPanel() {
+        const auto state = owner.getModulationState();
+        bool found = false;
+        for (const auto& m : state.modulators) found |= m.id == selectedModulator;
+        if (!found) selectedModulator = 0;
+        if (selectedModulator) modulationui::selectModulator(owner, selectedModulator);
+        if (modulationPanel.selectedId() != selectedModulator) modulationPanel.select(selectedModulator);
+        modulationPanel.setVisible(selectedModulator != 0);
+        for (auto& tile : modulatorButtons)
+            tile->setToggleState(tile->model.id == selectedModulationId(), juce::dontSendNotification);
+        resized(); repaint();
     }
     void revealTarget(const juce::String& id) {
         if (id.startsWith("voice")) { selectVoice(id.substring(5).getIntValue() - 1); }
@@ -218,7 +329,7 @@ private:
                 const bool legacyFx = id.startsWith("chorale") && n.type == NodeType::chorale && n.mainControls;
                 const bool mix = n.type == NodeType::mix && (n.mainControls ? id == "double" : id == localMixParameterId(n.id));
                 const bool output = id == "outputGain" && n.type == NodeType::output;
-                if (fx || legacyFx || mix || output) { selectedModulator = 0; selectedNode = n.id; selectedLink = -1; rebuildInspector(); break; }
+                if (fx || legacyFx || mix || output) { selectedNode = n.id; selectedLink = -1; rebuildInspector(); break; }
             }
         }
         if (tonePanel) tonePanel->revealParameter(id);
@@ -484,8 +595,7 @@ private:
         }
     }
     void canvasDown(const juce::MouseEvent& e) {
-        selectedModulator = 0;
-                pointer = e.position; dragStart = e.position; startPan = pan;
+        pointer = e.position; dragStart = e.position; startPan = pan;
         draggingNode = 0; connecting = 0; connectingPin = 0; panning = false; rewiringLink = -1; rewiringSource = false;
         const auto world = toWorld(e.position);
         if (e.mods.isMiddleButtonDown() || e.mods.isAltDown()) { panning = true; return; }
@@ -637,6 +747,7 @@ private:
         auto tree = owner.getRoutingLayout().createCopy();
         if (!tree.isValid()) tree = juce::ValueTree("RoutingLayout");
         for (int i = tree.getNumChildren(); --i >= 0;) if (tree.getChild(i).hasType("NODE")) tree.removeChild(i, nullptr);
+        tree.setProperty("inspectorWidth", desiredInspectorWidth, nullptr);
         tree.setProperty("selectedNode", int(selectedNode), nullptr);
         tree.setProperty("selectedModulator", int(selectedModulator), nullptr);
         if (const auto* n = node(selectedNode); n && (n->type == NodeType::voice || n->type == NodeType::lead))
@@ -650,14 +761,19 @@ private:
         }
         return tree;
     }
-    void loadLayout(const juce::ValueTree& tree) {
+    void loadLayout(const juce::ValueTree& tree, bool restoreInspectorWidth = true) {
+        if (restoreInspectorWidth)
+            desiredInspectorWidth = juce::jlimit(320, 480, int(tree.getProperty("inspectorWidth", 320)));
         positions.clear(); names.clear();
         selectedNode = uint32_t(int(tree.getProperty("selectedNode", 0)));
         selectedModulator = uint32_t(int(tree.getProperty("selectedModulator", 0)));
         const int voice = int(tree.getProperty("selectedVoiceSlot", -2));
         if (voice != lastSelectedVoiceSlot && voice >= -1 && voice < 8) {
-            lastSelectedVoiceSlot = voice; selectedModulator = 0;
-            for (const auto& n : graph.nodes)
+            // On reopen retain a saved FX/mixer selection alongside the modulator.
+            // A subsequent Stack-card selection still reveals that voice here.
+            const bool revealVoice = lastSelectedVoiceSlot != -2 || !node(selectedNode);
+            lastSelectedVoiceSlot = voice;
+            if (revealVoice) for (const auto& n : graph.nodes)
                 if ((voice == -1 && n.type == NodeType::lead) || (n.type == NodeType::voice && int(n.voiceSlot) == voice)) selectedNode = n.id;
         }
         zoom = juce::jlimit(0.35f, 1.8f, float(tree.getProperty("zoom", 0.72f)));
@@ -673,6 +789,7 @@ private:
                 if (alias.isNotEmpty()) names[std::uint32_t(id)] = alias;
             }
         }
+        resized();
     }
     void ensurePositions() {
         int extra = 0;
@@ -730,7 +847,7 @@ private:
         const auto s = from.back(); from.pop_back();
         current.fxOnUndoMask = s.fxOnUndoMask;
         to.push_back(current);
-        graph = s.graph; loadLayout(s.layout); selectedNode = 0; selectedLink = -1;
+        graph = s.graph; loadLayout(s.layout, false); selectedNode = 0; selectedLink = -1;
         if (!publish(false)) { from.push_back(s); to.pop_back(); rebuildInspector(); return; }
         for (size_t slot = 0; slot < 16; ++slot) {
             const auto id = slot == 0 ? 12u : unsigned(slot + 99);
@@ -829,7 +946,7 @@ private:
         menu.addItem(1, "Delete node", n && n->type != NodeType::output);
         menu.addItem(2, "Toggle FX bypass", n && isEffect(n->type));
         juce::Component::SafePointer<RoutingPanel> safe(this);
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&canvas), [safe](int result) {
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&canvas).withMousePosition(), [safe](int result) {
             if (!safe) return;
             if (result == 1) safe->deleteSelection(); else if (result == 2) safe->toggleBypass();
         });
@@ -854,7 +971,7 @@ private:
             menu.addItem(20 + i, "Restore Voice " + juce::String(i + 1) + " source", room && !hasSource(i));
         menu.addItem(40, "Restore main Chorale", room && !node(12) && effects < 16);
         juce::Component::SafePointer<RoutingPanel> safe(this);
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&add), [safe](int result) { if (safe && result) safe->addNode(result); });
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&add).withMousePosition(), [safe](int result) { if (safe && result) safe->addNode(result); });
     }
     bool hasSource(int slot) const {
         for (const auto& n : graph.nodes)
@@ -904,19 +1021,11 @@ private:
     }
     void rebuildInspector() {
         validateSelection();
-        inspectorTitle.setEditable(false, selectedModulator == 0 && node(selectedNode) != nullptr, false);
+        updateModulationPanel();
+        inspectorTitle.setEditable(false, node(selectedNode) != nullptr, false);
         toneViewport.setViewedComponent(nullptr, false);
         tonePanel.reset(); voiceControls.reset(); mixControl.reset(); fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
-                if (selectedModulator) {
-                    modulationui::selectModulator(owner, selectedModulator);
-                    inspector.addAndMakeVisible(inspectorTitle);
-                    for (const auto& m : owner.getModulationState().modulators) if (m.id == selectedModulator)
-                        inspectorTitle.setText(modulatorName(m), juce::dontSendNotification);
-                    modulationPanel.select(selectedModulator);
-                    inspector.addAndMakeVisible(toneViewport);
-                    toneViewport.setScrollBarsShown(true, false); toneViewport.setViewedComponent(&modulationPanel, false);
-                    setNeon(neon); layoutInspector(); return;
-                }
+
         inspector.addAndMakeVisible(inspectorTitle); inspector.addAndMakeVisible(inspectorInfo);
         inspectorTitle.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
         inspectorInfo.setColour(juce::Label::textColourId, juce::Colour(0xffaebaca));
@@ -1030,12 +1139,12 @@ private:
     }
     void layoutInspector() {
         inspectorTitle.setBounds(0, 0, inspector.getWidth(), 30);
-                if (selectedModulator || voiceControls) {
+                if (voiceControls) {
                     const int top = 36;
                     toneViewport.setBounds(0, top, inspector.getWidth(), juce::jmax(0, inspector.getHeight() - top));
-                    auto* content = selectedModulator ? static_cast<juce::Component*>(&modulationPanel) : static_cast<juce::Component*>(voiceControls.get());
+                    auto* content = voiceControls.get();
                     content->setSize(juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness()),
-                                     juce::jmax(selectedModulator ? ModulationPanel::preferredHeight : 390, toneViewport.getHeight()));
+                                     390);
                     return;
                 }
         fxOn.setBounds(4, 34, 160, 26);
@@ -1045,13 +1154,16 @@ private:
             const int footerHeight = crossover ? 79 : 28;
             const int available = juce::jmax(0, inspector.getHeight() - 68 - footerHeight);
             toneViewport.setBounds(0, 68, inspector.getWidth(), available);
-            tonePanel->setBounds(0, 0, juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness()), juce::jmax(available, ToneEffectPanel::preferredHeight));
+            tonePanel->setBounds(0, 0, juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness()), ToneEffectPanel::preferredHeight);
             inspectorInfo.setFont(juce::Font(juce::FontOptions(11.0f)));
             inspectorInfo.setBounds(0, 68 + available + 4, inspector.getWidth(), footerHeight - 4);
             return;
         }
         int y = 76;
-        for (size_t i = 0; i < fields.size(); ++i) fields[i]->setBounds(int(i % 3) * 128, y + int(i / 3) * 104, 124, 100);
+        const int columns = juce::jmax(1, juce::jmin(3, int(fields.size())));
+        const int fieldWidth = inspector.getWidth() / columns;
+        for (size_t i = 0; i < fields.size(); ++i)
+            fields[i]->setBounds(int(i % size_t(columns)) * fieldWidth, y + int(i / size_t(columns)) * 104, juce::jmax(0, fieldWidth - 4), 100);
         if (!fields.empty()) y += int((fields.size() + 2) / 3) * 104;
         nodeValue.setBounds(0, 40, 140, 110);
         if (mixControl) mixControl->setBounds(0, 40, 140, 110);
@@ -1068,10 +1180,22 @@ private:
     }
     void timerCallback() override {
         refreshAssignmentBanner();
+        // A divider gesture changes bounds only; defer external rebuilds until release.
+        if (resizingInspector) return;
         rebuildModulatorStripIfChanged();
         const auto modulators = owner.getModulationState().modulators;
-        for (size_t i = 0; i < modulatorButtons.size() && i < modulators.size(); ++i)
-            modulatorButtons[i]->setToggleState(modulators[i].id == selectedModulationId(), juce::dontSendNotification);
+        const auto snapshot = owner.getModulationSnapshot();
+        for (size_t i = 0; i < modulatorButtons.size() && i < modulators.size(); ++i) {
+            auto& tile = *modulatorButtons[i];
+            tile.model = modulators[i];
+            tile.setToggleState(tile.model.id == selectedModulationId(), juce::dontSendNotification);
+            if (snapshot.consistent) for (const auto& m : snapshot.modulators) if (m.id == tile.model.id) {
+                tile.phase = m.phase;
+                tile.history.push_back(m.output);
+                if (tile.history.size() > 64) tile.history.erase(tile.history.begin());
+            }
+            tile.repaint();
+        }
         modulationui::refreshWithSelection(inspector, owner, owner.getModulationSnapshot(), owner.getModulationState(), owner.modulationAssignmentId());
         // Host presence, bank, band-count and On changes apply even during a
         // cable gesture. Cancel it rather than dropping onto a now-hidden pin.
@@ -1124,6 +1248,9 @@ private:
     juce::TextButton add, undo, redo, remove, bypass, fit, zoomOut, zoomIn, disconnect;
         modulationui::Button fxOn;
     juce::Component inspector;
+    InspectorDivider inspectorDivider;
+    int desiredInspectorWidth = 320;
+    bool resizingInspector = false;
     juce::Label inspectorTitle, inspectorInfo, status;
     modulationui::RotaryStyle nodeStyle;
     juce::Slider nodeValue;
@@ -1140,7 +1267,7 @@ private:
         juce::Viewport modulatorViewport;
         juce::TextButton addModulator, assignmentBanner;
             juce::BubbleMessageComponent revealBubble;
-        std::vector<std::unique_ptr<juce::TextButton>> modulatorButtons;
+        std::vector<std::unique_ptr<ModulatorTile>> modulatorButtons;
     std::unique_ptr<ToneEffectPanel> tonePanel;
     juce::Viewport toneViewport;
 };

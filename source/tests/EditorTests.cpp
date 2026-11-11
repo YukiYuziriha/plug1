@@ -535,7 +535,7 @@ void editorSkin(bool neon) {
     auto& canvas = *vocalstack::toneUiTests::slider(*editor, "outputGain").getParentComponent();
     for (auto* child : canvas.getChildren()) {
         if (!child->isVisible() || dynamic_cast<juce::TooltipWindow*>(child) != nullptr)
-            continue; // Hidden drawer and transient tooltip do not participate in collapsed layout.
+            continue; // Hidden panels and transient tooltips do not participate in layout.
         const auto description = skin + " / " + componentName(*child);
         expect(!child->getBounds().isEmpty(), description + " has empty bounds");
         expect(canvas.getLocalBounds().contains(child->getBounds()), description + " lies outside the design canvas");
@@ -600,16 +600,15 @@ void editorSkin(bool neon) {
     // Keep injection and capture synchronous so the editor's timer cannot replace the synthetic snapshot.
     meters->setMeters(syntheticMeters());
     saveSnapshot(*editor, neon ? "editor-neon.png" : "editor-device.png");
-    const int collapsedHeight = editor->getHeight();
+    const int windowHeight = editor->getHeight();
     const int windowWidth = editor->getWidth();
-    auto* show = findButton(*editor, "Show Advanced");
-    expect(show != nullptr, "Missing drawer visibility control");
-    show->onClick();
-    expect(owner.isAdvancedVisible() && !owner.settings().advanced, "Showing drawer changed activation");
-    expect(editor->isResizable() && collapsedHeight == 700 && windowWidth == 940,
-           "Fresh editor must be resizable at 940x700");
-    expect(editor->getWidth() == windowWidth && editor->getHeight() == collapsedHeight && canvas.getHeight() == 872,
-           "Drawer must expand the design canvas without resizing the host window");
+    for (const auto* obsolete : {"Show Advanced", "Hide Advanced", "Voice stack", "Open Routing"})
+        expect(findButton(*editor, obsolete) == nullptr, "Obsolete Stack action remains: " + juce::String(obsolete));
+    expect(!owner.settings().advanced, "Always-visible Stack changed legacy activation");
+    expect(editor->isResizable() && windowHeight == 872 && windowWidth == 940,
+           "Fresh editor must be resizable at 940x872");
+    expect(canvas.getHeight() == 872 && canvas.getTransform().isIdentity(),
+           "Fresh Stack must use its fixed unscaled 872px design");
     int advancedSliders = 0, advancedButtons = 0, choraleSliders = 0, choraleButtons = 0;
     for (auto* child : canvas.getChildren()) {
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
@@ -617,7 +616,7 @@ void editorSkin(bool neon) {
         if (dynamic_cast<vocalstack::ChoralePanel*>(child))
             checkDrawerControls(owner, *child, choraleSliders, choraleButtons);
     }
-    expect(advancedSliders == 24 && advancedButtons == 4, "Fresh drawer must contain Lead and two complete eight-rotary voice cards");
+    expect(advancedSliders == 24 && advancedButtons == 3, "Fresh Stack must contain Lead and two complete eight-slider voice cards");
     expect(choraleSliders == 2 && choraleButtons == 1, "Chorale controls missing");
     auto* addVoice = findButton(*editor, "+ Add voice");
     expect(addVoice != nullptr, "Missing Add voice action");
@@ -627,15 +626,12 @@ void editorSkin(bool neon) {
     for (auto* child : canvas.getChildren())
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
             checkDrawerControls(owner, *child, advancedSliders, advancedButtons);
-    expect(advancedSliders == 72 && advancedButtons == 10, "Lead and eight complete stable voice cards missing");
+    expect(advancedSliders == 72 && advancedButtons == 9, "Lead and eight complete stable voice cards missing");
     expectPassiveControls(*editor);
-    auto* advanced = findButton(*editor, "Voice stack");
-    expect(advanced != nullptr, "Missing Advanced activation switch");
-    advanced->setToggleState(false, juce::dontSendNotification);
-    advanced->onClick();
-    advanced->setToggleState(true, juce::dontSendNotification);
-    advanced->onClick();
-    expect(owner.settings().advanced, "Advanced UI activation failed");
+    setParameter(owner, "advancedOn", 0);
+    expect(!owner.settings().advanced, "Legacy host activation no longer disables Advanced");
+    owner.setAdvancedEnabled(true);
+    expect(owner.settings().advanced, "Legacy Advanced activation API failed");
     auto* basic = findButton(*editor, "Reset to Basic");
     expect(basic != nullptr, "Missing Reset to Basic");
     basic->onClick();
@@ -653,15 +649,17 @@ void editorSkin(bool neon) {
     saveSnapshot(*editor, neon ? "editor-neon-eight-voices.png" : "editor-device-eight-voices.png");
     basic->onClick();
     expectBasicVoices(owner, owner.settings().human);
-    editor->setSize(windowWidth, collapsedHeight);
-    show->onClick();
-    expect(!owner.isAdvancedVisible() && owner.settings().advanced, "Hiding drawer changed activation");
-    expect(editor->getHeight() == collapsedHeight && canvas.getHeight() == 430,
-               "Closing drawer must collapse only the design canvas");
-    show->onClick();
+    editor->setSize(windowWidth, windowHeight);
+    owner.setAdvancedVisible(false);
+    juce::Timer::callPendingTimersSynchronously();
+    auto* stack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(*editor, [](auto&) { return true; });
+    expect(stack && stack->isVisible() && canvas.getHeight() == 872 && owner.settings().advanced,
+           "Legacy visibility state hid Stack or changed activation");
     editor.reset();
     editor.reset(owner.createEditor());
-    expect(editor->getHeight() == collapsedHeight && owner.isAdvancedVisible(), "Editor reopen lost dimensions or drawer visibility");
+    stack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(*editor, [](auto&) { return true; });
+    expect(editor->getHeight() == windowHeight && stack && stack->isVisible(),
+           "Editor reopen lost dimensions or always-visible Stack");
     expectPassiveControls(*editor);
 }
 
@@ -679,7 +677,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 33> tests{{
+    const std::array<Test, 39> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -711,6 +709,12 @@ int main() {
         {"Modulation gestures and Controls/Assignments removal", stackModulationUi::modulationInspector},
         {"EQ handles assign modulation without host base writes", stackModulationUi::eqModulationGestures},
         {"Local mixer knob, modulation and machine aliases", stackModulationUi::localMixerInspector},
+                {"Compact Stack cards, fixed inspector rows and click activation", stackModulationUi::compactCards},
+                {"Left modulator rail and independent fixed-knob bottom strip", stackModulationUi::modulationRailGeometry},
+                        {"Inspector divider clamps, persistence and live component identity", stackModulationUi::resizableInspector},
+                {"Lead monitor index 8, selection and processor publication", stackModulationUi::leadMonitor},
+                {"Waveshaper transfer follows live effective modulation", stackModulationUi::modulatedWaveshaperCurve},
+                {"Routing context and Add Node menus anchor to cursor", stackModulationUi::menuCursorPlacement},
         {"Device editor and PNG", deviceEditor},
         {"Neon editor and PNG", neonEditor}
     }};

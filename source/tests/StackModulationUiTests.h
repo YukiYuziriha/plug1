@@ -166,8 +166,14 @@ void resizeTabs() {
         auto& routing = component<vocalstack::RoutingPanel>(*editor);
         for (const auto size : {juce::Point<int>(940, 560), juce::Point<int>(1480, 1040)}) {
             editor->setSize(size.x, size.y);
-            expect(canvas.getWidth() == 940 && canvas.getHeight() == 872 && !canvas.getTransform().isIdentity(),
-                   "Expanded Stack must scale its fixed design canvas");
+            const float scale = std::min(1.0f, std::min(float(size.x) / 940, float(size.y) / 872));
+            const auto transform = canvas.getTransform();
+            expect(canvas.getWidth() == 940 && canvas.getHeight() == 872,
+                   "Stack must retain its fixed design canvas");
+            expectNear(transform.mat00, scale, "Stack horizontal scale must never exceed one");
+            expectNear(transform.mat11, scale, "Stack vertical scale must never exceed one");
+            expectNear(transform.mat02, (size.x - 940 * scale) * .5f, "Stack horizontal centering");
+            expectNear(transform.mat12, (size.y - 872 * scale) * .5f, "Stack vertical centering");
             auto& output = ui::slider(*editor, "outputGain");
             expect(editor->getLocalBounds().contains(editor->getLocalArea(&output, output.getLocalBounds())),
                    "Scaled Stack output is outside the window");
@@ -177,16 +183,15 @@ void resizeTabs() {
             expect(routing.getBounds() == juce::Rectangle<int>(18, 100, size.x - 36, size.y - 118),
                    "Routing did not grow with available space");
             action(*editor, "Stack");
-            action(*editor, "Hide Advanced");
-            expect(canvas.getHeight() == 430 && editor->getWidth() == size.x && editor->getHeight() == size.y,
-                   "Drawer visibility changed window dimensions rather than Stack scale");
-            action(*editor, "Show Advanced");
-            expect(editor->getWidth() == size.x && editor->getHeight() == size.y, "Restoring drawer resized window");
+            owner.setAdvancedVisible(false); pumpTimers();
+            expect(canvas.getHeight() == 872 && component<vocalstack::DoublerPanel>(*editor).isShowing()
+                       && editor->getWidth() == size.x && editor->getHeight() == size.y,
+                   "Legacy drawer state changed fixed Stack layout or window dimensions");
         }
         editor.reset();
         editor.reset(owner.createEditor());
-        expect(editor->getWidth() == 1480 && editor->getHeight() == 1040 && owner.isAdvancedVisible(),
-               "Editor reopen lost resized dimensions or drawer state");
+        expect(editor->getWidth() == 1480 && editor->getHeight() == 1040 && component<vocalstack::DoublerPanel>(*editor).isVisible(),
+               "Editor reopen lost resized dimensions or always-visible Stack");
     }
 }
 
@@ -218,9 +223,9 @@ void sharedInspectors() {
                 const auto id = prefix + field;
                 auto& stackKnob = ui::slider(*card, id);
                 auto& inspectorKnob = ui::slider(routing, id);
-                expect(stackKnob.getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag
+                expect(stackKnob.getSliderStyle() == juce::Slider::LinearHorizontal
                            && inspectorKnob.getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag,
-                       "Shared voice control stopped being rotary: " + id);
+                       "Stack must use horizontal sliders while inspector retains rotary knobs: " + id);
                 const auto& range = parameter(owner, id).getNormalisableRange();
                 const float fromHost = range.convertFrom0to1(0.3f);
                 setParameter(owner, id, fromHost);
@@ -372,6 +377,408 @@ void modulationInspector() {
         }
         log.balanced("Modulation inspector");
         expectPassiveControls(*editor);
+    }
+}
+// Send through JUCE's peer so registered card/child mouse listeners run too.
+void peerClick(juce::Component& root, juce::Component& target, juce::Point<int> point) {
+    auto* peer = root.getPeer();
+    expect(peer != nullptr, "Mouse fixture needs a native peer");
+    root.setAlwaysOnTop(true);
+        root.toFront(true);
+        const auto local = root.getLocalPoint(&target, point).toFloat();
+        expect(root.getComponentAt(local) == &target, "Card click fixture did not hit intended component");
+        const auto p = local * root.getDesktopScaleFactor();
+    const auto now = juce::Time::currentTimeMillis();
+    peer->handleMouseEvent(juce::MouseInputSource::mouse, p, {}, 1, 0, now);
+    peer->handleMouseEvent(juce::MouseInputSource::mouse, p,
+                          juce::ModifierKeys::leftButtonModifier, 1, 0, now + 1);
+    peer->handleMouseEvent(juce::MouseInputSource::mouse, p, {}, 1, 0, now + 2);
+}
+
+void compactCards() {
+    for (const bool neon : {false, true}) {
+        Processor owner; owner.setFlash(neon);
+        std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
+        editor->addToDesktop(0); editor->setVisible(true);
+        auto& stack = component<vocalstack::DoublerPanel>(*editor);
+        for (const auto* prefix : {"lead", "voice1", "voice2"}) {
+            auto* card = ui::find<vocalstack::VoiceControls>(stack, [&](auto& c) {
+                return c.getComponentID() == juce::String(prefix) + "Card";
+            });
+            expect(card && card->getWidth() == 172 && card->getHeight() == 278,
+                   "Stack card must stay compact at 172x278");
+            const std::array<const char*, 8> fields{"Pitch", "Detune", "Formant", "Gain", "Pan", "Delay", "Depth", "Rate"};
+            for (size_t i = 0; i < fields.size(); ++i) {
+                auto& slider = ui::slider(*card, juce::String(prefix) + fields[i]);
+                expect(slider.getSliderStyle() == juce::Slider::LinearHorizontal,
+                       "Compact Lead/voice cards must use horizontal sliders");
+                auto& control = *slider.getParentComponent();
+                expect(control.getBounds() == juce::Rectangle<int>(8 + int(i % 2) * 78, 52 + int(i / 2) * 54, 78, 54),
+                       "Compact card must use two columns and four fixed-height rows");
+            }
+        }
+        auto& lead = ui::slider(stack, "leadPitch");
+        peerClick(*editor, *lead.getParentComponent()->getParentComponent(), {20, 15});
+        expect(!owner.settings().advanced, "Selecting Lead unexpectedly enabled generated voices");
+        auto& voice = *ui::slider(stack, "voice1Pitch").getParentComponent()->getParentComponent();
+        peerClick(*editor, voice, {20, 15});
+        expect(owner.settings().advanced && int(owner.getRoutingLayout().getProperty("selectedVoiceSlot", -99)) == 0,
+               "Real voice-card click must auto-enable legacy Advanced and select the voice: active="
+                                  + juce::String(int(owner.settings().advanced)) + " slot=" + owner.getRoutingLayout().getProperty("selectedVoiceSlot", -99).toString());
+        action(*editor, "Routing");
+        auto& routing = component<vocalstack::RoutingPanel>(*editor);
+        auto& inspector = *ui::slider(routing, "voice1Pitch").getParentComponent()->getParentComponent();
+        const auto checkInspector = [&] {
+            const std::array<const char*, 8> fields{"Pitch", "Detune", "Formant", "Gain", "Pan", "Delay", "Depth", "Rate"};
+            const int width = (inspector.getWidth() - 16) / 4;
+            for (size_t i = 0; i < fields.size(); ++i) {
+                auto& slider = ui::slider(inspector, "voice1" + juce::String(fields[i]));
+                expect(slider.getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag,
+                       "Voice inspector must retain larger rotary knobs");
+                auto& control = *slider.getParentComponent();
+                expect(control.getBounds() == juce::Rectangle<int>(8 + int(i % 4) * width, 38 + int(i / 4) * 104, width, 104),
+                       "Voice inspector must retain four columns and two fixed 104px rows");
+            }
+        };
+        checkInspector(); editor->setSize(1480, 1600); checkInspector();
+        expectPassiveControls(*editor);
+    }
+}
+
+void modulationRailGeometry() {
+    for (const bool neon : {false, true}) {
+        Processor owner; owner.setFlash(neon);
+        vocalstack::ModulationState state;
+        state.modulators = {{1}, {2, vocalstack::ModulatorType::random}};
+        juce::String error;
+        expect(owner.setModulationState(state, error), "Rail fixture rejected");
+        vocalstack::RoutingPanel routing(owner);
+        routing.addToDesktop(0); routing.setVisible(true); routing.selectVoice(0);
+        auto& nodeKnob = ui::slider(routing, "voice1Pitch");
+        juce::Component::SafePointer<juce::Slider> retained(&nodeKnob);
+        auto* nodeViewport = nodeKnob.findParentComponentOfClass<juce::Viewport>();
+        expect(nodeViewport != nullptr, "Missing voice inspector viewport");
+        auto& nodeInspector = *nodeViewport->getParentComponent();
+        const auto inspectorBounds = nodeInspector.getBounds();
+        expect(inspectorBounds == juce::Rectangle<int>(948, 76, 320, 676),
+               "Unselected LFO must leave full-height node inspector");
+        auto& canvas = *routing.getChildComponent(0);
+        auto& strip = component<vocalstack::ModulationPanel>(routing);
+        expect(!strip.isVisible(), "Modulator strip should be hidden until selected");
+        auto* lfo = findButton(routing, "LFO 1");
+        auto* random = findButton(routing, "Random 2");
+        expect(lfo && random, "Missing rail modulator tiles");
+        auto* rail = lfo->findParentComponentOfClass<juce::Viewport>();
+        expect(rail && rail->getBounds() == juce::Rectangle<int>(12, 106, 132, 654)
+                   && lfo->getBounds() == juce::Rectangle<int>(0, 0, 132 - rail->getScrollBarThickness(), 82)
+                   && random->getY() == 88, "Modulator tiles must form a vertical left rail");
+        const auto graph = graphText(owner.getRoutingGraph());
+        action(routing, "LFO 1");
+        expect(retained && retained->isShowing() && routingPolish::labelIs(routing, "VOICE 1"),
+               "Selecting LFO destroyed/replaced the node inspector");
+        expect(strip.getParentComponent() == &routing && strip.isShowing()
+                   && strip.getBounds() == juce::Rectangle<int>(156, 536, 772, 224)
+                   && canvas.getBounds() == juce::Rectangle<int>(156, 70, 772, 458),
+               "LFO bottom strip must span only the audio canvas width");
+        expect(nodeInspector.getBounds() == inspectorBounds && !strip.getBounds().intersects(inspectorBounds),
+               "Selecting LFO must not shorten or overlap the full-height node inspector");
+        saveSnapshot(routing, neon ? "routing-lfo-inspector-neon.png" : "routing-lfo-inspector-device.png");
+        auto* rate = ui::find<juce::Slider>(strip, [](auto& s) { return s.getName() == "Rate / Hz"; });
+        expect(rate != nullptr, "Missing bottom-strip rate knob");
+        const auto fixedBounds = rate->getParentComponent()->getBounds();
+        expect(fixedBounds.getWidth() == 116 && fixedBounds.getHeight() == 116,
+               "LFO knobs must have fixed 116px geometry");
+        for (const auto size : {juce::Point<int>(904, 442), juce::Point<int>(1600, 1000)}) {
+            routing.setSize(size.x, size.y);
+            expect(rate->getParentComponent()->getBounds() == fixedBounds, "Resizing shrank/stretched an LFO knob");
+            expect(retained && retained->isShowing(), "Resizing strip lost node inspector");
+            expect(nodeInspector.getBounds() == juce::Rectangle<int>(size.x - 332, 76, 320, size.y - 124),
+                   "Selected LFO must leave inspector at full available height after resizing");
+            expect(strip.getX() == canvas.getX() && strip.getWidth() == canvas.getWidth()
+                       && strip.getY() > canvas.getBottom() && !strip.getBounds().intersects(nodeInspector.getBounds()),
+                   "Resized LFO strip must stay below canvas and outside inspector");
+        }
+        auto* viewport = ui::find<juce::Viewport>(strip, [](auto& v) { return v.getViewedComponent() != nullptr; });
+        expect(viewport != nullptr, "Missing bottom-strip scroll viewport");
+        routing.setSize(904, 442);
+        viewport->setViewPosition(10000, 0);
+        expect(viewport->getViewPositionX() > 0, "Narrow bottom strip must scroll instead of shrinking controls");
+        action(routing, "Random 2");
+        expect(viewport->getViewPositionX() == 0 && strip.selectedId() == 2 && retained,
+               "Switching modulators must reset scroll without replacing node inspector");
+        expect(nodeInspector.getBounds() == juce::Rectangle<int>(572, 76, 320, 318),
+               "Switching modulators shortened the node inspector");
+        routing.selectVoice(-1);
+        expect(strip.isShowing() && strip.selectedId() == 2 && routingPolish::labelIs(routing, "LEAD"),
+               "Selecting audio node closed the modulator strip");
+        expect(graphText(owner.getRoutingGraph()) == graph, "Modulator selection changed audio wiring");
+        action(strip, "Delete modulator");
+        expect(!strip.isVisible() && routingPolish::labelIs(routing, "LEAD"),
+               "Deleting modulator must hide only the bottom strip");
+        expect(nodeInspector.getBounds() == juce::Rectangle<int>(572, 76, 320, 318)
+                   && canvas.getBottom() == routing.getHeight() - 48,
+               "Deleting modulator must restore canvas height without changing inspector height");
+        expectPassiveControls(routing);
+    }
+}
+
+void resizableInspector() {
+    for (const bool neon : {false, true}) {
+        Processor owner; owner.setFlash(neon); owner.setAdvancedEnabled(true);
+        vocalstack::ModulationState state; state.modulators = {{1}};
+        juce::String error;
+        expect(owner.setModulationState(state, error), "Divider modulation fixture rejected");
+        auto routing = std::make_unique<vocalstack::RoutingPanel>(owner);
+        routing->addToDesktop(0); routing->setVisible(true); routing->selectVoice(0);
+        action(*routing, "LFO 1"); pumpTimers();
+        const auto graph = graphText(owner.getRoutingGraph());
+        const auto modulation = owner.getModulationState();
+        std::vector<float> bases;
+        for (auto* p : owner.getParameters()) bases.push_back(p->getValue());
+        auto originalLayout = owner.getRoutingLayout().createCopy();
+        originalLayout.removeProperty("inspectorWidth", nullptr);
+
+        for (const int width : {480, 320, 416}) {
+            auto& slider = ui::slider(*routing, "voice1Pitch");
+            juce::Component::SafePointer<juce::Slider> retainedSlider(&slider);
+            auto& voice = *slider.getParentComponent()->getParentComponent();
+            juce::Component::SafePointer<juce::Component> retainedVoice(&voice);
+            auto* viewport = slider.findParentComponentOfClass<juce::Viewport>();
+            expect(viewport != nullptr, "Divider fixture has no voice viewport");
+            auto& inspector = *viewport->getParentComponent();
+            auto* divider = ui::find<juce::Component>(*routing, [](auto& c) { return c.getName() == "Resize node inspector"; });
+            expect(divider && divider->isShowing() && divider->getWidth() == 10,
+                   "Missing visible 10px inspector resize divider");
+            auto& canvas = *routing->getChildComponent(0);
+            auto& strip = component<vocalstack::ModulationPanel>(*routing);
+            const auto check = [&](int actualWidth) {
+                expect(inspector.getBounds() == juce::Rectangle<int>(1280 - actualWidth - 12, 76, actualWidth, 676),
+                       "Divider must retain full inspector height with LFO selected");
+                expect(divider->getBounds() == juce::Rectangle<int>(inspector.getX() - 13, 44, 10, 708),
+                       "Divider did not follow inspector edge");
+                expect(strip.isShowing() && strip.selectedId() == 1 && strip.getX() == canvas.getX()
+                           && strip.getWidth() == canvas.getWidth() && strip.getHeight() == 224
+                           && canvas.getWidth() >= 100 && !strip.getBounds().intersects(inspector.getBounds()),
+                       "Divider changed selected LFO or overlapped its canvas-only strip");
+                expect(retainedSlider && retainedVoice && &ui::slider(*routing, "voice1Pitch") == retainedSlider.getComponent()
+                           && slider.getParentComponent()->getParentComponent() == retainedVoice.getComponent(),
+                       "Divider rebuilt the live voice inspector instead of resizing it");
+            };
+            const auto from = juce::Point<float>(5, 40);
+            const int delta = width == 480 ? -10000 : width == 320 ? 10000 : inspector.getWidth() - width;
+            const auto to = from.translated(float(delta), 0);
+            divider->mouseDown(ui::mouse(*divider, from, from));
+            divider->mouseDrag(ui::mouse(*divider, to, from, true));
+            check(width); pumpTimers(); check(width);
+            divider->mouseUp(ui::mouse(*divider, to, from, true, 0));
+            pumpTimers(); check(width);
+            expect(int(owner.getRoutingLayout().getProperty("inspectorWidth", -1)) == width,
+                   "Divider release did not persist constrained desired inspector width");
+            if (width == 480) {
+                saveSnapshot(*routing, neon ? "routing-lfo-inspector-wide-neon.png" : "routing-lfo-inspector-wide-device.png");
+                routing->setSize(600, 800);
+                expect(inspector.getWidth() == 312 && canvas.getWidth() == 100 && strip.getWidth() == 100,
+                       "Narrow window must constrain inspector to preserve 100px canvas");
+                expect(inspector.getHeight() == 676 && strip.isShowing() && retainedSlider && retainedVoice,
+                       "Narrow window lost full-height inspector or selected LFO");
+                expect(int(owner.getRoutingLayout().getProperty("inspectorWidth", -1)) == 480,
+                       "Temporary window constraint overwrote desired inspector width");
+                routing->setSize(1280, 800); check(480);
+            }
+            expect(graphText(owner.getRoutingGraph()) == graph && owner.getRoutingError().isEmpty(),
+                   "Resizing inspector changed audio graph");
+            auto layout = owner.getRoutingLayout().createCopy(); layout.removeProperty("inspectorWidth", nullptr);
+            expect(layout.toXmlString() == originalLayout.toXmlString(),
+                   "Divider changed node positions, pan, zoom or selection");
+            expect(owner.getModulationState().modulators.size() == modulation.modulators.size()
+                       && owner.getModulationState().assignments.size() == modulation.assignments.size(),
+                   "Divider changed modulation model");
+            for (int i = 0; i < owner.getParameters().size(); ++i)
+                expectNear(owner.getParameters()[i]->getValue(), bases[size_t(i)], "Divider wrote a host parameter");
+            expectPassiveControls(*routing);
+
+            routing.reset();
+            routing = std::make_unique<vocalstack::RoutingPanel>(owner);
+            routing->addToDesktop(0); routing->setVisible(true); pumpTimers();
+            auto& restoredSlider = ui::slider(*routing, "voice1Pitch");
+            auto* restoredViewport = restoredSlider.findParentComponentOfClass<juce::Viewport>();
+            expect(restoredViewport && restoredViewport->getParentComponent()->getWidth() == width,
+                   "Recreated routing panel lost saved inspector width");
+            auto& restoredStrip = component<vocalstack::ModulationPanel>(*routing);
+            expect(restoredStrip.isShowing() && restoredStrip.selectedId() == 1
+                       && restoredViewport->getParentComponent()->getHeight() == 676,
+                   "Recreated routing panel lost simultaneous LFO and full-height voice inspector");
+            expect(graphText(owner.getRoutingGraph()) == graph, "Recreating inspector changed audio graph");
+        }
+    }
+}
+
+void leadMonitor() {
+    static_assert(vocalstack::VoiceMonitor::leadSlot == 8);
+    for (const bool neon : {false, true}) {
+        vocalstack::VoiceMonitor monitor; monitor.setNeon(neon); monitor.setSize(904, 100);
+        std::array<vocalstack::VoiceSnapshot, 8> voices{};
+        voices[0] = {true, true, 0, 0, 0, 0, 0, 0, .2f};
+        auto lead = voices[0];
+        size_t selected = 99; monitor.onSelect = [&](size_t slot) { selected = slot; };
+        monitor.update(voices, lead);
+        ui::click(monitor, {452, 52});
+        expect(selected == 8, "Overlapping Lead marker must win and emit index 8");
+        monitor.select(8); monitor.select(999); ui::render(monitor);
+        monitor.update(voices); selected = 99;
+        ui::click(monitor, {452, 52});
+        expect(selected == 0, "Legacy eight-voice update must clear optional Lead marker");
+        voices = {}; monitor.update(voices, lead); selected = 99;
+        ui::click(monitor, {452, 52});
+        expect(selected == 8, "Lead-only monitor cannot be selected");
+        Processor owner; owner.setAdvancedEnabled(true);
+        setParameter(owner, "leadPan", .4f); setParameter(owner, "leadGain", -6);
+        owner.prepareToPlay(48000, 256);
+        expect(owner.getLeadSnapshot().present && owner.getLeadSnapshot().activity == 0,
+               "Prepare must publish present, silent Lead snapshot");
+        juce::AudioBuffer<float> audio(2, 256); juce::MidiBuffer midi;
+        for (int block = 0; block < 160; ++block) {
+            for (int ch = 0; ch < 2; ++ch) for (int i = 0; i < 256; ++i) audio.setSample(ch, i, .25f);
+            owner.processBlock(audio, midi);
+        }
+        const auto snapshot = owner.getLeadSnapshot();
+        expect(snapshot.present && snapshot.enabled && std::isfinite(snapshot.activity) && snapshot.activity > .01f,
+               "Processor must publish actual active Lead signal");
+        expectNear(snapshot.pan, .4, "Lead snapshot pan");
+        expectNear(snapshot.gainDb, -6, "Lead snapshot gain");
+        expect(owner.getVoiceSnapshots().size() == 8, "Lead must not replace a generated voice slot");
+        vocalstack::DoublerPanel stack(owner); stack.setSize(904, 430); stack.sync();
+        auto& stackMonitor = component<vocalstack::VoiceMonitor>(stack);
+        int selectedSlot = -99; stack.onVoiceSelected = [&](int slot) { selectedSlot = slot; };
+        stackMonitor.onSelect(8);
+        expect(selectedSlot == -1, "Stack must map monitor index 8 to Lead inspector slot -1");
+        owner.reset();
+        expect(owner.getLeadSnapshot().present && owner.getLeadSnapshot().activity == 0,
+               "Reset must clear published Lead activity");
+        owner.releaseResources();
+    }
+}
+void modulatedWaveshaperCurve() {
+    using namespace vocalstack;
+    for (const bool neon : {false, true}) {
+        Processor owner;
+        setParameter(owner, "fx1WaveDrive", 6);
+        setParameter(owner, "fx1WaveOutput", -6);
+        setParameter(owner, "fx1Mix", 100);
+        setParameter(owner, "fx1WaveAlgorithm", 1);
+        setParameter(owner, "fx1WaveShapeAmount", 40);
+        ModulationSnapshot synthetic;
+        for (const auto* id : {"fx1WaveDrive", "fx1WaveOutput", "fx1Mix", "fx1WaveAlgorithm", "fx1WaveShapeAmount", "fx1On"}) {
+            auto& p = parameter(owner, id);
+            synthetic.targets = {{id, p.getValue(), .8f, 0}};
+            expectNear(toneui::visualParameter(owner, id, -99, &synthetic), p.convertFrom0to1(.8f),
+                       "Curve snapshot must convert normalized modulation in parameter units");
+            synthetic.targets.front().effectiveNormalized = 2;
+            expectNear(toneui::visualParameter(owner, id, -99, &synthetic), p.convertFrom0to1(1), "Curve snapshot upper clamp");
+            synthetic.targets.front().effectiveNormalized = -1;
+            expectNear(toneui::visualParameter(owner, id, -99, &synthetic), p.convertFrom0to1(0), "Curve snapshot lower clamp");
+            synthetic.targets.front().effectiveNormalized = std::numeric_limits<float>::quiet_NaN();
+            expectNear(toneui::visualParameter(owner, id, -99, &synthetic), parameterValue(owner, id), "Nonfinite snapshot fallback");
+            synthetic.consistent = false;
+            expectNear(toneui::visualParameter(owner, id, -99, &synthetic), parameterValue(owner, id), "Inconsistent snapshot fallback");
+            synthetic.consistent = true;
+        }
+        synthetic.targets = {{"fx1WaveAlgorithm", 0, parameter(owner, "fx1WaveAlgorithm").convertTo0to1(5), 0}};
+        expect(toneui::effectiveWaveShape(owner, 1, &synthetic) == 4, "Curve ignored effective algorithm");
+        synthetic.targets.front().effectiveNormalized = 0;
+        setParameter(owner, "fx1WaveShape", 2);
+        expect(toneui::effectiveWaveShape(owner, 1, &synthetic) == 2, "Legacy shape fallback lost");
+
+        ModulationState state; state.modulators = {{1}};
+        state.modulators[0].waveform = ModulationWaveform::square;
+        state.modulators[0].rateHz = .1f;
+        for (const auto* id : {"fx1WaveDrive", "fx1WaveOutput", "fx1Mix", "fx1WaveShapeAmount"})
+            state.assignments.push_back({1, id, .2f, true});
+        juce::String error;
+        expect(owner.setModulationState(state, error), "Live curve modulation fixture rejected: " + error);
+        owner.prepareToPlay(48000, 64);
+        toneui::WaveshaperVisual visual(owner, 1); visual.setNeon(neon); visual.setSize(360, 260);
+        const auto verify = [&] {
+            juce::AudioBuffer<float> audio(2, 64); audio.clear(); juce::MidiBuffer midi;
+            owner.processBlock(audio, midi);
+            const auto snapshot = owner.getModulationSnapshot();
+            expect(snapshot.consistent && !snapshot.targets.empty(), "Live curve needs published effective targets");
+            const auto actual = [&](const char* id) {
+                for (const auto& target : snapshot.targets) if (target.parameterId == id)
+                    return parameter(owner, id).convertFrom0to1(target.effectiveNormalized);
+                return parameterValue(owner, id);
+            };
+            const auto image = ui::render(visual);
+            auto bounds = visual.getLocalBounds().reduced(7); bounds.removeFromTop(16);
+            const auto curve = bounds.removeFromTop(91).toFloat().withTrimmedLeft(24).withTrimmedRight(7);
+            bool displaced = false;
+            for (const double x : {-.5, -.25, .125, .25, .5}) {
+                const double y = toneui::WaveshaperVisual::settledTransfer(x, actual("fx1WaveDrive"), actual("fx1WaveOutput"),
+                    actual("fx1Mix") / 100, 0, true, actual("fx1WaveShapeAmount") / 100);
+                const double base = toneui::WaveshaperVisual::settledTransfer(x, 6, -6, 1, 0, true, .4);
+                displaced |= std::abs(y - base) * curve.getHeight() * .5 > 5;
+                const auto p = juce::Point<float>(curve.getX() + float(x + 1) * .5f * curve.getWidth(),
+                    curve.getCentreY() - float(juce::jlimit(-1.0, 1.0, y)) * curve.getHeight() * .5f).roundToInt();
+                const auto accent = toneui::visualAccent(neon);
+                bool found = false;
+                for (int py = p.y - 2; py <= p.y + 2; ++py) for (int px = p.x - 2; px <= p.x + 2; ++px) {
+                    if (!image.getBounds().contains(px, py)) continue;
+                    const auto pixel = image.getPixelAt(px, py);
+                    found |= std::abs(int(pixel.getRed()) - int(accent.getRed())) < 35
+                        && std::abs(int(pixel.getGreen()) - int(accent.getGreen())) < 35
+                        && std::abs(int(pixel.getBlue()) - int(accent.getBlue())) < 35;
+                }
+                expect(found, "Rendered waveshaper curve does not follow effective modulation");
+            }
+            expect(displaced, "Curve regression fixture must distinguish modulated and base curves");
+            for (const auto& target : snapshot.targets)
+                expectNear(parameter(owner, target.parameterId).getValue(), target.baseNormalized, "Curve modulation wrote host base");
+        };
+        verify();
+        state.modulators.front().phase = .75f;
+        expect(owner.setModulationState(state, error), "Curve phase change rejected");
+        owner.reset(); verify();
+        expectNear(parameterValue(owner, "fx1WaveDrive"), 6, "Curve painting changed base Drive");
+        owner.releaseResources();
+    }
+}
+
+void menuCursorPlacement() {
+    struct MenuProbe final : juce::LookAndFeel_V4 {
+        juce::LookAndFeel* previous = &juce::LookAndFeel::getDefaultLookAndFeel();
+        std::optional<juce::Rectangle<int>> target;
+        MenuProbe() { juce::LookAndFeel::setDefaultLookAndFeel(this); }
+        ~MenuProbe() override {
+            juce::PopupMenu::dismissAllActiveMenus();
+            juce::LookAndFeel::setDefaultLookAndFeel(previous);
+        }
+        juce::Component* getParentComponentForMenuOptions(const juce::PopupMenu::Options& options) override {
+            target = options.getTargetScreenArea();
+            return juce::LookAndFeel_V4::getParentComponentForMenuOptions(options);
+        }
+    };
+    for (const bool neon : {false, true}) {
+        MenuProbe probe;
+        routingPolish::Fixture fixture(serialFxGraph(), neon);
+        auto& canvas = fixture.canvas();
+        const auto check = [&](juce::Point<float> position) {
+            const auto cursor = juce::Desktop::getMousePosition();
+            probe.target.reset();
+            canvas.mouseDown(ui::mouse(canvas, position, position, false, juce::ModifierKeys::rightButtonModifier));
+            expect(probe.target.has_value(), "Routing context menu did not supply popup options");
+            expect(probe.target->getWidth() <= 1 && probe.target->getHeight() <= 1
+                       && probe.target->getPosition().getDistanceFrom(cursor) <= 2,
+                   "Routing menu must anchor to cursor, not canvas or toolbar bounds");
+            juce::PopupMenu::dismissAllActiveMenus();
+        };
+        check(fixture.point(100, 20, 15));
+        check({300, 350});
+        const auto cursor = juce::Desktop::getMousePosition(); probe.target.reset();
+        action(*fixture.panel, "+ Node");
+        expect(probe.target && probe.target->getWidth() <= 1 && probe.target->getHeight() <= 1
+                   && probe.target->getPosition().getDistanceFrom(cursor) <= 2,
+               "Add Node menu must anchor to cursor too");
+        juce::PopupMenu::dismissAllActiveMenus();
     }
 }
 } // namespace stackModulationUi

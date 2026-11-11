@@ -73,6 +73,7 @@ public:
     // Optional non-owning bridge; caller owns lifetime, audio must be quiescent.
     void setFxMonitor(FxMonitor* monitor) noexcept { routing.setFxMonitor(monitor); }
     std::array<VoiceSnapshot, 8> voiceSnapshots() const noexcept { return snapshots; }
+    VoiceSnapshot leadSnapshot() const noexcept { return leadState; }
 
 private:
     static constexpr int quantum = 64;
@@ -147,6 +148,7 @@ private:
                               Voice{130363}, Voice{155921}, Voice{196613}, Voice{262147}};
     RoutingExecutor routing;
     std::array<VoiceSnapshot, 8> snapshots{};
+    VoiceSnapshot leadState{};
     std::array<DelayLine, 2> dryDelay, levelDelay;
     std::array<Buffer, 2> leadInput{}, leadRendered{};
     Buffer monoInput{}, articulationInput{};

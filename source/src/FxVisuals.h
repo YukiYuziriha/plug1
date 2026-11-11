@@ -7,19 +7,32 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <utility>
 
 namespace vocalstack::toneui {
 
-inline float visualParameter(Processor& owner, const juce::String& id, float fallback = 0) {
+inline float visualParameter(Processor& owner, const juce::String& id, float fallback = 0,
+                             const ModulationSnapshot* snapshot = nullptr) {
+    if (snapshot && snapshot->consistent) {
+        for (const auto& target : snapshot->targets) if (target.parameterId == id) {
+            if (std::isfinite(target.effectiveNormalized)) {
+                if (const auto* parameter = owner.parameters.getParameter(id)) {
+                    const float value = parameter->convertFrom0to1(std::clamp(target.effectiveNormalized, 0.0f, 1.0f));
+                    if (std::isfinite(value)) return value;
+                }
+            }
+            break;
+        }
+    }
     if (const auto* p = owner.parameters.getRawParameterValue(id)) {
         const auto v = p->load(std::memory_order_relaxed);
         if (std::isfinite(v)) return v;
     }
     return fallback;
 }
-inline int effectiveWaveShape(Processor& owner, size_t slot) {
-    const int algorithm = std::clamp(int(visualParameter(owner, toneParameterId(slot, "WaveAlgorithm"))), 0, 19);
-    return algorithm > 0 ? algorithm - 1 : std::clamp(int(visualParameter(owner, toneParameterId(slot, "WaveShape"))), 0, 2);
+inline int effectiveWaveShape(Processor& owner, size_t slot, const ModulationSnapshot* snapshot = nullptr) {
+    const int algorithm = std::clamp(int(visualParameter(owner, toneParameterId(slot, "WaveAlgorithm"), 0, snapshot)), 0, 19);
+    return algorithm > 0 ? algorithm - 1 : std::clamp(int(visualParameter(owner, toneParameterId(slot, "WaveShape"), 0, snapshot)), 0, 2);
 }
 inline juce::Colour visualAccent(bool neon) { return juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b); }
 inline juce::Colour crossoverColour(int band) {
@@ -188,9 +201,9 @@ public:
     WaveshaperVisual(Processor& owner, size_t slot) : FxMonitorView(owner, slot, false) {
         setName("Waveshaper transfer and stereo waveforms");
         setInterceptsMouseClicks(true, false);
-        setTooltip("Static memoryless transfer includes drive, shape amount, output, mix and bypass. Raw uses this curve at project rate regardless of Quality. Off/2x/4x use ADAA, with IIR oversampling at 2x/4x. All have zero explicit integer delay, not zero phase; parallel paths may comb. ADAA, resampling, DC removal and optional RMS level matching are dynamic and are not simulated here. Below: actual pre/post L and R, fixed amplitude scale; no stereo summing.");
+        setTooltip("Static memoryless transfer uses effective modulated parameter snapshots for drive, shape, shape amount, output, mix and bypass. Raw uses this curve at project rate regardless of Quality. Off/2x/4x use ADAA, with IIR oversampling at 2x/4x. All have zero explicit integer delay, not zero phase; parallel paths may comb. ADAA, resampling, DC removal and optional RMS level matching are dynamic and are not simulated here. Below: actual pre/post L and R, fixed amplitude scale; no stereo summing.");
     }
-    // Requested memoryless curve, not an ADAA/DC simulation or live DSP state.
+    // Snapshot memoryless curve, not an ADAA/DC simulation or live DSP state.
     static double settledTransfer(double x, double driveDb, double outputDb, double mix, int shape, bool enabled,
                                   double shapeAmount = 0.5) {
         if (!enabled) return x;
@@ -200,21 +213,27 @@ public:
     }
     void paint(juce::Graphics& g) override {
         paintBackground(g);
-        const bool enabled = visualParameter(monitorOwner, fxParameterId(monitorSlot, "On"), 1) >= 0.5f;
+        auto next = monitorOwner.getModulationSnapshot();
+        // Match knob feedback: an overlapping publication must not flash base values.
+        if (next.consistent) modulationSnapshot = std::move(next);
+        const auto parameter = [&](const juce::String& id, float fallback = 0) {
+            return visualParameter(monitorOwner, id, fallback, &modulationSnapshot);
+        };
+        const bool enabled = parameter(fxParameterId(monitorSlot, "On"), 1) >= 0.5f;
         auto bounds = getLocalBounds().reduced(7);
-        const bool raw = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveRaw")) >= 0.5f;
-        const int quality = std::clamp(int(visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveQuality"))), 0, 2);
-        const bool matched = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveLevelMatch")) >= 0.5f;
+        const bool raw = parameter(toneParameterId(monitorSlot, "WaveRaw")) >= 0.5f;
+        const int quality = std::clamp(int(parameter(toneParameterId(monitorSlot, "WaveQuality"))), 0, 2);
+        const bool matched = parameter(toneParameterId(monitorSlot, "WaveLevelMatch")) >= 0.5f;
                 const juce::String mode = (raw ? juce::String("Raw @ 1x") : juce::String("ADAA / ") + Waveshaper::qualityNames[size_t(quality)])
                     + (matched ? " | pre-match curve" : "");
         g.drawText(enabled ? "STATIC | " + mode
                            : juce::String("BYPASS | unity transfer"), bounds.removeFromTop(16), juce::Justification::centredLeft);
         auto curve = bounds.removeFromTop(91).toFloat().withTrimmedLeft(24).withTrimmedRight(7);
-        const double drive = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveDrive"));
-        const double outputDb = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveOutput"));
-        const double mix = juce::jlimit(0.0, 1.0, double(visualParameter(monitorOwner, fxParameterId(monitorSlot, "Mix"), 100)) / 100);
-        const int shape = effectiveWaveShape(monitorOwner, monitorSlot);
-        const double shapeAmount = visualParameter(monitorOwner, toneParameterId(monitorSlot, "WaveShapeAmount"), 50) * 0.01;
+        const double drive = parameter(toneParameterId(monitorSlot, "WaveDrive"));
+        const double outputDb = parameter(toneParameterId(monitorSlot, "WaveOutput"));
+        const double mix = juce::jlimit(0.0, 1.0, double(parameter(fxParameterId(monitorSlot, "Mix"), 100)) / 100);
+        const int shape = effectiveWaveShape(monitorOwner, monitorSlot, &modulationSnapshot);
+        const double shapeAmount = parameter(toneParameterId(monitorSlot, "WaveShapeAmount"), 50) * 0.01;
         auto yFor = [&](double y) { return curve.getCentreY() - float(juce::jlimit(-1.0, 1.0, y)) * curve.getHeight() * 0.5f; };
         g.setColour(juce::Colour(0xff819398).withAlpha(0.25f));
         g.drawHorizontalLine(int(curve.getCentreY()), curve.getX(), curve.getRight());
@@ -265,6 +284,8 @@ public:
         g.drawText(isStreamStalled() ? "No new frames | fading last L/R capture"
                                : hasLiveFrame() ? "Waveforms: +/-1 FS (over-range off scale)" : "No live audio | waveform scale +/-1 FS", bounds.removeFromTop(16), juce::Justification::centredLeft);
     }
+private:
+    ModulationSnapshot modulationSnapshot;
 };
 
 class CrossoverVisual final : public FxMonitorView, public juce::SettableTooltipClient {

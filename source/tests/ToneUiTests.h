@@ -491,7 +491,7 @@ inline int links(Processor& owner, std::uint32_t source, std::uint32_t destinati
 }
 inline juce::Component& canvas(RoutingPanel& panel) {
     auto* result = find<juce::Component>(panel, [](auto& c) { return c.getName() == "Routing node canvas"; });
-    require(result != nullptr && result->getBounds() == juce::Rectangle<int>(12, 70, panel.getWidth() - 440, panel.getHeight() - 156), "routing canvas bounds changed");
+    require(result != nullptr && result->getBounds() == juce::Rectangle<int>(156, 70, panel.getWidth() - 508, panel.getHeight() - 118), "routing canvas bounds changed");
     return *result;
 }
 inline void routingPorts(bool neon) {
@@ -512,8 +512,11 @@ inline void routingPorts(bool neon) {
     require(owner.getRoutingGraph().links.size() == 4, "fan-in replaced another crossover cable");
     transport(panel);
     auto* inspector = find<ToneEffectPanel>(panel, [](auto&) { return true; });
-    require(inspector != nullptr && inspector->getWidth() >= 320 && inspector->getWidth() <= 400,
-                "multiband inspector was not integrated in its adaptive viewport");
+    require(inspector != nullptr, "missing multiband inspector");
+    auto* inspectorViewport = inspector->findParentComponentOfClass<juce::Viewport>();
+    require(inspectorViewport != nullptr && inspectorViewport->getWidth() == 320
+                && inspector->getWidth() == inspectorViewport->getWidth() - inspectorViewport->getScrollBarThickness(),
+            "multiband inspector was not integrated in its default 320px viewport");
     visibleLayout(*inspector);
     require(find<juce::Button>(panel, [](auto& b) { return b.getButtonText() == "Disconnect"; }) == nullptr,
             "obsolete Disconnect toolbar still present");

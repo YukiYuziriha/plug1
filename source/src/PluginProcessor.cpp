@@ -349,6 +349,7 @@ void Processor::prepareToPlay(double sampleRate, int) {
     const auto restored = engine.requestGraph(routingActive);
     if (!restored) routingError = juce::String(restored.message);
     voiceBridge.publish(engine.voiceSnapshots());
+    voiceBridge.publishLead(engine.leadSnapshot());
     setLatencySamples(engine.latency());
     metering.publish(engine.meters());
     prepared = true;
@@ -366,6 +367,7 @@ void Processor::reset() {
         modulationSnapshotSequence.fetch_add(1);
         engine.reset(settings());
         voiceBridge.publish(engine.voiceSnapshots());
+        voiceBridge.publishLead(engine.leadSnapshot());
         metering.publish(engine.meters());
     }
 }
@@ -395,6 +397,7 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
             audio.getNumSamples(), settings(), hostBypass);
         processedSamples += uint64_t(audio.getNumSamples());
         voiceBridge.publish(engine.voiceSnapshots());
+        voiceBridge.publishLead(engine.leadSnapshot());
         metering.publish(engine.meters());
         return;
     }
@@ -419,6 +422,7 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
         offset += count;
     }
     voiceBridge.publish(engine.voiceSnapshots());
+    voiceBridge.publishLead(engine.leadSnapshot());
     metering.publish(engine.meters());
 }
 
@@ -970,6 +974,10 @@ void Processor::removeVoice(size_t slot) {
 
 std::array<VoiceSnapshot, 8> Processor::getVoiceSnapshots() const {
     return voiceBridge.snapshot();
+}
+
+VoiceSnapshot Processor::getLeadSnapshot() const {
+    return voiceBridge.leadSnapshot();
 }
 
 ModulationState Processor::getModulationState() const {

@@ -148,6 +148,24 @@ class ParameterKnob final : public juce::Component {
 public:
     class Style final : public juce::LookAndFeel_V4 {
     public:
+        void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h,
+                              float position, float, float, juce::Slider::SliderStyle,
+                              juce::Slider& slider) override {
+            const auto track = juce::Rectangle<float>(float(x + 5), float(y + h / 2), float(juce::jmax(1, w - 10)), 2.0f);
+            const bool bipolar = slider.getMinimum() < 0 && slider.getMaximum() > 0;
+            const float origin = bipolar ? track.getX() + float(slider.valueToProportionOfLength(0)) * track.getWidth() : track.getX();
+            const float thumb = juce::jlimit(track.getX(), track.getRight(), position);
+            g.setColour(juce::Colour(0xff46515b)); g.fillRect(track);
+            g.setColour(slider.findColour(juce::Slider::trackColourId));
+            g.fillRect(juce::Rectangle<float>(juce::jmin(origin, thumb), track.getY(), std::abs(thumb - origin), 2));
+            if (bipolar) {
+                g.setColour(juce::Colour(0xffd7dfe6));
+                g.drawVerticalLine(juce::roundToInt(origin), track.getY() - 3, track.getY() + 5);
+            }
+            g.setColour(slider.findColour(juce::Slider::thumbColourId));
+            g.fillRoundedRectangle(thumb - 2, track.getY() - 4, 4, 10, 1);
+            if (auto* mod = dynamic_cast<ModulationSlider*>(&slider)) mod->drawLinearModulation(g, track);
+        }
         void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float position,
                               float start, float end, juce::Slider& slider) override {
             const auto centre = juce::Rectangle<float>(float(x), float(y), float(w), float(h)).getCentre();
@@ -222,6 +240,10 @@ public:
         }
         slider.updateText(); setNeon(false);
         setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
+    }
+    void setLinear(bool value) {
+        slider.setSliderStyle(value ? juce::Slider::LinearHorizontal : juce::Slider::RotaryHorizontalVerticalDrag);
+        resized();
     }
     ~ParameterKnob() override { slider.setLookAndFeel(nullptr); }
     void resized() override {

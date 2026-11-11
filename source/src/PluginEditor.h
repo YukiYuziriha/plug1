@@ -48,7 +48,7 @@ private:
     juce::TextButton endAssignment;
     std::array<juce::Label, knobParameterIds.size()> labels;
     std::array<modulationui::Button, switchParameterIds.size()> switches;
-    juce::TextButton theme, reset, copy, paste, drawer, stackTab, routingTab;
+    juce::TextButton theme, reset, copy, paste, stackTab, routingTab;
     RoutingPanel routingPanel;
     bool routingVisible = false;
     bool routingOpened = false;
