@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "VisualTheme.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <deque>
 #include <optional>
@@ -30,23 +31,25 @@ public:
         repaint();
     }
     void paint(juce::Graphics& g) override {
-        g.fillAll(juce::Colour(neon ? 0xff111827 : 0xff202421));
+        const auto palette = themePalette(*this, neon);
+        const bool device = componentTheme(*this, neon) == Theme::device;
+        g.fillAll(device ? juce::Colour(0xff202421) : palette.panel);
         auto plot = plotBounds();
         g.setFont(juce::Font(juce::FontOptions(11.0f)));
-        g.setColour(juce::Colour(0xffaebaca));
+        g.setColour(device ? juce::Colour(0xffaebaca) : palette.muted);
         g.drawText("VOICE MOTION   /   fine detune +/-150 ct", 10, 2, 330, 18, juce::Justification::centredLeft);
         const auto axis = plot.toNearestInt().withHeight(14).translated(0, -15);
                 g.drawText("L", axis, juce::Justification::centredLeft);
                 g.drawText("C", axis, juce::Justification::centred);
                 g.drawText("R", axis, juce::Justification::centredRight);
-        g.setColour(juce::Colour(0xff46515b));
+        g.setColour(device ? juce::Colour(0xff46515b) : palette.border);
         g.drawRect(plot, 1.0f);
         g.drawHorizontalLine(juce::roundToInt(plot.getCentreY()), plot.getX(), plot.getRight());
         g.drawVerticalLine(juce::roundToInt(plot.getCentreX()), plot.getY(), plot.getBottom());
         for (size_t i = 0; i < snapshots.size(); ++i) {
             const auto& s = snapshots[i];
             if (!s.present) continue;
-            const auto colour = voiceColour(i);
+            const auto colour = device ? voiceColour(i) : i == leadSlot ? palette.secondary : palette.accent;
             const auto& trail = trails[i];
             for (size_t j = 1; j < trail.size(); ++j) {
                 g.setColour(colour.withAlpha(0.04f + 0.28f * float(j) / float(trail.size())));
@@ -58,15 +61,16 @@ public:
             if (i == leadSlot) g.fillRect(p.x - 7, p.y - 7, 14.0f, 14.0f);
             else g.fillEllipse(p.x - 7, p.y - 7, 14, 14);
             if (i == selected) {
-                g.setColour(juce::Colours::white);
+                g.setColour(device ? juce::Colours::white : palette.text);
                 g.drawEllipse(p.x - 9, p.y - 9, 18, 18, 1.0f);
             }
-            g.setColour(juce::Colours::white);
+            g.setColour(device ? juce::Colours::white
+                : s.enabled && activity > 0.5f ? palette.background : palette.text);
             g.drawText(i == leadSlot ? juce::String("L") : juce::String(int(i + 1)),
                 int(p.x - 7), int(p.y - 7), 14, 14, juce::Justification::centred);
         }
         const auto& s = snapshots[selected];
-        g.setColour(juce::Colour(0xffe4e9ee));
+        g.setColour(device ? juce::Colour(0xffe4e9ee) : palette.text);
         const auto info = (selected == leadSlot ? juce::String("Lead") : "V" + juce::String(int(selected + 1)))
             + (s.present ? (s.enabled ? "   LIVE" : "   OFF") : "   ABSENT")
             + "   Pitch " + juce::String(s.pitchSemitones, 2) + " st   |   Fine " + juce::String(s.detuneCents, 1)

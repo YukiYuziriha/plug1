@@ -12,7 +12,7 @@ namespace {
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 void processorApiAndRecall() {
     Processor owner;
-    check(parameterIds.size() == 1727 && creativeParameterStart == 1007, "append-only creative parameter count/offset changed");
+    check(parameterIds.size() == 2087 && creativeParameterStart == 1007, "append-only creative parameter count/offset changed");
     for (size_t i = 0; i < parameterIds.size(); ++i)
         check(owner.getParameters()[int(i)] == owner.parameters.getParameter(parameterIds[i]), "parameter index changed");
     check(owner.settings().globalMix == 1 && owner.settings().leadSettings.enabled
@@ -130,7 +130,7 @@ void localMixTargets() {
 
 void qualityParametersAndRecall() {
     Processor owner;
-    check(waveQualityParameterStart == 914 && parameterIds.size() == 1727, "quality index or expanded parameter count changed");
+    check(waveQualityParameterStart == 914 && parameterIds.size() == 2087, "quality index or expanded parameter count changed");
     check(owner.getParameters()[913] == owner.parameters.getParameter("fx15WaveShapeAmount"),
         "quality moved an existing wave parameter");
     for (size_t slot = 1; slot < 16; ++slot) {
@@ -310,11 +310,81 @@ void populatedGraphStress() {
         << ms << " ms per audio second (informational, machine-dependent)" << char(10);
 }
 
+void creativeFilterStress() {
+    for (double rate : {48000., 96000.}) {
+        auto owner = std::make_unique<Processor>();
+        const auto set = [&](const juce::String& id, float value) {
+            auto* p = owner->parameters.getParameter(id);
+            check(p != nullptr, "creative stress parameter missing");
+            p->setValueNotifyingHost(p->convertTo0to1(value));
+        };
+        set("advancedOn", 1);
+        for (size_t v = 0; v < 8; ++v) {
+            set(voicePresentParameterId(v), 1); set(voiceParameterId(v, "On"), 1);
+            set(voicePitchParameterId(v), v % 2 ? 7 : -5);
+        }
+        Graph graph = defaultGraph();
+        graph.links.erase(std::remove_if(graph.links.begin(), graph.links.end(), [](auto& link) { return link.destination == 13; }), graph.links.end());
+        constexpr NodeType types[] = {NodeType::delay, NodeType::reverb, NodeType::compressor,
+            NodeType::bitcrusher, NodeType::granular, NodeType::xpFilter, NodeType::synthFilter,
+            NodeType::gate, NodeType::stereo, NodeType::gain};
+        uint32_t previous = 12;
+        for (size_t i = 0; i < std::size(types); ++i) {
+            RoutingNode node{uint32_t(100 + i), types[i]};
+            node.mix = i < 5 ? .25f : 1.f;
+            if (types[i] == NodeType::reverb) {
+                node.creative[CreativeParameter::reverbPitchAmount] = 45;
+                node.creative[CreativeParameter::reverbSwell] = 250;
+            }
+            if (types[i] == NodeType::synthFilter) {
+                node.utility[UtilityParameter::synthMode] = 6;
+                node.utility[UtilityParameter::synthResonance] = 35;
+            }
+            graph.nodes.push_back(node); graph.links.push_back({previous, node.id, 0}); previous = node.id;
+        }
+        graph.links.push_back({previous, 13, 0});
+        juce::String error;
+        check(owner->setRoutingGraph(graph, error), "creative stress graph rejected");
+        ModulationState state;
+        for (uint32_t id = 1; id <= 4; ++id) {
+            Modulator source; source.id = id; source.rateHz = .15f * id;
+            state.modulators.push_back(source);
+            state.assignments.push_back({id, utilityParameterId(7, size_t(UtilityParameter::synthCutoff)), .03f, true});
+            state.assignments.push_back({id, creativeParameterId(2, size_t(CreativeParameter::reverbPitchAmount)), .03f, true});
+        }
+        check(owner->setModulationState(state, error), "creative stress modulation rejected");
+        owner->prepareToPlay(rate, 137);
+        juce::AudioBuffer<float> audio(2, 137); juce::MidiBuffer midi;
+        double checksum = 0, maxBlockMs = 0;
+        const auto start = std::chrono::steady_clock::now();
+        int samples = 0;
+        for (; samples < int(rate * 2); samples += audio.getNumSamples()) {
+            for (int i = 0; i < audio.getNumSamples(); ++i) {
+                const float x = .08f * std::sin(float((samples + i) / rate * 1382.3));
+                audio.setSample(0, i, x); audio.setSample(1, i, x * -.7f);
+            }
+            const auto blockStart = std::chrono::steady_clock::now();
+            owner->processBlock(audio, midi);
+            maxBlockMs = std::max(maxBlockMs, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - blockStart).count());
+            for (int channel = 0; channel < 2; ++channel) for (int i = 0; i < audio.getNumSamples(); ++i) {
+                const float x = audio.getSample(channel, i);
+                check(std::isfinite(x), "creative stress nonfinite audio"); checksum += std::abs(x);
+            }
+        }
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        check(checksum > 0, "creative stress went silent");
+        std::cout << "Creative/filter stress: 8 pitched voices, 10 serial FX (shimmer/swell/formant), 4 modulators at "
+            << rate << " Hz: " << ms * rate / samples << " ms/audio second, max 137-sample block "
+            << maxBlockMs << " ms (informational, machine-dependent)" << char(10);
+        owner->releaseResources();
+    }
+}
+
 void finalCreativeTarget() {
     Processor owner;
     const auto id = creativeParameterId(15, creativeParameterCount - 1);
     auto* target = owner.parameters.getParameter(id);
-    check(target && target->getParameterIndex() == 1726, "final creative target moved or is missing");
+    check(target && target->getParameterIndex() == 1771, "final creative target moved or is missing");
     target->setValueNotifyingHost(.25f);
     const float base = owner.parameters.getRawParameterValue(id)->load();
     ModulationState state;
@@ -397,6 +467,7 @@ int main() {
         localMixTargets();
         finalCreativeTarget();
         populatedGraphStress();
+        creativeFilterStress();
         for (double rate : {48000.0, 96000.0}) {
             discreteZeroCrossingAndIdle(rate);
             discreteZeroCrossingAndIdle(rate, "fx1WaveShape");

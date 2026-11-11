@@ -74,6 +74,7 @@ public:
     }
     ~ToneEffectPanel() override {
         stopTimer();
+        setLookAndFeel(nullptr);
         contentViewport.setViewedComponent(nullptr, false);
         expanded.reset();
         // Attachments must be detached before their controls are destroyed.
@@ -87,26 +88,37 @@ public:
     static constexpr int preferredHeight = 650;
     void setNeon(bool enabled) {
         neon = enabled;
-        const auto accent = juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b);
+        const auto selectedTheme = componentTheme(*this, neon);
+        const auto p = themePalette(*this, neon);
+        const bool device = selectedTheme == Theme::device;
+        panelStyle.setPalette(p);
+        setLookAndFeel(device ? nullptr : &panelStyle);
+        const auto accent = device ? p.accent : p.secondary;
         heading.setColour(juce::Label::textColourId, accent);
-        hint.setColour(juce::Label::textColourId, juce::Colour(0xffaebbc2));
+        heading.setFont(juce::Font(juce::FontOptions(14.0f,
+            selectedTheme == Theme::spectral ? juce::Font::plain : juce::Font::bold)));
+        hint.setColour(juce::Label::textColourId, device ? juce::Colour(0xffaebbc2) : p.muted);
         for (auto& c : controls) c->setNeon(neon);
         for (auto& c : bandControls) c->setNeon(neon);
         for (auto* b : std::initializer_list<juce::TextButton*>{&expand, &bandOn, &remove, &adaptive, &raw, &levelMatch}) {
-            b->setColour(juce::TextButton::buttonColourId, juce::Colour(neon ? 0xff202b40 : 0xff303932));
-            b->setColour(juce::TextButton::buttonOnColourId, accent);
-            b->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
+            b->setColour(juce::TextButton::buttonColourId, device ? juce::Colour(0xff303932) : p.inset);
+            b->setColour(juce::TextButton::buttonOnColourId, device ? accent : p.accent);
+            b->setColour(juce::TextButton::textColourOffId, device ? juce::Colour(0xffe4e9ee) : p.text);
             b->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff151b20));
         }
         for (auto* combo : {&mode, &quality}) {
-            combo->setColour(juce::ComboBox::backgroundColourId, juce::Colour(neon ? 0xff202b40 : 0xff303932));
-            combo->setColour(juce::ComboBox::textColourId, juce::Colour(0xffe4e9ee));
-            combo->setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff526071));
+            modulationui::styleCombo(*combo, p);
+            if (device) {
+                combo->setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff303932));
+                combo->setColour(juce::ComboBox::textColourId, juce::Colour(0xffe4e9ee));
+                combo->setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff526071));
+            }
         }
-        qualityLabel.setColour(juce::Label::textColourId, juce::Colour(0xffb8c4ca));
+        qualityLabel.setColour(juce::Label::textColourId, device ? juce::Colour(0xffb8c4ca) : p.muted);
+        modulationui::styleViewport(contentViewport, p);
         if (graph) graph->setNeon(neon);
         if (visual) visual->setNeon(neon);
-        if (expanded) expanded->setNeon(neon);
+        if (expanded) expanded->setTheme(selectedTheme);
         updateBandButtons();
         repaint();
     }
@@ -115,8 +127,8 @@ public:
             if (id.startsWith("fx" + juce::String(int(slot)) + "EqBand" + juce::String(int(band + 1)))) { selectBand(band); break; }
     }
     void paint(juce::Graphics& g) override {
-        g.setColour(juce::Colour(neon ? 0xff111827 : 0xff252826));
-        g.fillRoundedRectangle(getLocalBounds().toFloat(), 5);
+        g.setColour(themePalette(*this, neon).panel);
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), componentTheme(*this, neon) == Theme::device ? 5.0f : 0.0f);
     }
     void resized() override {
         contentViewport.setBounds(getLocalBounds());
@@ -193,8 +205,10 @@ private:
 private:
     class ExpandedWindow final : public juce::DocumentWindow {
     public:
-        ExpandedWindow(Processor& owner, size_t slot, NodeType type)
-            : juce::DocumentWindow("EQ8 | expanded editor", juce::Colour(0xff20262d), juce::DocumentWindow::closeButton) {
+        ExpandedWindow(Processor& owner, size_t slot, NodeType type, Theme selectedTheme)
+            : juce::DocumentWindow("EQ8 | expanded editor", themePalette(selectedTheme).background, juce::DocumentWindow::closeButton) {
+            // Desktop windows do not inherit the plugin editor's component tree.
+            getProperties().set(vocalstackThemeProperty, int(selectedTheme));
             setUsingNativeTitleBar(true);
             panel = new ToneEffectPanel(owner, slot, type);
             panel->expand.setVisible(false);
@@ -207,7 +221,12 @@ private:
             centreWithSize(780, 700);
         }
         void closeButtonPressed() override { setVisible(false); }
-        void setNeon(bool enabled) { panel->setNeon(enabled); }
+        void setTheme(Theme selectedTheme) {
+            getProperties().set(vocalstackThemeProperty, int(selectedTheme));
+            setBackgroundColour(themePalette(selectedTheme).background);
+            panel->setNeon(selectedTheme == Theme::neon);
+            repaint();
+        }
     private:
         ToneEffectPanel* panel = nullptr; // owned by DocumentWindow
     };
@@ -297,8 +316,9 @@ private:
         expand.setButtonText("Expand EQ");
         expand.setTooltip("Open a larger, resizable EQ editor. Both views follow host automation.");
         expand.onClick = [this] {
-            if (!expanded) expanded = std::make_unique<ExpandedWindow>(owner, slot, type);
-            expanded->setNeon(neon);
+            const auto selectedTheme = componentTheme(*this, neon);
+            if (!expanded) expanded = std::make_unique<ExpandedWindow>(owner, slot, type, selectedTheme);
+            expanded->setTheme(selectedTheme);
             expanded->setVisible(true);
             expanded->toFront(false);
         };
@@ -374,8 +394,8 @@ private:
         const std::array<const char*, 3> units{"Hz", "dB", "Q"};
         for (size_t i = 0; i < fields.size(); ++i) {
             auto c = std::make_unique<toneui::Control>(owner, eqBandParameterId(slot, band, fields[i]), titles[i], units[i]);
-            c->setNeon(neon);
             content.addAndMakeVisible(*c);
+            c->setNeon(neon);
             bandControls.push_back(std::move(c));
         }
         graph->select(band);
@@ -388,12 +408,16 @@ private:
         for (size_t b = 0; b < bandButtons.size(); ++b) {
             auto& button = bandButtons[b];
             const bool enabled = toneui::value(owner, eqBandParameterId(slot, b, "On")) >= 0.5f;
-            const auto colour = toneui::bandColour(b);
+            const auto colour = toneui::bandColour(b, *this, neon);
             button.setToggleState(b == selectedBand, juce::dontSendNotification);
             button.setColour(juce::TextButton::buttonColourId, colour.withAlpha(enabled ? 0.30f : 0.08f));
             button.setColour(juce::TextButton::buttonOnColourId, colour.withAlpha(enabled ? 0.85f : 0.4f));
-            button.setColour(juce::TextButton::textColourOffId, enabled ? colour.brighter(0.25f) : juce::Colour(0xff89959d));
-            button.setColour(juce::TextButton::textColourOnId, juce::Colour(0xffeef2ee));
+            const auto p = themePalette(*this, neon);
+            const bool device = componentTheme(*this, neon) == Theme::device;
+            button.setColour(juce::TextButton::textColourOffId, enabled ? colour.brighter(0.25f)
+                : device ? juce::Colour(0xff89959d) : p.muted);
+            button.setColour(juce::TextButton::textColourOnId, device ? juce::Colour(0xffeef2ee)
+                : enabled ? p.background : p.text);
         }
         const auto bandMode = int(std::lround(toneui::value(owner, eqBandParameterId(slot, selectedBand, "Mode"))));
         if (bandControls.size() == 3) {
@@ -434,6 +458,7 @@ private:
         mode.repaint(); quality.repaint(); bandOn.repaint(); adaptive.repaint(); raw.repaint(); levelMatch.repaint();
                 if (expandedView) expand.setVisible(false);
     }
+    modulationui::PanelStyle panelStyle;
     Processor& owner;
     size_t slot, selectedBand = 0;
     NodeType type;

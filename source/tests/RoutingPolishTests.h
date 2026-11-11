@@ -26,7 +26,8 @@ bool labelIs(juce::Component& root, const juce::String& text) {
 }
 
 struct Fixture {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     std::unique_ptr<vocalstack::RoutingPanel> panel;
     explicit Fixture(const Graph& graph, bool neon) {
         owner.setFlash(neon);
@@ -255,7 +256,8 @@ void foldedMainChorale() {
 
 void embeddedTabs() {
     for (const bool neon : {false, true}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         owner.setFlash(neon);
         owner.setAdvancedEnabled(true);
         setParameter(owner, vocalstack::voicePitchParameterId(0), 7.25f);

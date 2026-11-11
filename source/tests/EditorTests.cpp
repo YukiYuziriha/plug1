@@ -7,6 +7,8 @@
 #include "ToneUiTests.h"
 #include "PresetTests.h"
 #include "CreativeIntegrationTests.h"
+#include "UtilityIntegrationTests.h"
+#include "UpdateUiTests.h"
 
 #include <array>
 #include <cmath>
@@ -49,10 +51,24 @@ float parameterValue(Processor& owner, const juce::String& id) {
 }
 
 void advancedParameterContract() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 1727, "Expected 1007 preserved + 720 creative parameters");
+    expect(owner.getParameters().size() == 2087, "Expected 1007 preserved + 765 creative + 315 utility parameters");
+    for (size_t slot = 1; slot < 16; ++slot) {
+        for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
+            const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
+                                                  : 1727 + (slot - 1) * 3 + field - 48;
+            expect(vocalstack::creativeParameterIndex(slot, field) == expectedIndex,
+                   "Creative append-only mapping changed");
+            expect(parameter(owner, vocalstack::creativeParameterId(slot, field)).getParameterIndex() == int(expectedIndex),
+                   "Creative host parameter index changed");
+        }
+        for (size_t field = 0; field < vocalstack::utilityParameterCount; ++field)
+            expect(parameter(owner, vocalstack::utilityParameterId(slot, field)).getParameterIndex() == int(1772 + (slot - 1) * 21 + field),
+                   "Utility host parameter index changed");
+    }
         for (size_t slot = 1; slot < 16; ++slot)
             expect(parameter(owner, vocalstack::toneParameterId(slot, "WaveQuality")).getParameterIndex() == 914 + int(slot - 1),
                    "WaveQuality append-only host index changed");
@@ -125,7 +141,8 @@ void expectBasicVoices(const Processor& owner, float human) {
 }
 
 void advancedActivationAndReset() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     setParameter(owner, "human", 80);
     owner.setAdvancedEnabled(true);
     expect(owner.settings().advanced, "UI activation failed");
@@ -158,7 +175,9 @@ void advancedActivationAndReset() {
     expectNear(owner.settings().choraleMotion, 0.62, "Voice reset changed Chorale Motion");
     expect(owner.settings().choraleOn, "Voice reset disabled Chorale");
 
-    Processor automated;
+    std::unique_ptr<Processor> automatedStorage = std::make_unique<Processor>();
+
+    Processor& automated = *automatedStorage;
     setParameter(automated, "human", 90);
     setParameter(automated, "advancedOn", 1);
     expectBasicVoices(automated, 0.35f); // Host activation uses safe stored baseline, not message-thread rewrites.
@@ -168,7 +187,8 @@ void advancedActivationAndReset() {
 }
 
 void advancedStateRoundTrips() {
-    Processor source;
+    std::unique_ptr<Processor> sourceStorage = std::make_unique<Processor>();
+    Processor& source = *sourceStorage;
     source.setAdvancedEnabled(true);
     source.setAdvancedVisible(true);
     source.setFlash(true);
@@ -176,7 +196,8 @@ void advancedStateRoundTrips() {
         parameter(source, vocalstack::parameterIds[i]).setValueNotifyingHost(i % 2 == 0 ? 0.0f : 1.0f);
     juce::MemoryBlock saved;
     source.getStateInformation(saved);
-    Processor restored;
+    std::unique_ptr<Processor> restoredStorage = std::make_unique<Processor>();
+    Processor& restored = *restoredStorage;
     restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
     for (size_t i = 10; i < vocalstack::parameterIds.size(); ++i)
         expectNear(parameterValue(restored, vocalstack::parameterIds[i]), parameterValue(source, vocalstack::parameterIds[i]),
@@ -186,7 +207,8 @@ void advancedStateRoundTrips() {
     setParameter(restored, "human", 100);
     restored.setAdvancedEnabled(true);
     expectNear(parameterValue(restored, "voice1Gain"), -60, "Restored activation overwrote custom voice");
-    Processor pasted;
+    std::unique_ptr<Processor> pastedStorage = std::make_unique<Processor>();
+    Processor& pasted = *pastedStorage;
     expect(pasted.pasteSettings(source.settingsText()), "Appended settings paste failed");
     for (size_t i = 10; i < vocalstack::parameterIds.size(); ++i)
         expectNear(parameterValue(pasted, vocalstack::parameterIds[i]), parameterValue(source, vocalstack::parameterIds[i]),
@@ -200,7 +222,9 @@ void advancedStateRoundTrips() {
     source.setAdvancedEnabled(true);
     expectBasicVoices(source, 0.6f);
 
-    Processor partial;
+    std::unique_ptr<Processor> partialStorage = std::make_unique<Processor>();
+
+    Processor& partial = *partialStorage;
     setParameter(partial, "level", 99);
     setParameter(partial, "bypass", 1);
     expect(partial.pasteSettings("<VocalStack><PARAM id=\"voice3Formant\" value=\"-4\"/></VocalStack>"),
@@ -212,7 +236,8 @@ void advancedStateRoundTrips() {
 }
 
 void outputParameterContract() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     auto& output = parameter(owner, "outputGain");
     expect(output.paramID == "outputGain", "Output parameter ID changed");
     expect(output.getName(64) == "Output", "Output parameter must be named Output");
@@ -223,13 +248,16 @@ void outputParameterContract() {
 }
 
 void outputStateRoundTrips() {
-    Processor source;
+    std::unique_ptr<Processor> sourceStorage = std::make_unique<Processor>();
+    Processor& source = *sourceStorage;
     setParameter(source, "outputGain", -9.5f);
     juce::MemoryBlock saved;
     source.getStateInformation(saved);
     expect(saved.getSize() > 0, "Saved processor state is empty");
 
-    Processor restored;
+    std::unique_ptr<Processor> restoredStorage = std::make_unique<Processor>();
+
+    Processor& restored = *restoredStorage;
     setParameter(restored, "outputGain", 6.0f);
     restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
     expectNear(parameterValue(restored, "outputGain"), -9.5, "Saved Output value was not restored");
@@ -247,7 +275,8 @@ void outputStateRoundTrips() {
 }
 
 void legacyStateDefaults() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     setParameter(owner, "level", 23.0f);
     setParameter(owner, "outputGain", -12.0f);
     auto xml = juce::parseXML(owner.settingsText());
@@ -291,7 +320,8 @@ void legacyStateDefaults() {
 }
 
 void bypassBinding() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     auto& bypass = parameter(owner, "bypass");
     auto& output = parameter(owner, "outputGain");
     expect(owner.getBypassParameter() == &bypass, "Host bypass does not point to the named bypass parameter");
@@ -302,7 +332,8 @@ void bypassBinding() {
 }
 
 void meterPublicationAndReset() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     setParameter(owner, "level", 0.0f);
     setParameter(owner, "double", 0.0f);
     setParameter(owner, "outputGain", 6.0f);
@@ -404,9 +435,10 @@ void expectPassiveControls(juce::Component& component) {
         expectPassiveControls(*component.getChildComponent(i));
 }
 
-void editorTransportAndTextEntryForSkin(bool neon) {
-    Processor owner;
-    owner.setFlash(neon);
+void editorTransportAndTextEntryForSkin(int theme) {
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
+    owner.setSkin(theme);
     owner.setAdvancedVisible(true);
     std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
     editor->addToDesktop(0); // Keep the native peer hidden; do not activate a test window.
@@ -445,8 +477,7 @@ void editorTransportAndTextEntryForSkin(bool neon) {
 }
 
 void editorTransportAndTextEntry() {
-    editorTransportAndTextEntryForSkin(false);
-    editorTransportAndTextEntryForSkin(true);
+    for (int theme = 0; theme < 3; ++theme) editorTransportAndTextEntryForSkin(theme);
 }
 
 juce::Button* findButton(juce::Component& parent, const juce::String& text) {
@@ -523,10 +554,12 @@ void saveSnapshot(juce::Component& editor, const juce::String& filename) {
     std::cout << "Snapshot: " << destination.getFullPathName().toStdString() << '\n';
 }
 
-void editorSkin(bool neon) {
-    Processor owner;
-    owner.setFlash(neon);
-    const juce::String skin = neon ? "Neon" : "Device";
+void editorSkin(int theme) {
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
+    owner.setSkin(theme);
+    const juce::String skin = theme == 2 ? "Spectral" : theme == 1 ? "Neon" : "Device";
+    const auto filename = "editor-" + skin.toLowerCase();
     std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
     expect(editor != nullptr, skin + " editor creation failed");
     editor->setVisible(true);
@@ -596,15 +629,18 @@ void editorSkin(bool neon) {
     for (auto* control : controls)
         if (auto* button = dynamic_cast<juce::Button*>(control);
             button != nullptr && button->getButtonText().startsWith("SKIN")) {
-            button->onClick();
-            expectPassiveControls(*editor);
-            button->onClick();
-            expectPassiveControls(*editor);
+            for (int step = 1; step <= 3; ++step) {
+                button->onClick();
+                expect(owner.getSkin() == (theme + step) % 3, "Skin button must cycle all three themes");
+                expect(int(editor->getProperties()[vocalstack::vocalstackThemeProperty]) == owner.getSkin(),
+                       "Editor root theme did not follow skin button");
+                expectPassiveControls(*editor);
+            }
         }
 
     // Keep injection and capture synchronous so the editor's timer cannot replace the synthetic snapshot.
     meters->setMeters(syntheticMeters());
-    saveSnapshot(*editor, neon ? "editor-neon.png" : "editor-device.png");
+    saveSnapshot(*editor, filename + ".png");
     const int windowHeight = editor->getHeight();
     const int windowWidth = editor->getWidth();
     for (const auto* obsolete : {"Show Advanced", "Hide Advanced", "Voice stack", "Open Routing"})
@@ -648,10 +684,10 @@ void editorSkin(bool neon) {
         p.setValueNotifyingHost(p.getDefaultValue());
     }
     editor->setSize(940, 924);
-    saveSnapshot(*editor, neon ? "editor-neon-advanced.png" : "editor-device-advanced.png");
+    saveSnapshot(*editor, filename + "-advanced.png");
     for (int i = 0; i < 6; ++i) addVoice->onClick();
     expectPassiveControls(*editor);
-    saveSnapshot(*editor, neon ? "editor-neon-eight-voices.png" : "editor-device-eight-voices.png");
+    saveSnapshot(*editor, filename + "-eight-voices.png");
     basic->onClick();
     expectBasicVoices(owner, owner.settings().human);
     editor->setSize(windowWidth, windowHeight);
@@ -672,17 +708,31 @@ void editorSkin(bool neon) {
 #include "RoutingPolishTests.h"
 #include "StackModulationUiTests.h"
 
-void deviceEditor() { editorSkin(false); }
-void neonEditor() { editorSkin(true); }
+void deviceEditor() { editorSkin(0); }
+void neonEditor() { editorSkin(1); }
+void spectralEditor() { editorSkin(2); }
 }
 
-int main() {
+int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI gui;
+    if (argc == 2 && juce::String(argv[1]) == "--render") {
+        try {
+            vocalstack::updateUiTests::screenshots();
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "[FAIL] Render: " << error.what() << '\n';
+            return 1;
+        }
+    }
+    if (argc != 1) {
+        std::cerr << "Usage: VocalStackEditorTests [--render]\n";
+        return 2;
+    }
     struct Test {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 42> tests{{
+    const std::array<Test, 47> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -704,6 +754,12 @@ int main() {
         {"Creative FX processor, state, automation, factories and both skins", [] {
             expect(vocalstack::creativeIntegrationTests::run(), "Creative integration group failed; see named failures above");
         }},
+        {"Utility processor, append-only parameters, state and audio", [] {
+            expect(vocalstack::utilityIntegrationTests::run(), "Utility integration group failed; see named failures above");
+        }},
+        {"Three-theme state, legacy migration and preset isolation", vocalstack::updateUiTests::themeState},
+        {"All utility inspectors in all three themes", vocalstack::updateUiTests::utilityInspectors},
+        {"Coherent creative visual models in all three themes", vocalstack::updateUiTests::creativeVisuals},
         {"Voice 1 FX alters only Voice 1 with automatic merging", perVoiceFxSignalPath},
         {"Routing mouse edits, history, focus and both skins", routingUiRegression},
         {"Embedded Stack/Routing tabs retain Advanced in both skins", routingPolish::embeddedTabs},
@@ -726,7 +782,8 @@ int main() {
                 {"Waveshaper transfer follows live effective modulation", stackModulationUi::modulatedWaveshaperCurve},
                 {"Routing context and Add Node menus anchor to cursor", stackModulationUi::menuCursorPlacement},
         {"Device editor and PNG", deviceEditor},
-        {"Neon editor and PNG", neonEditor}
+        {"Neon editor and PNG", neonEditor},
+        {"Spectral editor and PNG", spectralEditor}
     }};
     int failures = 0;
     for (const auto& test : tests) {

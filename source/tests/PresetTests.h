@@ -38,7 +38,8 @@ struct TemporaryFolder {
 
 inline void roundTripAndUndo() {
     TemporaryFolder files;
-    Processor p;
+    std::unique_ptr<Processor> pStorage = std::make_unique<Processor>();
+    Processor& p = *pStorage;
     PresetManager manager(p, files.preferences());
     success(manager.setFolder(files.root));
     p.setFlash(false);
@@ -60,13 +61,13 @@ inline void roundTripAndUndo() {
     const auto saved = manager.captureText("Round trip");
     const auto savedDocument = document(saved);
     const auto savedPatch = savedDocument.getChild(0);
-    require(!savedPatch.hasProperty("flash") && !savedPatch.hasProperty("advancedVisible"), "Preset leaked skin/drawer preferences");
+    require(!savedPatch.hasProperty("skin") && !savedPatch.hasProperty("flash") && !savedPatch.hasProperty("advancedVisible"), "Preset leaked skin/drawer preferences");
     require(!savedPatch.getChildWithName("RoutingLayout").hasProperty("editorWidth"), "Preset leaked window size");
     require(!saved.contains(files.root.getFullPathName()), "Preset leaked local folder");
 
     p.resetParameters();
     write(p, "outputGain", -2); write(p, "voice1Pitch", 5);
-    p.setFlash(true);
+    p.setSkin(2);
     p.setAdvancedVisible(true);
     layout = p.getRoutingLayout();
     layout.setProperty("editorWidth", 1333, nullptr); layout.setProperty("editorHeight", 888, nullptr);
@@ -78,7 +79,7 @@ inline void roundTripAndUndo() {
     require(std::abs(read(p, "fx1WaveDrive") - 11) < .001f, "Preset lost FX state");
     require(p.getRoutingGraph().nodes.size() == 3 && p.getRoutingGraph().nodes[1].id == 100, "Preset lost routing graph");
     require(p.getModulationState().assignments.size() == 1 && p.getModulationState().modulators[0].id == 17, "Preset lost modulation");
-    require(p.isFlash() && p.isAdvancedVisible(), "Preset changed current presentation preferences");
+    require(p.getSkin() == 2 && p.isAdvancedVisible(), "Preset changed current presentation preferences");
     require(int(p.getRoutingLayout()["editorWidth"]) == 1333 && int(p.getRoutingLayout()["editorHeight"]) == 888, "Preset changed window size");
     success(manager.undoLoad());
     require(!manager.canUndoLoad(), "One-step undo was not consumed");
@@ -88,7 +89,8 @@ inline void roundTripAndUndo() {
 
 inline void rejectWithoutMutation() {
     TemporaryFolder files;
-    Processor p;
+    std::unique_ptr<Processor> pStorage = std::make_unique<Processor>();
+    Processor& p = *pStorage;
     PresetManager manager(p, files.preferences());
     const auto text = manager.captureText("Valid");
     success(manager.loadText(text));
@@ -137,10 +139,11 @@ inline void filesAndLocalPreferences() {
     TemporaryFolder files;
     const auto userFolder = files.root.getChildFile("presets");
     success(userFolder.createDirectory());
-    Processor p;
+    std::unique_ptr<Processor> pStorage = std::make_unique<Processor>();
+    Processor& p = *pStorage;
     PresetManager manager(p, files.preferences());
     std::vector<PresetManager::Entry> entries;
-    require(manager.refresh(entries).failed() && entries.size() == 5, "Missing folder should surface choice while keeping factories");
+    require(manager.refresh(entries).failed() && entries.size() == 8, "Missing folder should surface choice while keeping factories");
     const auto file = userFolder.getChildFile("Saved.vocalstackpreset");
     require(manager.saveNew(file).failed(), "Saved without an explicit folder choice");
     success(manager.setFolder(userFolder));
@@ -152,7 +155,7 @@ inline void filesAndLocalPreferences() {
     require(manager.saveNew(userFolder.getChildFile("wrong.xml")).failed(), "Wrong extension accepted");
     require(manager.saveNew(files.root.getChildFile("outside.vocalstackpreset")).failed(), "Saved outside selected folder");
     success(manager.refresh(entries));
-    require(entries.size() == 6 && entries.back().name == "Saved", "User browser refresh failed");
+    require(entries.size() == 9 && entries.back().name == "Saved", "User browser refresh failed");
     success(manager.load(entries.back()));
     require(std::abs(read(p, "outputGain") + 6) < .001f, "File load failed");
     {
@@ -171,8 +174,10 @@ inline void filesAndLocalPreferences() {
 
 inline void factories() {
     TemporaryFolder files;
-    Processor p;
+    std::unique_ptr<Processor> pStorage = std::make_unique<Processor>();
+    Processor& p = *pStorage;
     PresetManager manager(p, files.preferences());
+    require(PresetManager::factoryNames().size() == 8, "Expected eight factory patches");
     require(p.parameters.getParameter("fx1delay_time") != nullptr, "Creative factory parameters are not integrated");
     for (int i = 0; i < PresetManager::factoryNames().size(); ++i) {
         juce::ValueTree clean, dirty;
@@ -188,12 +193,13 @@ inline void factories() {
         success(manager.load({PresetManager::factoryNames()[i], {}, i}));
     }
     juce::ValueTree ignored;
-    require(manager.factoryPatch(-1, ignored).failed() && manager.factoryPatch(5, ignored).failed(), "Invalid factory index accepted");
+    require(manager.factoryPatch(-1, ignored).failed() && manager.factoryPatch(8, ignored).failed(), "Invalid factory index accepted");
 }
 
 inline void toolbarFocusPolicy() {
     TemporaryFolder files;
-    Processor p;
+    std::unique_ptr<Processor> pStorage = std::make_unique<Processor>();
+    Processor& p = *pStorage;
     PresetBar bar(p, files.preferences());
     bar.setSize(904, 48);
     require(!bar.getWantsKeyboardFocus(), "Preset bar grabs keyboard focus");

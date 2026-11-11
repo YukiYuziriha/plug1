@@ -1,0 +1,6 @@
+# Preserve the pinned upstream bytes recorded in SHA256SUMS on every platform.
+ThirdParty/Vital/src/** -text -whitespace
+# Generated from upstream class bodies; retain their whitespace too.
+ThirdParty/Vital/reference/Upstream.h -whitespace
+ThirdParty/Vital/LICENSE -text
+ThirdParty/Vital/UPSTREAM_README.md -text

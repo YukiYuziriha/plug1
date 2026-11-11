@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "ProcessorRoutingState.h"
 #include <cmath>
+#include <memory>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -38,9 +39,12 @@ inline Graph graph(NodeType type) {
 }
 
 inline void parameterContract() {
-    Processor p;
-    require(p.getParameters().size() == 1727 && parameterIds.size() == 1727 && creativeParameterStart == 1007,
-            "Incorrect host count or creative append offset");
+    auto processor = std::make_unique<Processor>();
+    auto& p = *processor;
+    require(p.getParameters().size() == 2087 && parameterIds.size() == 2087 && creativeParameterStart == 1007
+        && legacyCreativeParameterCount == 48 && creativeParameterCount == 51
+        && utilityParameterStart == 1772 && utilityParameterCount == 21,
+            "Incorrect host count or appended parameter layout");
     std::unordered_set<std::string> unique;
     for (size_t i = 0; i < parameterIds.size(); ++i) {
         require(unique.insert(parameterIds[i]).second, "Duplicate host ID");
@@ -53,6 +57,16 @@ inline void parameterContract() {
         for (size_t b = 0; b < 8; ++b)
             for (size_t f = 0; f < 5; ++f)
                 require(eqBandParameterId(slot, b, eqBandParameterFields[f]) == parameterIds[toneParameterIndex(slot, 9 + b * 5 + f)], "Band helper offset");
+    }
+    for (size_t slot = 1; slot < 16; ++slot) {
+        for (size_t f = 0; f < creativeParameterCount; ++f) {
+            const auto index = f < 48 ? 1007 + (slot - 1) * 48 + f
+                : 1727 + (slot - 1) * 3 + f - 48;
+            require(creativeParameterIndex(slot, f) == index, "Creative host index changed");
+            require(creativeParameterId(slot, f) == parameterIds[index], "Creative helper offset");
+        }
+        for (size_t f = 0; f < utilityParameterCount; ++f)
+            require(utilityParameterId(slot, f) == parameterIds[1772 + (slot - 1) * 21 + f], "Utility helper offset");
     }
     constexpr std::array<float, 9> low{0, -24, 0, -24, -24, 0, 2, 20, 20};
     constexpr std::array<float, 9> high{36, 12, 2, 24, 24, 1, 3, 20000, 20000};
@@ -77,7 +91,8 @@ inline void parameterContract() {
 }
 
 inline void stateAndLegacyMigration() {
-    Processor source;
+    auto sourceProcessor = std::make_unique<Processor>();
+    auto& source = *sourceProcessor;
     // This fixture dirties the original tone block, not later Lead/global controls.
     for (size_t i = 139; i < originalParameterCount; ++i) {
         auto* parameter = source.parameters.getParameter(parameterIds[i]);
@@ -86,9 +101,11 @@ inline void stateAndLegacyMigration() {
     const auto saved = state(source);
     juce::MemoryBlock binary;
     source.getStateInformation(binary);
-    Processor restored;
+    auto restoredProcessor = std::make_unique<Processor>();
+    auto& restored = *restoredProcessor;
     restored.setStateInformation(binary.getData(), int(binary.getSize()));
-    Processor pasted;
+    auto pastedProcessor = std::make_unique<Processor>();
+    auto& pasted = *pastedProcessor;
     require(pasted.pasteSettings(source.settingsText()), "Tone paste failed");
     for (size_t i = 139; i < originalParameterCount; ++i) {
         const auto* id = parameterIds[i];
@@ -100,6 +117,14 @@ inline void stateAndLegacyMigration() {
     auto old = saved.createCopy();
     for (size_t i = 139; i < parameterIds.size(); ++i)
         old.removeChild(old.getChildWithProperty("id", parameterIds[i]), nullptr);
+    // Dirty every appended control so missing legacy values cannot pass by
+    // retaining defaults left untouched by the original tone-only fixture.
+    for (size_t i = 139; i < parameterIds.size(); ++i) {
+        auto* parameter = restored.parameters.getParameter(parameterIds[i]);
+        parameter->setValueNotifyingHost(parameter->getDefaultValue() < 0.5f ? 1.0f : 0.0f);
+        require(read(restored, parameterIds[i]) != parameter->convertFrom0to1(parameter->getDefaultValue()),
+                "Legacy migration fixture did not dirty parameter: " + juce::String(parameterIds[i]));
+    }
     require(restored.pasteSettings(old.toXmlString()), "Old 139 state rejected");
     constexpr std::array<float, 8> frequencies{60, 120, 250, 500, 1000, 2500, 6000, 12000};
     for (size_t i = 139; i < parameterIds.size(); ++i) {
@@ -118,7 +143,8 @@ inline void stateAndLegacyMigration() {
 }
 
 inline void modelAndCreation() {
-    Processor p;
+    auto processor = std::make_unique<Processor>();
+    auto& p = *processor;
     auto g = graph(NodeType::equalizer);
     auto& n = g.nodes[1];
     n.waveshaper = {false, 13, -7, 0.6f, 2};
@@ -201,7 +227,8 @@ inline double renderTone(Processor& p, int& position) {
 
 inline void audioBridge() {
     for (auto type : {NodeType::waveshaper, NodeType::equalizer, NodeType::crossover}) {
-        Processor p;
+        auto processor = std::make_unique<Processor>();
+        auto& p = *processor;
         write(p, "levelOn", 0);
         write(p, "doubleOn", 0);
         write(p, "formantOn", 0);

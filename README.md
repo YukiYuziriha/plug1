@@ -1,12 +1,14 @@
-# Vocal Stack 1.6.0
+# Vocal Stack 1.7.0
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-1.6.0 adds five independent routing effects—**Delay, Reverb, Compressor,
-Bitcrusher and Granular**—and full-patch factory/user presets in the editor footer.
-Route each effect on one voice, a group, or the complete stack. Existing voice,
-EQ8, multiband, waveshaper and LFO/Random workflows remain available.
+1.7.0 adds **Gain, Stereo Utility, Gate/Expander, XP Filter and Synth Filter**,
+reverb **pitched feedback / shimmer and wet swell**, themed effect visualizations,
+and a third **Spectral** skin alongside the flattened Neon skin. Synth Filter uses
+actual GPL-covered, upstream-derived filter equations—not category stand-ins.
+Delay, Reverb, Compressor, Bitcrusher, Granular and whole-patch presets remain;
+eight factory patches now provide starting points for routing and modulation.
 
 Release CLAP/VST3 builds, tracked packages and automated validation are complete.
 Packaged binaries match the Release artifacts by SHA256, and the packaged CLAP
@@ -40,17 +42,19 @@ and [VST3](https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical%2BDo
 | Formant | 0.0 st | Moves vocal resonances at the original lead pitch |
 | Output | 0.0 dB | Final output trim, −24 to +12 dB; double-click for unity |
 
-Bitwig's **Plug-in Parameters** button exposes all **1727 parameters**, including
+Bitwig's **Plug-in Parameters** button exposes all **2087 parameters**, including
 Lead, eight generated voices, musical Pitch, presence, 16 fixed FX slots and 48
-local mixer slots. The previous 1007 IDs/indices are retained; **48 creative-effect
-descriptors × 15 additional FX slots = 720 appended host parameters**. The original **Vocal Stack**
+local mixer slots. The previous 1727 IDs/indices are retained; **3 new reverb
+controls × 15 slots + 21 utility/filter controls × 15 slots = 360 appended
+parameters**. The original **Vocal Stack**
 CLAP Remote Controls page retains its five knobs and three module switches. A
 second **Output** page supplies output trim and bypass. Original parameter IDs,
 indices and remote assignments are unchanged; new parameters are appended.
 Older sessions default Advanced and Chorale to off and Output to 0 dB when absent.
 
-Click **SKIN / DEVICE** or **SKIN / NEON** to switch the editor. Neon uses a
-flat Shibuya-at-night palette. The project
+The **SKIN** button cycles **Device → Neon → Spectral**. Neon uses a flat
+Shibuya-at-night palette and retains its rotary design; Spectral uses flat charcoal,
+lavender and teal. The project
 state stores the skin, controls, and bypass switches. **Reset** restores the
 audio controls. **Copy settings** and **Paste** transfer settings between
 instances. Full bypass uses the latency-aligned dry signal, ignoring output trim.
@@ -237,8 +241,8 @@ shortcut through custom routing. A custom graph may omit it entirely. Global
 bypass always returns latency-aligned original input, ignoring graph and trim.
 
 At most 16 FX instances are supported: the original main Chorale slot plus 15
-shared additional slots for Chorale, Waveshaper, EQ8, Multiband and the five
-creative effects. FX inspector controls are host parameters; topology
+shared additional slots for Chorale, Waveshaper, EQ8, Multiband, the five
+creative effects and the five utility/filter types. FX inspector controls are host parameters; topology
 and positions are saved separately, not automated. **Disconnections apply immediately:**
 unconnected inputs receive silence, and disconnected Output is silent (after the
 short de-click ramp). An unused disconnected effect does not invalidate a working
@@ -275,7 +279,7 @@ echo/grain timing is intentional, not compensated away.
 | Node | Controls and limits |
 | --- | --- |
 | **Delay** | Free time 1–2000 ms or tempo sync 1/16–8 quarter-note beats; feedback 0–95%, ping-pong, low/high cuts, feedback drive, ducking/release and repeat pitch −12…+12 st. Synced storage covers 24 s at 20 BPM; time changes slew with a tape-like pitch change. |
-| **Reverb** | Eight-line feedback delay network (FDN), predelay 0–250 ms, room size, midband RT60 target 0.15–20 s, diffusion, early reflections, low/high cuts, HF damping, width 0–150%, tail modulation, ducking/release, saturation and freeze. No pitch/shimmer or swell controls. |
+| **Reverb** | Eight-line feedback delay network (FDN), predelay 0–250 ms, room size, midband RT60 target 0.15–20 s, diffusion, early reflections, low/high cuts, HF damping, width 0–150%, tail modulation, ducking/release, saturation and freeze. Feedback pitch −12…+12 st, pitched feedback 0–100%, and wet swell 0–2000 ms; the direct vocal is not softened. |
 | **Compressor** | Zero-lookahead, stereo-linked peak detector; threshold, ratio 1:1–20:1, knee 0–24 dB, attack 0.1–100 ms, release 10–2000 ms, detector high-pass 20–1000 Hz, gain-reduction readout and manual makeup −12…+24 dB. No automatic makeup. |
 | **Bitcrusher** | Bit depth 3–24, sample/hold rate 1–96 kHz (limited by host rate), input drive, input-gated TPDF dither and output low-pass. Aliasing is intentional; the postfilter is not an antialiased sample-rate converter. |
 | **Granular** | Up to 32 grain voices with fixed Hann-like polynomial windows; pitch −24…+12 st, length 20–250 ms, density 4–80 Hz, stereo spread, lookback 0–1500 ms, timing scatter, reverse, capture freeze, low/high cuts and capture drive. Not formant-preserving; launches are skipped when all voices are busy. |
@@ -304,10 +308,48 @@ These are original DSP, UI and presets, not proprietary code/assets/preset ports
 
 ![Granular vocal texture inspector in the Device skin](VocalStack-Granular.png)
 
+### Utility and character filters
+
+- **Gain:** smoothed −120…+24 dB, with −120 displayed as −∞ and producing exact mute.
+- **Stereo Utility:** 0–200% width, balance, L/R swap and independent polarity.
+- **Gate/Expander:** stereo-linked threshold, range, ratio, attack, hold and release,
+  with measured gain reduction rather than a decorative meter.
+- **XP Filter:** 15 original cascaded state-variable configurations, resonance and
+  nonlinear drive. XP-inspired, not proprietary Bitwig code or verified XP parity.
+- **Synth Filter:** 13 configurations adapted from pinned open-source Vital DSP:
+  Digital LP12/HP12/BP12/Notch24/LP24, Ladder LP24/HP24, Dirty LP12, Diode LP24,
+  Analog LP12/HP12, Comb and four-formant A/I/U/O morph. Model-specific
+  nonlinearities and resonance/drive mappings are retained. Comb feedback / vowel X
+  is model-dependent; Drive is inactive in Comb.
+
+Drag a filter graph horizontally for cutoff and vertically for resonance. The
+response is the **wet** response before Mix; pre/post spectra are actual audio.
+Synth curves are finite-impulse, small-signal estimates from the actual adapted
+DSP, cached on a background worker at up to 10 Hz, not exact nonlinear responses.
+XP's undriven settled response is analytical. Self-oscillation, extreme drive and
+moving comb delays can differ substantially from a frozen plotted curve.
+
+The adaptation is scalar/double, uses explicit coefficient evaluation instead of
+the upstream LUT, and has standalone smoothing/state handling, not the complete
+SIMD synthesizer or its oversampling engine. It is **not bit-exact full-plugin
+parity**. See [upstream provenance, mappings and reference tests](ThirdParty/Vital/README.md).
+Source attribution and GPL notices are retained; no upstream branding, artwork,
+UI assets or factory presets are imported. The combined release is GPL-3.0-or-later;
+see [LICENSE](LICENSE). Third-party components retain their respective notices.
+
+Effect graphics now include reverb decay/swell/pitch, delay repeats, granular
+windows, compressor knee and bitcrusher steps. These are **parameter-derived
+schematics**, not measured reverb IRs or live-grain telemetry. Compressor/gate GR,
+waveforms and FFT displays are measured. Waveshaper retains its actual transfer
+model with a thin themed curve and shaded fill.
+
+![Spectral Synth Filter](VocalStack-Spectral-Filter.png)
+
 ### Full-patch presets
 
-Use the **footer browser** for the five original factory patches: **Dark Lead**,
-**Grit Adlibs**, **Deep Double**, **Night Echo** and **Cloud Choir**. Loading replaces
+Use the **footer browser** for eight original factory patches: **Dark Lead**,
+**Grit Adlibs**, **Deep Double**, **Night Echo**, **Cloud Choir**, **Clean Vocal Utility**,
+**Vocal Filter Motion** and **Shimmer Bloom**. Loading replaces
 the full audio patch: parameters, routing, node positions and modulation.
 Your current skin, window size and other presentation preferences are retained.
 
@@ -529,10 +571,9 @@ The first configure fetches pinned dependencies. The focused release run uses:
 ctest --test-dir build -C Release -E '^VocalStackDSP$' --output-on-failure
 ```
 
-The 18 focused suites cover routing/voices, tone/creative DSP and tails,
+The 19 focused suites cover routing/voices, tone/creative/utility DSP and tails,
 automation/modulation, pitch/formant, CLAP hosting and editor/preset/state behavior.
-The long legacy `VocalStackDSP` suite is separate and was excluded from the release
-run. `-DVOCALSTACK_TEST_BASELINE=ON` enables the optional pinned-history comparison;
+The long legacy `VocalStackDSP` suite is separate; it also passed for 1.7.0. `-DVOCALSTACK_TEST_BASELINE=ON` enables the optional pinned-history comparison;
 it requires Python and the pinned pre-routing revision in local Git history.
 Plugins appear under `build/VocalStack_artefacts/Release/`. To build just portable
 DSP tests, configure with `-DVOCALSTACK_BUILD_PLUGIN=OFF`.
@@ -552,7 +593,9 @@ the CLAP tail sentinel.
 - `HarmonyShifter.h`: fixed-latency STFT musical pitch/formant processor.
 - `Waveshaper.h` / `Equalizer.h` / `Multiband.h`: independent tone processors.
 - `ToneEffectPanel.h` / `ToneEqGraph.h`: selected-FX controls and native EQ graph.
-- `CreativeEffects.h` / `CreativeEffectPanel.h`: five creative processors and inspectors.
+- `CreativeEffects.h` / `CreativeEffectPanel.h` / `CreativeEffectVisual.h`: creative DSP, inspectors and schematics.
+- `UtilityFilters.h` / `VitalFilterDSP.h` / `UtilityEffectPanel.h`: utilities, character filters and cached response plots.
+- `VisualTheme.h`: shared Device/Neon/Spectral palette and inheritance.
 - `PresetManager.h`: validated full-patch files, factory patches and footer browser.
 - `Routing.h`: bounded DAG model, validation, explicit mixers, independent FX
   instances, execution-plan publication and off-audio reclamation.
@@ -580,18 +623,30 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
-**1.6.0:** Release CLAP/VST3 builds and all **18 focused CTest suites passed**,
-including **42 editor/state groups plus creative integration cases**, with both
-skins covered and screenshots reviewed. Coverage includes independent creative
-FX, automation/state, full-patch factories, preset safety/undo and tail reporting.
-The long legacy `VocalStackDSP` suite was excluded, not claimed passed. No actual
-Bitwig listening check was performed. Tracked CLAP/VST3 packages were refreshed and SHA256-verified against the Release
-artifacts; the packaged CLAP smoke test passed. Installation was not requested or
-performed.
+**1.7.0:** Release CLAP/VST3 builds and all **19 focused CTest suites passed**,
+including **47 editor/state groups plus creative/utility integration cases**.
+The separate legacy DSP suite also passed (160.5 s). Fifteen real-editor captures
+cover Stack, XP, Synth, Reverb and Waveshaper across all three themes. Coverage
+includes upstream-class reference comparisons, sample rates, automation, state,
+finite output, zero process allocations, freeze/tails, graph gestures and presets.
+Tracked CLAP/VST3 packages are SHA256-matched to Release artifacts, with packaged
+CLAP smoke validation. No installation or actual Bitwig listening/transport check
+was performed.
+
+Informational Release stress measurements on this development machine (stereo,
+137-sample blocks, two audio seconds): eight pitched voices plus ten serial FX
+including pitched reverb/swell and a formant filter, four modulators, took about
+**555 ms/audio second at 48 kHz** and **1138 ms at 96 kHz**. Observed maximum block
+times were 3.09/4.71 ms; these are wall-clock observations, not deadline guarantees.
+The extreme 96 kHz patch exceeded real time. Reduce voices/effects or use 48 kHz;
+large buffers help scheduling but cannot fix sustained CPU overload. The older
+15×4x-wavefolder stress patch also exceeded real time (1430 ms/audio second).
+Ordinary stereo DSP measured 15.6% of real time in the separate legacy run.
+No claim of universally safe real-time performance is made.
 
 ### Historical verification
 
-The records below describe earlier releases, not v1.6.0 installation or packaging.
+The records below describe earlier releases, not v1.7.0 installation or packaging.
 
 **1.5.2:** Release CLAP/VST3 builds and all **16 focused CTest suites passed**,
 including **40 editor/state groups**. New checks cover the compact LFO grid,

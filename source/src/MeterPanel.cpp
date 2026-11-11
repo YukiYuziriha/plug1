@@ -69,18 +69,22 @@ void MeterPanel::mouseDown(const MouseEvent& event) {
 
 
 void MeterPanel::paint(Graphics& g) {
-    g.fillAll(rgb(neon ? 0x090d17 : 0x292b2a));
-    const auto background = rgb(neon ? 0x111827 : 0x252826);
-    const auto border = rgb(neon ? 0x2b3a53 : 0x50564f);
-    const auto foreground = rgb(neon ? 0xf1f5ff : 0xf4f4ea);
-    const auto muted = rgb(neon ? 0x9eafc8 : 0xbabdb3);
-    const auto good = rgb(neon ? 0x64f5e3 : 0x9ac37d);
-    const auto holdColour = rgb(neon ? 0xf8de6b : 0xf5a24b);
+    const auto selectedTheme = componentTheme(*this, neon);
+    const auto p = themePalette(*this, neon);
+    const bool device = selectedTheme == Theme::device;
+    g.fillAll(p.background);
+    const auto background = p.panel;
+    const auto border = p.border;
+    const auto foreground = device ? rgb(0xf4f4ea) : p.text;
+    const auto muted = device ? rgb(0xbabdb3) : p.muted;
+    const auto good = p.secondary;
+    // Amber/red retain their metering meanings in every skin.
+    const auto holdColour = rgb(device ? 0xf5a24b : 0xf8de6b);
     const auto overload = rgb(0xff726e);
-    const auto track = rgb(neon ? 0x090d17 : 0x171b18);
-    const float radius = neon ? 0.0f : 5.0f;
+    const auto track = selectedTheme == Theme::neon ? p.background : p.inset;
+    const float radius = device ? 5.0f : 0.0f;
 
-    // One geometry for both skins. The editor supplies a 244 x 246 panel.
+    // One geometry for all skins. The editor supplies a 244 x 246 panel.
     Graphics::ScopedSaveState state(g);
     g.addTransform(AffineTransform::scale(static_cast<float>(getWidth()) / 244.0f,
                                          static_cast<float>(getHeight()) / 246.0f));
@@ -89,8 +93,8 @@ void MeterPanel::paint(Graphics& g) {
     g.fillRoundedRectangle(frame, radius);
     g.setColour(hasKeyboardFocus(false) ? good : border);
     g.drawRoundedRectangle(frame, radius, hasKeyboardFocus(false) ? 2.0f : 1.0f);
-    g.setColour(good);
-    g.fillRect(6.0f, 1.0f, 232.0f, 2.0f);
+    g.setColour(selectedTheme == Theme::spectral ? p.border : good);
+    g.fillRect(6.0f, 1.0f, 232.0f, selectedTheme == Theme::spectral ? 1.0f : 2.0f);
 
     constexpr float top = 66.0f, bottom = 190.0f;
     const auto yForDb = [](float db) {

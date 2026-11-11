@@ -257,7 +257,8 @@ inline void verifyCurve(Processor& owner, toneui::EqGraph& graph, bool neon) {
 }
 
 inline void eqPanel(bool neon) {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     write(owner, fxParameterId(1, "On"), 1);
     ToneEffectPanel panel(owner, 1, NodeType::equalizer);
     panel.setSize(400, 650);
@@ -362,7 +363,8 @@ inline void eqPanel(bool neon) {
 inline void edgesAndCapacity(bool neon) {
     // Fresh graphs isolate each edge from earlier shelves, cuts and handle hits.
     for (const int mode : {1, 2, 6, 10, 13}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         write(owner, fxParameterId(1, "On"), 1);
         toneui::EqGraph graph(owner, 1);
         graph.setSize(384, 265);
@@ -381,7 +383,8 @@ inline void edgesAndCapacity(bool neon) {
         near(read(owner, eqBandParameterId(1, 0, "Mode")), float(mode), "edge gesture selected wrong mode");
         gestures.balanced("edge creation");
     }
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     toneui::EqGraph graph(owner, 1);
     graph.setSize(384, 265);
     graph.setNeon(neon);
@@ -413,7 +416,8 @@ inline void edgesAndCapacity(bool neon) {
 
 inline void waveAndCrossover(bool neon) {
     for (const auto type : {NodeType::waveshaper, NodeType::crossover}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         if (type == NodeType::crossover) write(owner, toneParameterId(1, "BandCount"), 3);
         ToneEffectPanel panel(owner, 1, type);
         panel.setSize(400, 650);
@@ -449,7 +453,8 @@ inline void waveAndCrossover(bool neon) {
         transport(panel);
     }
     // Construct in two-band mode so assertions do not depend on a 30 Hz timer.
-    Processor two;
+    std::unique_ptr<Processor> twoStorage = std::make_unique<Processor>();
+    Processor& two = *twoStorage;
     write(two, toneParameterId(1, "BandCount"), 2);
     ToneEffectPanel panel(two, 1, NodeType::crossover);
     panel.setSize(400, 650);
@@ -495,7 +500,8 @@ inline juce::Component& canvas(RoutingPanel& panel) {
     return *result;
 }
 inline void routingPorts(bool neon) {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     fixture(owner);
     RoutingPanel panel(owner);
     panel.setSize(1280, 800);
@@ -563,7 +569,9 @@ inline void routingPorts(bool neon) {
             && links(owner, 100, 13, 2) == 1, "rejected input reconnect changed accepted High cable");
     transport(panel);
 
-    Processor two;
+    std::unique_ptr<Processor> twoStorage = std::make_unique<Processor>();
+
+    Processor& two = *twoStorage;
     fixture(two, 2);
     RoutingPanel twoPanel(two);
     twoPanel.setSize(1280, 800);
@@ -667,7 +675,8 @@ inline void crossoverResponse() {
 }
 
 inline void liveMonitorViews(bool neon) {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     fixture(owner);
     owner.prepareToPlay(48000, 128);
     juce::Component root;

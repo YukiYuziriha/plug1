@@ -24,7 +24,8 @@ void expectSavedGraph(const juce::ValueTree& state, const char* name, const voca
 }
 
 void voiceLifecycle() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     expectBasicVoices(owner, 0.35f);
     owner.setAdvancedEnabled(true);
     for (size_t slot = 2; slot < 8; ++slot) {
@@ -80,7 +81,8 @@ void voiceLifecycle() {
 }
 
 void legacyFourVoiceMigration() {
-    Processor source;
+    std::unique_ptr<Processor> sourceStorage = std::make_unique<Processor>();
+    Processor& source = *sourceStorage;
     setParameter(source, "voice1On", 0);
     setParameter(source, "voice3On", 0);
     setParameter(source, "voice4On", 1);
@@ -92,7 +94,8 @@ void legacyFourVoiceMigration() {
     for (const auto* type : {"RoutingGraph", "ActiveRoutingGraph", "RoutingLayout"})
         legacy.removeChild(legacy.getChildWithName(type), nullptr);
     legacy.removeProperty("advancedInitialized", nullptr);
-    Processor restored;
+    std::unique_ptr<Processor> restoredStorage = std::make_unique<Processor>();
+    Processor& restored = *restoredStorage;
     expect(restored.pasteSettings(legacy.toXmlString()), "Legacy 46-parameter state rejected");
     for (size_t i = 0; i < 46; ++i)
         expectNear(parameterValue(restored, vocalstack::parameterIds[i]), parameterValue(source, vocalstack::parameterIds[i]),
@@ -107,7 +110,8 @@ void legacyFourVoiceMigration() {
     restored.setAdvancedEnabled(true);
     expectNear(parameterValue(restored, "voice3Gain"), -17.5f, "First activation overwrote migrated muted edits");
     expect(restored.settings().voiceSettings[3].present, "First activation removed migrated fourth voice");
-    Processor roundTrip;
+    std::unique_ptr<Processor> roundTripStorage = std::make_unique<Processor>();
+    Processor& roundTrip = *roundTripStorage;
     juce::MemoryBlock state;
     restored.getStateInformation(state);
     roundTrip.setStateInformation(state.getData(), int(state.getSize()));
@@ -116,7 +120,8 @@ void legacyFourVoiceMigration() {
 }
 
 void musicalPitchParameters() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     const std::array<float, 8> intervals{-36, -12, -0.25f, 0, 0.25f, 7.5f, 12, 36};
     for (size_t slot = 0; slot < 8; ++slot) {
         const auto* id = vocalstack::voicePitchParameterId(slot);
@@ -133,7 +138,8 @@ void musicalPitchParameters() {
         expectNear(voice.formantSemitones, 4.5f, "Pitch overwrote independent formant");
         expect(voice.present == (slot < 2), "Pitch automation added a removed voice");
     }
-    Processor restored;
+    std::unique_ptr<Processor> restoredStorage = std::make_unique<Processor>();
+    Processor& restored = *restoredStorage;
     expect(restored.pasteSettings(owner.settingsText()), "Musical pitch state rejected");
     for (size_t slot = 0; slot < 8; ++slot)
         expectNear(restored.settings().voiceSettings[slot].pitchSemitones, intervals[slot], "Pitch state quantized or lost");
@@ -142,7 +148,8 @@ void musicalPitchParameters() {
 }
 
 void routingStateRegression() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     auto active = serialFxGraph();
     active.nodes[1].mix = 0.61f;
     active.nodes[1].motion = 0.27f;
@@ -162,7 +169,8 @@ void routingStateRegression() {
     auto returned = owner.getRoutingLayout();
     returned.setProperty("zoom", 0.4, nullptr);
     expect(owner.getRoutingLayout().toXmlString() == expectedLayout, "Layout getter leaked mutable state");
-    Processor validRestore;
+    std::unique_ptr<Processor> validRestoreStorage = std::make_unique<Processor>();
+    Processor& validRestore = *validRestoreStorage;
     expect(validRestore.pasteSettings(owner.settingsText()), "Valid routing restore failed");
     expect(graphText(validRestore.getRoutingGraph()) == graphText(active), "Valid graph changed on restore");
     expect(validRestore.getRoutingError().isEmpty(), "Valid restore reported draft error");
@@ -173,7 +181,8 @@ void routingStateRegression() {
     const auto saved = savedProcessorState(owner);
     expectSavedGraph(saved, "RoutingGraph", active);
     expectSavedGraph(saved, "ActiveRoutingGraph", active);
-    Processor restored;
+    std::unique_ptr<Processor> restoredStorage = std::make_unique<Processor>();
+    Processor& restored = *restoredStorage;
     juce::MemoryBlock binary;
     owner.getStateInformation(binary);
     restored.setStateInformation(binary.getData(), int(binary.getSize()));
@@ -332,7 +341,8 @@ void fxAutomationRegression() {
 
 void perVoiceFxSignalPath() {
     const auto render = [](bool fxOn) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         owner.setAdvancedEnabled(true);
         setParameter(owner, "levelOn", 0); setParameter(owner, "formantOn", 0);
         setParameter(owner, "human", 0); setParameter(owner, "width", 100);
@@ -382,7 +392,8 @@ juce::MouseEvent routingMouse(juce::Component& target, juce::Point<float> point,
 
 void routingUiRegression() {
     for (const bool neon : {false, true}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         owner.setFlash(neon);
         const auto graph = serialFxGraph();
         juce::String error;

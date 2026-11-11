@@ -24,7 +24,7 @@ enum class CreativeParameter : std::size_t {
     crusherBits, crusherRate, crusherLowpass, crusherDrive, crusherDither,
     granularPitch, granularSize, granularDensity, granularSpread, granularPosition,
     granularFreeze, granularReverse, granularLowCut, granularHighCut, granularJitter,
-    granularDrive, count
+    granularDrive, reverbPitch, reverbPitchAmount, reverbSwell, count
 };
 inline constexpr std::size_t creativeParameterCount = static_cast<std::size_t>(CreativeParameter::count);
 struct CreativeParameterDescriptor {
@@ -83,7 +83,10 @@ inline constexpr std::array<CreativeParameterDescriptor, creativeParameterCount>
     {"granular_lowcut", "Low cut", "Hz", 20, 2000, 160, CreativeKind::granular},
     {"granular_highcut", "High cut", "Hz", 300, 20000, 6000, CreativeKind::granular},
     {"granular_jitter", "Timing scatter", "%", 0, 100, 12, CreativeKind::granular},
-    {"granular_drive", "Capture drive", "dB", 0, 24, 0, CreativeKind::granular}
+    {"granular_drive", "Capture drive", "dB", 0, 24, 0, CreativeKind::granular},
+    {"reverb_pitch", "Feedback pitch", "st", -12, 12, 12, CreativeKind::reverb},
+    {"reverb_pitch_amount", "Pitched feedback", "%", 0, 100, 0, CreativeKind::reverb},
+    {"reverb_swell", "Wet attack", "ms", 0, 2000, 0, CreativeKind::reverb}
 }};
 struct CreativeSettings {
     std::array<float, creativeParameterCount> values{};
@@ -146,6 +149,10 @@ struct Grain { double position = 0, step = 1; float phase = 0, increment = 0, pa
 // Granular pitch is not formant-preserving; zero-scatter periodic grain streams
 // can interfere on sustained tones. Some scatter is useful on vocal material.
 // Reverb RT60 is a midband target: damping, filters and interpolation shorten it.
+// Reverb pitch is a dual-head, 60 ms granular feedback transposer (not formant-
+// preserving or alias-free). Amount replaces feedback with a .45-gain pitched
+// branch; zero amount / zero semitones bypass it exactly. Freeze fades it out.
+// Wet attack is a stereo-linked envelope swell, not added predelay; 0 bypasses.
 // Freeze is bounded/near-lossless, not an infinite or bit-exact loop. Crusher is
 // intentionally aliased, with a postfilter, not an antialiased sample-rate converter.
 class CreativeEffect {
@@ -153,16 +160,19 @@ public:
     void prepare(double sampleRate, CreativeKind kind) {
         sr_ = std::isfinite(sampleRate) && sampleRate >= 8000 && sampleRate <= 384000 ? sampleRate : 48000;
         kind_ = kind;
-        first_ = creativeParameterCount; last_ = creativeParameterCount;
-        for (std::size_t i = 0; i < creativeParameterCount; ++i) if (creativeParameters[i].kind == kind) {
-            first_ = std::min(first_, i); last_ = i + 1;
-        }
+        parameterCount_ = 0;
+        for (std::size_t i = 0; i < creativeParameterCount; ++i)
+            if (creativeParameters[i].kind == kind) parameterIndices_[parameterCount_++] = i;
         for (auto& b : rings_) b.release();
         for (auto& b : allpass_) b.release();
+        for (auto& b : reverbPitchRings_) b.release();
         if (kind == CreativeKind::delay) {
             for (int i = 0; i < 2; ++i) rings_[i].allocate(static_cast<std::size_t>(sr_ * 24.1) + 8);
         } else if (kind == CreativeKind::reverb) {
-            for (int i = 0; i < 8; ++i) rings_[i].allocate(static_cast<std::size_t>(sr_ * .24) + 8);
+            for (int i = 0; i < 8; ++i) {
+                rings_[i].allocate(static_cast<std::size_t>(sr_ * .24) + 8);
+                reverbPitchRings_[i].allocate(static_cast<std::size_t>(sr_ * .06) + 8);
+            }
             for (int i = 8; i < 10; ++i) rings_[i].allocate(static_cast<std::size_t>(sr_ * .55) + 8);
             constexpr double ap[] = {.0047, .0079, .0127, .0173, .0053, .0089, .0137, .0191};
             for (int i = 0; i < 8; ++i) allpass_[i].allocate(static_cast<std::size_t>(sr_ * ap[i]) + 3);
@@ -177,6 +187,8 @@ public:
     void reset() noexcept {
         for (auto& b : rings_) b.reset();
         for (auto& b : allpass_) b.reset();
+        for (auto& b : reverbPitchRings_) b.reset();
+        swellPeak_ = swellEnvelope_ = 0;
         for (auto& b : bands_) b.reset();
         damp_.fill(0); scLow_.fill(0); held_.fill(0); grains_ = {};
         initialized_ = false; tick_ = 0; duckEnv_ = compEnv_ = reduction_ = targetReduction_ = 0;
@@ -188,7 +200,8 @@ public:
         left = creative_detail::clean(left); right = creative_detail::clean(right);
         // Only the selected kind's controls are touched. Invalid automation falls
         // back to descriptor defaults before it can poison recursive state.
-        for (std::size_t i = first_; i < last_; ++i) {
+        for (std::size_t p = 0; p < parameterCount_; ++p) {
+            const auto i = parameterIndices_[p];
             const auto& d = creativeParameters[i];
             const float v = std::isfinite(settings.values[i]) ? std::clamp(settings.values[i], d.min, d.max) : d.initial;
             if (!initialized_) smoothed_[i] = v;
@@ -216,12 +229,13 @@ private:
     double sr_ = 48000;
     CreativeKind kind_ = CreativeKind::delay;
     bool ready_ = false, initialized_ = false;
-    std::size_t first_ = 0, last_ = 11;
+    std::array<std::size_t, creativeParameterCount> parameterIndices_{};
+    std::size_t parameterCount_ = 0;
     std::uint64_t tick_ = 0;
     std::uint32_t rng_ = 0x6d2b79f5u;
     std::array<float, creativeParameterCount> smoothed_{};
     std::array<Ring, 10> rings_;
-    std::array<Ring, 8> allpass_;
+    std::array<Ring, 8> allpass_, reverbPitchRings_;
     std::array<creative_detail::Band, 2> bands_{};
     std::array<float, 8> damp_{}, lineGain_{};
     std::array<double, 8> lineTime_{}, currentLineTime_{};
@@ -234,6 +248,8 @@ private:
     float damping_ = 0, diffusion_ = 0, early_ = 0, width_ = 1, modulation_ = 0, freeze_ = 0;
     float quantStep_ = 0, rateStep_ = 0, dither_ = 0, grainIncrement_ = 0, density_ = 0;
     float grainNormalization_ = 1;
+    float reverbPitchAmount_ = 0, swellAttack_ = 0, swellRelease_ = 0;
+    float swellPeak_ = 0, swellEnvelope_ = 0;
     double delayTime_ = 1, predelay_ = 1, pitchPhase_ = 0, modPhase_ = 0, crusherPhase_ = 1, spawn_ = 0;
     float value(P p) const noexcept { return smoothed_[static_cast<std::size_t>(p)]; }
     float pole(float ms) const noexcept { return std::exp(-1000.f / (ms * static_cast<float>(sr_))); }
@@ -274,6 +290,10 @@ private:
                 modulation_ = value(P::reverbModulation) * .001f * static_cast<float>(sr_);
                 duckAmount_ = dbGain(value(P::reverbDuck)) - 1.f; duckRelease_ = pole(value(P::reverbDuckRelease));
                 drive_ = dbGain(value(P::reverbSaturation)) - 1; freeze_ = value(P::reverbFreeze);
+                pitchRatio_ = std::pow(2.f, value(P::reverbPitch) / 12.f);
+                reverbPitchAmount_ = value(P::reverbPitchAmount) * .01f;
+                swellAttack_ = value(P::reverbSwell) > 0 ? pole(value(P::reverbSwell)) : 0;
+                swellRelease_ = pole(100);
                 setBand(value(P::reverbLowCut), value(P::reverbHighCut)); break;
             }
             case CreativeKind::compressor:
@@ -360,18 +380,43 @@ private:
         }
         for (int i = 0; i < 8; ++i) {
             // Householder reflection I - 2 vv^T / (v^T v), norm-preserving.
-            const float mixed = taps[i] - sum * .25f;
+            float mixed = taps[i] - sum * .25f;
+            auto& pitch = reverbPitchRings_[i];
+            pitch.push(mixed);
+            const float amount = reverbPitchAmount_ * (1 - freeze_)
+                * std::min(1.f, std::abs(value(P::reverbPitch)) * 10.f);
+            if (amount > 1.e-6f) {
+                const double p = pitchPhase_, q = p < .5 ? p + .5 : p - .5;
+                const float w = static_cast<float>(1 - std::abs(2 * p - 1));
+                const float shifted = w * pitch.read(2 + p * sr_ * .06)
+                    + (1 - w) * pitch.read(2 + q * sr_ * .06);
+                // Convex tap crossfade, with headroom for time compression and
+                // overlapping read heads. Replace, never add, feedback energy.
+                // Freeze fades this lossy branch out of the orthogonal network.
+                mixed += amount * (.45f * shifted - mixed);
+            }
             const float g = lineGain_[i] * (1 - freeze_) + .99998f * freeze_;
             const float excitation = ((i & 1) ? input[1] : input[0]) * .22f * (1 - freeze_);
             rings_[i].push(excitation + g * creative_detail::saturate(mixed, drive_ * (1 - freeze_)));
         }
+        pitchPhase_ += (1.0 - pitchRatio_) / (sr_ * .06);
+        if (pitchPhase_ < 0) pitchPhase_ += 1; else if (pitchPhase_ >= 1) pitchPhase_ -= 1;
         float a = (taps[0] + taps[2] - taps[4] - taps[6]) * .5f;
         float b = (taps[1] + taps[3] - taps[5] - taps[7]) * .5f;
         // Sparse, alternating-side early taps precede the dense tail.
         a += early_ * (1 - freeze_) * (.5f * preL + .3f * rings_[9].read(currentPre_ + sr_ * .019) - .2f * rings_[8].read(currentPre_ + sr_ * .043));
         b += early_ * (1 - freeze_) * (.5f * preR + .3f * rings_[8].read(currentPre_ + sr_ * .023) - .2f * rings_[9].read(currentPre_ + sr_ * .047));
         a = bands_[0].process(a); b = bands_[1].process(b);
-        const float mid = (a + b) * .5f, side = (a - b) * .5f * width_, d = duck(l, r);
+        // Stereo-linked wet transient shaping: a slow attack catches up with a
+        // fast peak follower. The common release preserves decaying tails;
+        // unlike predelay this softens onset without moving any read taps.
+        const float peak = std::max(std::abs(a), std::abs(b));
+        swellPeak_ = creative_detail::clean(std::max(peak, swellPeak_ * swellRelease_));
+        const float coefficient = swellPeak_ > swellEnvelope_ ? swellAttack_ : swellRelease_;
+        swellEnvelope_ = creative_detail::clean(swellPeak_ + coefficient * (swellEnvelope_ - swellPeak_));
+        const float swell = swellAttack_ == 0 ? 1.f
+            : std::min(1.f, swellEnvelope_ / std::max(1.e-20f, swellPeak_));
+        const float mid = (a + b) * .5f, side = (a - b) * .5f * width_, d = duck(l, r) * swell;
         return {(mid + side) * d, (mid - side) * d};
     }
     std::array<float, 2> compressor(float l, float r) noexcept {

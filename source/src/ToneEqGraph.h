@@ -4,6 +4,7 @@
 #include "Equalizer.h"
 #include "FxVisuals.h"
 #include "ModulationUI.h"
+#include "VisualTheme.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include <cmath>
@@ -42,6 +43,12 @@ inline juce::Colour bandColour(size_t band) {
         0xff6eb9ef, 0xffa99afa, 0xffed8ec6, 0xffee8b82};
     return juce::Colour(colours[band % colours.size()]);
 }
+inline juce::Colour bandColour(size_t band, const juce::Component& component, bool legacyNeon = false) {
+    if (componentTheme(component, legacyNeon) == Theme::device) return bandColour(band);
+    const auto p = themePalette(component, legacyNeon);
+    return p.accent.interpolatedWith(p.secondary, float(band % 8) / 7.0f);
+}
+
 inline const std::array<const char*, 14> modeLabels{
     "Bell", "Low shelf 12 dB/oct", "High shelf 12 dB/oct",
     "Low shelf 24 dB/oct", "High shelf 24 dB/oct",
@@ -109,59 +116,61 @@ public:
     }
     void paint(juce::Graphics& g) override {
         const auto bounds = getLocalBounds().toFloat();
-        g.setColour(juce::Colour(neon ? 0xff0d1420 : 0xff1c211f));
-        g.fillRoundedRectangle(bounds, 5);
+        const auto palette = themePalette(*this, neon);
+        const bool device = componentTheme(*this, neon) == Theme::device;
+        g.setColour(device ? juce::Colour(0xff1c211f) : palette.inset);
+        g.fillRoundedRectangle(bounds, device ? 5.0f : 0.0f);
         const auto area = plot();
         if (area.getWidth() < 10 || area.getHeight() < 10) return;
         g.setFont(juce::Font(juce::FontOptions(10.0f)));
         for (float hz : {20.0f, 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f}) {
             const auto x = xFor(hz);
-            g.setColour(juce::Colour(0xff809398).withAlpha(0.13f));
+            g.setColour(device ? juce::Colour(0xff809398).withAlpha(0.13f) : palette.border.withAlpha(0.65f));
             g.drawVerticalLine(int(x), area.getY(), area.getBottom());
             if (hz == 20 || hz == 100 || hz == 1000 || hz == 10000) {
-                g.setColour(juce::Colour(0xffa8b3bb));
+                g.setColour(device ? juce::Colour(0xffa8b3bb) : palette.muted);
                 g.drawText(hz < 1000 ? juce::String(int(hz)) : juce::String(int(hz / 1000)) + "k",
                            int(x) - 12, int(area.getBottom()) + 3, 30, 14, juce::Justification::centred);
             }
         }
-        g.setColour(juce::Colour(0xffa8b3bb));
+        g.setColour(device ? juce::Colour(0xffa8b3bb) : palette.muted);
         g.drawText("Hz", 1, int(area.getBottom()) + 3, 27, 14, juce::Justification::centredRight);
         paintSpectrum(g, area, true);
         paintSpectrumScale(g, area);
         for (int db : {-24, -12, 0, 12, 24}) {
             const auto y = yFor(float(db));
-            g.setColour(juce::Colour(0xffa8b3bb).withAlpha(db == 0 ? 0.45f : 0.14f));
+            g.setColour((device ? juce::Colour(0xffa8b3bb) : palette.muted).withAlpha(db == 0 ? 0.45f : 0.14f));
             g.drawHorizontalLine(int(y), area.getX(), area.getRight());
-            g.setColour(juce::Colour(0xffa8b3bb));
+            g.setColour(device ? juce::Colour(0xffa8b3bb) : palette.muted);
             g.drawText((db > 0 ? "+" : "") + juce::String(db), 1, int(y) - 6, 27, 13, juce::Justification::centredRight);
         }
         {
             juce::Graphics::ScopedSaveState clip(g);
             g.reduceClipRegion(area.toNearestInt());
-            g.setColour(bandColour(selected).withAlpha(0.65f));
+            g.setColour(bandColour(selected, *this, neon).withAlpha(0.65f));
             g.strokePath(bandPath, juce::PathStrokeType(1.1f));
-            g.setColour(juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b).withAlpha(settings.enabled ? 1.0f : 0.4f));
+            g.setColour((device ? palette.accent : palette.secondary).withAlpha(settings.enabled ? 1.0f : 0.4f));
             g.strokePath(totalPath, juce::PathStrokeType(2.0f));
         }
         for (size_t b = 0; b < settings.bands.size(); ++b) {
             if (!settings.bands[b].enabled) continue;
             const auto p = bandPoint(b);
-            const auto colour = bandColour(b);
+            const auto colour = bandColour(b, *this, neon);
             paintModulation(g, b, p);
             g.setColour(colour.withAlpha(b == selected ? 0.22f : 0.1f));
             g.fillEllipse(p.x - 12, p.y - 12, 24, 24);
             g.setColour(colour);
             g.fillEllipse(p.x - 7, p.y - 7, 14, 14);
             if (b == selected) {
-                g.setColour(juce::Colour(0xffeef2ee));
+                g.setColour(device ? juce::Colour(0xffeef2ee) : palette.text);
                 g.drawEllipse(p.x - 9, p.y - 9, 18, 18, 1.3f);
             }
             g.setColour(juce::Colour(0xff151b20));
             g.drawText(juce::String(int(b + 1)), int(p.x) - 7, int(p.y) - 7, 14, 14, juce::Justification::centred);
         }
-        g.setColour(juce::Colour(0xff7e9297).withAlpha(0.5f));
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 5, 1);
-        g.setColour(juce::Colour(0xffa8b3bb));
+        g.setColour(device ? juce::Colour(0xff7e9297).withAlpha(0.5f) : palette.border);
+        g.drawRoundedRectangle(bounds.reduced(0.5f), device ? 5.0f : 0.0f, 1);
+        g.setColour(device ? juce::Colour(0xffa8b3bb) : palette.muted);
         auto title = getLocalBounds().removeFromTop(18).reduced(7, 0);
         g.drawText("FFT dBFS", title.removeFromRight(62), juce::Justification::centredRight);
         g.drawText(!settings.enabled ? "EQ dB | BYPASS | IN / OUT FFT"
@@ -329,7 +338,10 @@ private:
                     return horizontal ? xFor(shiftedFrequency(v, settings.shiftSemitones)) : yFor(v);
                 };
                 const float start = coordinate(lo), end = coordinate(hi);
-                g.setColour(juce::Colour(a.depth < 0 ? 0xffff96c8 : 0xffb798ff));
+                const auto palette = themePalette(*this, neon);
+                g.setColour(componentTheme(*this, neon) == Theme::device
+                    ? juce::Colour(a.depth < 0 ? 0xffff96c8 : 0xffb798ff)
+                    : a.depth < 0 ? palette.secondary : palette.accent);
                 if (horizontal) {
                     g.drawLine(start, base.y, end, base.y, 2.5f);
                     g.drawLine(start, base.y - 4, start, base.y + 4, 1);
@@ -350,9 +362,9 @@ private:
         const auto shift = effectiveActual(toneParameterId(slot, "EqShift"), settings.shiftSemitones);
         const int mode = int(std::lround(effectiveActual(eqBandParameterId(slot, b, "Mode"), float(settings.bands[b].mode))));
         const juce::Point<float> effective{xFor(shiftedFrequency(frequency, shift)), yFor(hasGain(mode) ? gain : 0.0f)};
-        g.setColour(bandColour(b).withAlpha(0.65f));
+        g.setColour(bandColour(b, *this, neon).withAlpha(0.65f));
         g.drawLine(base.x, base.y, effective.x, effective.y, 1);
-        g.setColour(bandColour(b));
+        g.setColour(bandColour(b, *this, neon));
         g.drawEllipse(effective.x - 4, effective.y - 4, 8, 8, 1.5f);
     }
     int edgeMode(juce::Point<float> p) const {

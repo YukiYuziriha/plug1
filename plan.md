@@ -1,6 +1,6 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.6.0
+## Current status — 1.7.0
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
@@ -18,45 +18,46 @@ list. When requirements conflict, the latest release record takes precedence.
   width, and compact LFO controls in a vertically resizable bottom panel.
 - [x] Delay, Reverb, Compressor, Bitcrusher and Granular routing nodes.
 - [x] Whole-patch factory/user presets, user-selected local save folder and
-  one-step Undo load. Five original vocal starting points are included.
-- [x] Release CLAP/VST3 packages and automated verification for 1.6.0.
+  one-step Undo load. Eight original starting points are included.
+- [x] Reverb pitched feedback (including octave down), shimmer and wet swell.
+- [x] Gain, Stereo Utility and Gate/Expander nodes with measured gate GR.
+- [x] XP-inspired original character filter with 15 configurations and graph editing.
+- [x] Synth Filter: actual upstream-derived DSP, 13 configurations; not category
+  stand-ins or a claim of bit-exact full-synth parity. GPL attribution retained.
+- [x] Themed reverb/delay/granular/compressor/crusher models and waveshaper graphics.
+- [x] Flattened Neon surfaces (knobs retained), third charcoal/lavender Spectral theme.
+- [x] Release CLAP/VST3 packages, 19 focused suites, 47 editor groups, legacy DSP
+  suite, actual three-theme screenshots and CPU stress measurements for 1.7.0.
 
-### Outstanding requested feature
+### Implementation boundaries
 
-- [ ] **XP-style character filter.** Independent routing node; research the
-  reference version's configurations and controls before implementation. Aim for
-  its useful resonant/drive character with original DSP, not an unmeasured claim
-  of sonic equivalence. Reference renders are needed for meaningful comparison.
-  Existing EQ8 and the multiband splitter do not fulfill this character-filter
-  request. The original reference brief is retained in historical section 8.
+The approved 1.7 feature scope is implemented. XP is original cascaded TPT SVF
+DSP, not Bitwig source or a measured XP clone. Synth Filter adapts pinned Vital
+sample equations, validated against retained upstream class bodies through a
+single-lane framework shim; it is not a complete synthesizer/SIMD/oversampling
+port. See `ThirdParty/Vital/README.md` for exact mappings and fidelity limits.
+UI artwork and presets are original, not copied upstream assets.
 
-### Proposed follow-ups — not delivered or automatically scheduled
-
-- [ ] **Reverb pitch-feedback / shimmer:** an optional pitched component in the
-  wet feedback path, including a dark octave-down texture. This was proposed in
-  discussion but is not in 1.6.0; define its controls, level bounds and CPU budget
-  before implementation. Delay already has pitched repeats.
-- [ ] **Reverb attack / swell:** adjustable wet-tail entrance without softening
-  the direct vocal. Also proposed but not implemented in 1.6.0.
-
-Suggested order if these follow-ups are approved: reverb pitch-feedback and
-swell, then the XP-style filter. This is a recommendation, not authorization to
-start another implementation.
+Reverb/creative graphics are parameter schematics, not measured IRs or live grains.
+Synth small-signal plots render actual adapted DSP on a bounded background job,
+cache/interpolate FFT bins, and are approximate for nonlinear/moving-delay models.
 
 ### Validation and delivery still open
 
 - [ ] Listen in Bitwig to the five effects and factory patches on real vocals;
   check wet/dry balance, ducking, grit, granular transitions and freeze/unfreeze.
 - [ ] Exercise Bitwig transport, tempo changes, automation and session recall.
-- [ ] Profile populated new-effect patches, including eight voices and active
-  modulation. Previous waveshaper stress results are not a CPU guarantee for the
-  new effects.
-- [ ] Install 1.6.0 when requested and only while both plugin binaries are unlocked.
-  The release was built, packaged and pushed, but not installed.
+- [x] Profile populated new-effect patches: eight pitched voices, ten serial FX
+  including pitched reverb/swell/formant, four modulators, stereo/137 frames.
+  Release measured approximately 555/1138 ms per audio second at 48/96 kHz on this
+  machine; maximum observed blocks 3.09/4.71 ms. The extreme 96 kHz patch exceeds
+  real time. This is a documented capacity limit, not a universal CPU guarantee.
+- [ ] Install 1.7.0 only when requested and while plugin binaries are unlocked.
 
-All 18 focused suites and the packaged CLAP smoke test passed for 1.6.0. The long
-legacy `VocalStackDSP` suite was excluded; actual Bitwig listening/transport checks
-have not been performed. These are validation gaps, not known failing tests.
+All 19 focused suites (47 editor groups), the separate legacy `VocalStackDSP`
+suite and packaged CLAP smoke passed for 1.7.0. Fifteen actual editor screenshots
+cover five views in all three themes. Actual Bitwig listening/transport checks
+remain unperformed; no installation was performed.
 
 ### Explicitly deferred / outside current scope
 
@@ -77,6 +78,25 @@ have not been performed. These are validation gaps, not known failing tests.
 
 These records retain the implementation and validation details of each release.
 They are not pending checklists; later records supersede earlier design choices.
+
+### 1.7.0 — character filters, utilities, shimmer and themed models
+
+- Added Gain, Stereo Utility, Gate/Expander, XP Filter and Synth Filter routing
+  nodes with host/state/modulation/preset integration; 2087 total parameters.
+- Synth DSP is a GPL-covered scalar adaptation of pinned upstream equations:
+  Digital, Ladder, Dirty, Diode, Analog, Comb and four-formant models, 13 modes.
+  Retained upstream source/license/hashes and independent class-body comparisons.
+- Reverb adds pitch −12…+12 st, pitched feedback 0–100% and wet swell 0–2000 ms.
+  Pitch feedback replaces rather than adds the bounded branch; freeze fades it out.
+- Added effective-target schematics and background-cached DSP response curves;
+  measured gate GR and pre/post spectra remain separate from schematic curves.
+- Added flat Spectral skin and unified Neon surfaces while retaining Neon knobs.
+  Full-patch factories now include Clean Vocal Utility, Vocal Filter Motion and
+  Shimmer Bloom in addition to the five existing original vocal patches.
+- Release build and 19 focused suites passed, including 47 editor groups; separate
+  legacy DSP passed. CPU stress caveat and upstream fidelity limits are documented
+  above and in README. Updated CLAP/VST3 packages and real-editor previews.
+- Not installed; no real Bitwig listening or transport verification claimed.
 
 ### 1.6.0 — creative vocal effects and whole-patch presets
 

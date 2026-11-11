@@ -24,8 +24,11 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
         std::vector<float> history;
         void paint(juce::Graphics& g) override {
             auto a = getLocalBounds().toFloat().reduced(5);
-            g.setColour(juce::Colour(0xff171f2b)); g.fillRoundedRectangle(a, 4);
-            g.setColour(juce::Colour(0xff46515b));
+            const auto palette = themePalette(*this);
+            const bool device = componentTheme(*this) == Theme::device;
+            g.setColour(device ? juce::Colour(0xff171f2b) : palette.inset);
+            g.fillRoundedRectangle(a, device ? 4.0f : 0.0f);
+            g.setColour(device ? juce::Colour(0xff46515b) : palette.border);
             g.drawHorizontalLine(int(a.getCentreY()), a.getX(), a.getRight());
             juce::Path p;
             for (size_t i = 0; i < history.size(); ++i) {
@@ -33,7 +36,8 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
                 const float y = a.getCentreY() - history[i] * a.getHeight() * 0.45f;
                 if (i == 0) p.startNewSubPath(x, y); else p.lineTo(x, y);
             }
-            g.setColour(juce::Colour(0xff64f5e3)); g.strokePath(p, juce::PathStrokeType(1.5f));
+            g.setColour(device ? juce::Colour(0xff64f5e3) : palette.secondary);
+            g.strokePath(p, juce::PathStrokeType(1.5f));
             g.setFont(modulationFont(10.0f));
             g.drawText("OUTPUT  " + juce::String(output, 3) + "   phase " + juce::String(phase, 2),
                        a.toNearestInt().removeFromTop(18), juce::Justification::centredLeft);
@@ -128,7 +132,20 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             detail::passiveControl(*this);
         }
         ~AssignmentRow() override { amount.setLookAndFeel(nullptr); }
-        void setNeon(bool neon) { modulationui::styleRotary(amount, neon); }
+        void setNeon(bool neon) {
+            modulationui::styleRotary(amount, neon);
+            const auto p = themePalette(*this, neon);
+            name.setColour(juce::Label::textColourId, p.text);
+            for (auto* button : {&enabled, &remove, &reveal}) modulationui::styleButton(*button, p);
+        }
+        void paint(juce::Graphics& g) override {
+            if (componentTheme(*this, parent.neon) == Theme::device) return;
+            const auto p = themePalette(*this, parent.neon);
+            g.setColour(p.panel);
+            g.fillRect(getLocalBounds());
+            g.setColour(p.border);
+            g.drawRect(getLocalBounds());
+        }
         void resized() override {
             auto a = getLocalBounds().reduced(3); name.setBounds(a.removeFromTop(22));
             amount.setBounds(a.removeFromLeft(120)); auto buttons = a.removeFromTop(28);
@@ -188,7 +205,11 @@ public:
         juce::Component::addAndMakeVisible(contentViewport);
         detail::passiveControl(*this); startTimerHz(20);
     }
-    ~ModulationPanel() override { contentViewport.setViewedComponent(nullptr, false); rowsViewport.setViewedComponent(nullptr, false); }
+    ~ModulationPanel() override {
+        setLookAndFeel(nullptr);
+        contentViewport.setViewedComponent(nullptr, false);
+        rowsViewport.setViewedComponent(nullptr, false);
+    }
     static constexpr int preferredHeight = 240;
     void select(uint32_t id) {
         if (selected != id) {
@@ -200,13 +221,27 @@ public:
     uint32_t selectedId() const { return selected; }
     void setNeon(bool neon) {
         this->neon = neon;
-                for (auto* c : {&rate, &division, &phase, &depth, &shape, &smooth}) {
-                    modulationui::styleRotary(c->slider, neon); detail::passiveControl(c->slider);
-                }
-                for (auto& row : rows) row->setNeon(neon);
-        for (auto* b : {&controlsTab, &assignmentsTab, &assign, &remove, &sync, &bipolar}) {
-            b->setColour(juce::TextButton::buttonOnColourId, juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b));
+        const auto p = themePalette(*this, neon);
+        const bool device = componentTheme(*this, neon) == Theme::device;
+        panelStyle.setPalette(p);
+        setLookAndFeel(device ? nullptr : &panelStyle);
+        title.setColour(juce::Label::textColourId, p.text);
+        message.setColour(juce::Label::textColourId, p.muted);
+        for (auto* c : {&rate, &division, &phase, &depth, &shape, &smooth}) {
+            c->label.setColour(juce::Label::textColourId, p.text);
+            modulationui::styleRotary(c->slider, neon);
+            detail::passiveControl(c->slider);
         }
+        for (auto& row : rows) row->setNeon(neon);
+        for (auto* b : {&controlsTab, &assignmentsTab, &assign, &remove, &sync, &bipolar})
+            modulationui::styleButton(*b, p);
+        for (auto* combo : {&waveform, &retrigger, &divisions}) modulationui::styleCombo(*combo, p);
+        modulationui::styleViewport(contentViewport, p);
+        modulationui::styleViewport(rowsViewport, p);
+        repaint();
+    }
+    void paint(juce::Graphics& g) override {
+        if (componentTheme(*this, neon) != Theme::device) g.fillAll(themePalette(*this, neon).panel);
     }
     std::function<void(const juce::String&)> onReveal;
     std::function<void()> onDeleted;
@@ -312,7 +347,10 @@ private:
         assign.setToggleState(owner.modulationAssignmentId() == selected, juce::dontSendNotification);
         rowsViewport.setVisible(assignments); rows.clear();
         for (const auto& a : state.assignments) if (a.modulatorId == selected) {
-            auto row = std::make_unique<AssignmentRow>(*this, a); rowsArea.addAndMakeVisible(*row); rows.push_back(std::move(row));
+            auto row = std::make_unique<AssignmentRow>(*this, a);
+            rowsArea.addAndMakeVisible(*row);
+            row->setNeon(neon);
+            rows.push_back(std::move(row));
         }
         message.setText(assignments ? "Signed depth uses target units for linear controls, percent span for logarithmic controls. Base values stay unchanged; effective values are bounded. Reveal opens the target."
             : "Assign: drag a target to set depth. Esc cancels. Sync: quarter notes / cycle.", juce::dontSendNotification);
@@ -332,6 +370,7 @@ private:
             output.history.push_back(m.output); if (output.history.size() > 128) output.history.erase(output.history.begin()); output.repaint();
         }
     }
+    modulationui::PanelStyle panelStyle;
     Processor& owner;
     uint32_t selected = 0;
     bool loading = false, assignments = false, refreshRows = false, neon = false;

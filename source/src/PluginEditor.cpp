@@ -116,8 +116,8 @@ Editor::Editor(Processor& processor)
 
     for (auto* button : {&theme, &reset, &copy, &paste})
         layoutCanvas.addAndMakeVisible(*button);
-    theme.setTooltip("Switch between the Device skin and the Neon skin");
-    theme.onClick = [this] { owner.setFlash(!owner.isFlash()); applyTheme(); };
+    theme.setTooltip("Cycle skins: Device / Neon / Spectral");
+    theme.onClick = [this] { owner.setSkin((owner.getSkin() + 1) % 3); applyTheme(); };
     reset.setButtonText("Reset");
     reset.setTooltip("Restore the default effect parameters");
     reset.onClick = [this] { owner.resetParameters(); };
@@ -193,25 +193,31 @@ void Editor::openRouting() {
 }
 
 void Editor::applyTheme() {
-    style.flash = owner.isFlash();
+    const auto selectedTheme = themeFromInt(owner.getSkin());
+    getProperties().set(vocalstackThemeProperty, int(selectedTheme));
+    style.flash = selectedTheme == Theme::neon;
+    const auto palette = themePalette(*this);
     globalMix.setNeon(style.flash);
-    assignmentBanner.setColour(Label::textColourId, rgb(0xb798ff));
+    assignmentBanner.setColour(Label::textColourId, selectedTheme == Theme::spectral ? palette.accent : rgb(0xb798ff));
     meterPanel.setNeon(style.flash);
     advancedPanel.setNeon(style.flash);
     choralePanel.setNeon(style.flash);
     routingPanel.setNeon(style.flash);
-    const auto foreground = style.flash ? rgb(nightText) : rgb(0xe4e4df);
-    const auto muted = style.flash ? rgb(nightMuted) : rgb(0xaeb1a9);
-    theme.setButtonText(style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
+    const auto foreground = palette.text;
+    const auto muted = palette.muted;
+    theme.setButtonText(selectedTheme == Theme::spectral ? "SKIN / SPECTRAL"
+                       : style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
     for (auto& label : labels) {
         label.setColour(Label::textColourId, foreground);
-        label.setFont(font(style.flash ? 15.0f : 14.0f, true));
+        label.setFont(font(selectedTheme == Theme::spectral ? 13.0f : style.flash ? 15.0f : 14.0f,
+                           selectedTheme != Theme::spectral));
     }
     for (auto& knob : knobs) {
         knob.setColour(Slider::textBoxTextColourId, muted);
         knob.setColour(Slider::textBoxOutlineColourId, Colours::transparentBlack);
         knob.setColour(Slider::textBoxBackgroundColourId, Colours::transparentBlack);
-        knob.setColour(Slider::textBoxHighlightColourId, rgb(style.flash ? 0x34496a : 0x4b5175));
+        knob.setColour(Slider::textBoxHighlightColourId, selectedTheme == Theme::spectral
+                    ? palette.accent.withAlpha(0.3f) : rgb(style.flash ? 0x34496a : 0x4b5175));
         knob.repaint();
     }
     for (auto* button : {&theme, &reset, &copy, &paste, &stackTab, &routingTab}) {
@@ -304,7 +310,7 @@ void Editor::timerCallback() {
     if (advancedPanel.isVisible() != !routingVisible)
         syncDrawer();
     advancedPanel.sync();
-    if (owner.isFlash() != style.flash)
+    if (themeFromInt(owner.getSkin()) != componentTheme(*this))
         applyTheme();
     if (feedbackTicks > 0 && --feedbackTicks == 0) {
         copy.setButtonText("Copy settings");
@@ -366,9 +372,11 @@ bool Editor::keyPressed(const KeyPress& key) {
 }
 
 void Editor::paint(Graphics& g) {
-    g.fillAll(rgb(style.flash ? night : 0x292b2a));
+    g.fillAll(themePalette(*this).background);
     g.addTransform(AffineTransform::scale(layoutScale).translated(layoutOffset.x, layoutOffset.y));
-    if (style.flash)
+    if (componentTheme(*this) == Theme::spectral)
+        drawSpectral(g);
+    else if (style.flash)
         drawFlash(g);
     else
         drawDevice(g);
@@ -430,7 +438,7 @@ void Editor::drawFlash(Graphics& g) {
     for (const auto& plate : controlPlates)
         drawPlate(plate);
 
-    constexpr std::array<uint32_t, 4> accents{signYellow, signPink, signCyan, signYellow};
+    constexpr std::array<uint32_t, 4> accents{signPink, signPink, signCyan, signPink};
     const std::array<const char*, 4> captions{
         "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
     };
@@ -441,7 +449,7 @@ void Editor::drawFlash(Graphics& g) {
         text(g, captions[i], {plate.getX(), 269, plate.getWidth(), 15},
              rgb(nightMuted), 9.5f, false, Justification::centred);
     }
-    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(signYellow), 11.0f, true, Justification::centred);
+    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(signPink), 11.0f, true, Justification::centred);
     g.setColour(rgb(outline));
     for (const int x : {234, 336})
         g.drawVerticalLine(x, 121.0f, 260.0f);
@@ -449,6 +457,31 @@ void Editor::drawFlash(Graphics& g) {
 
     text(g, "TRUE MIX", {542, 306, 124, 23},
          rgb(nightMuted), 11.0f, true, Justification::centredRight);
+}
+
+void Editor::drawSpectral(Graphics& g) {
+    const auto p = themePalette(*this);
+    g.setColour(p.panel);
+    g.fillRect(18, 14, routingVisible ? getWidth() - 36 : 904, 50);
+    g.setColour(p.accent);
+    g.fillRect(18, 14, 3, 50);
+    text(g, "Vocal Stack", {36, 21, 168, 30}, p.text, 23.0f);
+    text(g, "VOCAL PROCESSOR", {211, 26, 160, 26}, p.muted, 10.5f);
+    if (routingVisible) return;
+    const std::array<const char*, 4> captions{
+        "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
+    };
+    for (size_t i = 0; i < controlPlates.size(); ++i) {
+        const auto& plate = controlPlates[i];
+        g.setColour(p.panel);
+        g.fillRect(plate);
+        g.setColour(p.border);
+        g.drawRect(plate);
+        text(g, captions[i], {plate.getX(), 269, plate.getWidth(), 15},
+             p.muted, 9.5f, false, Justification::centred);
+    }
+    text(g, "FINAL GAIN", {570, 88, 88, 23}, p.muted, 10.5f, false, Justification::centred);
+    text(g, "TRUE MIX", {542, 306, 124, 23}, p.muted, 10.0f, false, Justification::centredRight);
 }
 
 void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, float position,
@@ -459,11 +492,13 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     const auto centre = area.getCentre();
     const float angle = start + position * (end - start);
     const auto name = slider.getName();
-    const auto accent = rgb(!flash ? 0xf5a24b : name == "Formant" ? signCyan
+    const auto p = themePalette(slider);
+    const bool spectral = componentTheme(slider) == Theme::spectral;
+    const auto accent = spectral ? (name == "Formant" ? p.secondary : p.accent) : rgb(!flash ? 0xf5a24b : name == "Formant" ? signCyan
                             : name == "Leveler" || name == "Output" ? signYellow : signPink);
     Path track, value;
     track.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, start, end, true);
-    g.setColour(flash ? rgb(outline) : rgb(0x50564f));
+    g.setColour(spectral ? p.border : flash ? rgb(outline) : rgb(0x50564f));
     g.strokePath(track, PathStrokeType(2.8f, PathStrokeType::curved, PathStrokeType::rounded));
     const float origin = name == "Formant" || name == "Output"
         ? start + static_cast<float>(slider.valueToProportionOfLength(0.0)) * (end - start) : start;
@@ -480,13 +515,13 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     }
     const float inner = radius - 5.3f;
     const auto face = Rectangle<float>(inner * 2, inner * 2).withCentre(centre);
-    if (flash)
-        g.setColour(rgb(night));
+    if (spectral || flash)
+        g.setColour(spectral ? p.inset : rgb(night));
     else
         g.setGradientFill(ColourGradient(rgb(0x414641), centre.x, face.getY(),
                                          rgb(0x282b28), centre.x, face.getBottom(), false));
     g.fillEllipse(face);
-    g.setColour(rgb(flash ? outline : 0x555b54));
+    g.setColour(spectral ? p.border : rgb(flash ? outline : 0x555b54));
     g.drawEllipse(face, 1.0f);
     g.setColour(accent);
     const auto a = centre.getPointOnCircumference(inner - 3.6f, angle);
@@ -502,16 +537,20 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
     const bool lit = button.getToggleState();
     const auto name = button.getButtonText();
     const bool routingAction = name == "Open Routing" || name == "Routing" || name == "Stack";
-    const auto accent = rgb(name == "BYPASS" ? 0xf58680 : !flash ? 0xe3a15e
-                            : routingAction || name == "FORMANT" ? signCyan : name == "LEVEL" ? signYellow : signPink);
-    auto fill = lit ? accent : routingAction ? accent.withAlpha(0.18f) : rgb(flash ? panel : 0x333733);
+    const auto selectedTheme = componentTheme(button);
+    const auto p = themePalette(button);
+    const auto accent = name == "BYPASS" ? rgb(0xf58680)
+        : selectedTheme == Theme::device ? rgb(0xe3a15e)
+        : routingAction || name == "FORMANT" ? p.secondary : p.accent;
+    auto fill = lit ? accent : routingAction ? accent.withAlpha(selectedTheme == Theme::device ? 0.18f : 0.12f)
+        : selectedTheme == Theme::device ? rgb(0x333733) : p.panel;
     if (hover) fill = fill.brighter(0.12f);
     if (down) fill = fill.darker(0.12f);
     g.setColour(fill);
     const bool focused = button.hasKeyboardFocus(false);
-    if (flash) {
+    if (selectedTheme != Theme::device) {
         g.fillRect(area);
-        g.setColour(lit || focused || routingAction || name == "SKIN  /  NEON" ? accent : rgb(outline));
+        g.setColour(lit || focused || routingAction || name.startsWith("SKIN") ? accent : p.border);
         g.drawRect(area, focused ? 2.0f : 1.0f);
     } else {
         g.fillRoundedRectangle(area, 3.0f);
@@ -520,6 +559,8 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
     }
 }
 
-juce::Font Editor::Style::getTextButtonFont(juce::TextButton&, int) { return font(12.0f, true); }
+juce::Font Editor::Style::getTextButtonFont(juce::TextButton& button, int) {
+    return font(12.0f, componentTheme(button) != Theme::spectral);
+}
 
 } // namespace vocalstack

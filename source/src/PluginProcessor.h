@@ -107,6 +107,15 @@ inline const auto waveAlgorithmParameterIdStorage = [] {
     return ids;
 }();
 inline constexpr size_t creativeParameterStart = waveAlgorithmParameterStart + 15;
+// Keep all original 48-field slot blocks at their historical host indices.
+// Expanded Reverb fields append after those blocks, before Utility parameters.
+inline constexpr size_t legacyCreativeParameterCount = 48;
+inline constexpr size_t creativeParameterIndex(size_t slot, size_t p) noexcept {
+    return p < legacyCreativeParameterCount
+        ? creativeParameterStart + (slot - 1) * legacyCreativeParameterCount + p
+        : creativeParameterStart + 15 * legacyCreativeParameterCount
+            + (slot - 1) * (creativeParameterCount - legacyCreativeParameterCount) + p - legacyCreativeParameterCount;
+}
 inline const auto creativeParameterIdStorage = [] {
     std::array<std::string, 15 * creativeParameterCount> ids;
     for (size_t slot = 1; slot < 16; ++slot)
@@ -118,8 +127,20 @@ inline juce::String creativeParameterId(size_t slot, size_t p) {
     return slot > 0 && slot < 16 && p < creativeParameterCount
         ? juce::String(creativeParameterIdStorage[(slot - 1) * creativeParameterCount + p]) : juce::String();
 }
+inline constexpr size_t utilityParameterStart = creativeParameterStart + 15 * creativeParameterCount;
+inline const auto utilityParameterIdStorage = [] {
+    std::array<std::string, 15 * utilityParameterCount> ids;
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t p = 0; p < utilityParameterCount; ++p)
+            ids[(slot - 1) * utilityParameterCount + p] = "fx" + std::to_string(slot) + utilityParameters[p].id;
+    return ids;
+}();
+inline juce::String utilityParameterId(size_t slot, size_t p) {
+    return slot > 0 && slot < 16 && p < utilityParameterCount
+        ? juce::String(utilityParameterIdStorage[(slot - 1) * utilityParameterCount + p]) : juce::String();
+}
 inline const auto parameterIds = [] {
-    std::array<const char*, creativeParameterStart + 15 * creativeParameterCount> ids{};
+    std::array<const char*, utilityParameterStart + 15 * utilityParameterCount> ids{};
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
         ids[legacyParameterIds.size() + i] = toneParameterIdStorage[i].c_str();
@@ -135,8 +156,11 @@ inline const auto parameterIds = [] {
         ids[localMixParameterStart + i] = localMixParameterIdStorage[i].c_str();
     for (size_t i = 0; i < waveAlgorithmParameterIdStorage.size(); ++i)
         ids[waveAlgorithmParameterStart + i] = waveAlgorithmParameterIdStorage[i].c_str();
-    for (size_t i = 0; i < creativeParameterIdStorage.size(); ++i)
-        ids[creativeParameterStart + i] = creativeParameterIdStorage[i].c_str();
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t p = 0; p < creativeParameterCount; ++p)
+            ids[creativeParameterIndex(slot, p)] = creativeParameterIdStorage[(slot - 1) * creativeParameterCount + p].c_str();
+    for (size_t i = 0; i < utilityParameterIdStorage.size(); ++i)
+        ids[utilityParameterStart + i] = utilityParameterIdStorage[i].c_str();
     return ids;
 }();
 static_assert(parameterIds.size() <= ModulationBackend::maxTargets);
@@ -248,7 +272,9 @@ public:
     float getCreativeGainReduction(size_t slot) const noexcept { return fxMonitor.gainReduction(slot); }
 
 
-    bool isFlash() const { return flash.load(std::memory_order_relaxed); }
+    int getSkin() const noexcept { return skin.load(std::memory_order_relaxed); }
+    void setSkin(int);
+    bool isFlash() const noexcept { return getSkin() == 1; }
     void setFlash(bool enabled);
     Meters getMeters() const;
     void requestMeterReset() noexcept { meterResetRequested.store(true, std::memory_order_relaxed); }
@@ -289,7 +315,8 @@ private:
     std::array<std::atomic<float>, parameterIds.size()> snapshotBase{}, snapshotEffective{};
     bool transportPlaying = false;
     std::atomic<double> hostTempo{120};
-    std::atomic<bool> flash{false}, advancedVisible{false}, advancedInitialized{false};
+    std::atomic<int> skin{0};
+    std::atomic<bool> advancedVisible{false}, advancedInitialized{false};
     MeterBridge metering;
     std::atomic<bool> meterResetRequested{false};
     VoiceBridge voiceBridge;

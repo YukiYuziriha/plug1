@@ -28,7 +28,7 @@ struct Settings {
     float choraleMix = 0.25f, choraleMotion = 0.35f;
     std::array<FxSettings, 16> fxSettings{};
     // Opt-in processor bridge. Slot 0 always uses the legacy Chorale fields;
-    // slots 1..15 drive Chorale/Waveshaper/EQ/Crossover nodes 100..114 without
+    // slots 1..15 drive tone, creative and utility nodes 100..114 without
     // touching graph/state publication. Without opt-in, node-authored nested
     // settings remain authoritative. Added effects never depend on choraleOn.
     bool fxAutomation = false;

@@ -49,7 +49,8 @@ public:
     juce::File getFolder() const { return folder; }
     bool canUndoLoad() const noexcept { return undoPatch.isValid(); }
     static juce::StringArray factoryNames() {
-        return {"Dark Lead", "Grit Adlibs", "Deep Double", "Night Echo", "Cloud Choir"};
+        return {"Dark Lead", "Grit Adlibs", "Deep Double", "Night Echo", "Cloud Choir",
+                    "Clean Vocal Utility", "Vocal Filter Motion", "Shimmer Bloom"};
     }
 
     juce::Result setFolder(const juce::File& chosen) {
@@ -177,9 +178,7 @@ public:
 
     // Complete deterministic patches: reset EVERY installed host parameter to its
     // declared default, replace graph/layout/modulation, then author overrides.
-    // Creative contract: NodeType numeric 9..13; fx1delay_time etc., raw units
-    // from CreativeEffects.h descriptors. No reference to forthcoming NodeType
-    // enumerators. Until processor integration, loading returns an explicit error.
+    // Descriptor IDs and raw units are shared with the host parameter bridge.
     juce::Result factoryPatch(int index, juce::ValueTree& patch) {
         if (index < 0 || index >= factoryNames().size()) return fail("Unknown factory preset.");
         patch = currentPatch();
@@ -204,7 +203,7 @@ public:
             setRaw(patch, "voice" + juce::String(v) + "Present", v <= 2 ? 1 : 0);
             setRaw(patch, "voice" + juce::String(v) + "On", v <= 2 ? 1 : 0);
         }
-        const float blends[]{12, 30, 42, 18, 46};
+        const float blends[]{12, 30, 42, 18, 46, 10, 18, 35};
         setRaw(patch, "double", blends[index]);
         for (int v = 1; v <= 2; ++v) {
             const auto prefix = "voice" + juce::String(v);
@@ -236,6 +235,27 @@ public:
             setRaw(patch, "fx" + juce::String(slot) + "Mix", mix);
             return "fx" + juce::String(slot);
         };
+        if (index == 5) {
+            const auto gate = effect(int(NodeType::gate), 100);
+            setRaw(patch, gate + "gate_threshold", -48);
+            setRaw(patch, gate + "gate_range", 18);
+            setRaw(patch, gate + "gate_ratio", 3);
+            setRaw(patch, gate + "gate_release", 180);
+            const auto stereo = effect(int(NodeType::stereo), 100);
+            setRaw(patch, stereo + "stereo_width", 115);
+            const auto trim = effect(int(NodeType::gain), 100);
+            setRaw(patch, trim + "gain_db", -2);
+        }
+        if (index == 6) {
+            const auto xp = effect(int(NodeType::xpFilter), 100);
+            setRaw(patch, xp + "xp_mode", 6);
+            setRaw(patch, xp + "xp_cutoff", 180);
+            setRaw(patch, xp + "xp_resonance", 15);
+            const auto synth = effect(int(NodeType::synthFilter), 22);
+            setRaw(patch, synth + "synth_mode", 6);
+            setRaw(patch, synth + "synth_cutoff", 950);
+            setRaw(patch, synth + "synth_resonance", 25);
+        }
         auto compressor = effect(11, 100);
         setRaw(patch, compressor + "compressor_threshold", -22);
         setRaw(patch, compressor + "compressor_ratio", index == 1 ? 6 : 3);
@@ -260,6 +280,15 @@ public:
         setRaw(patch, reverb + "reverb_decay", index == 4 ? 5.5f : 1.8f);
         setRaw(patch, reverb + "reverb_highcut", 4800);
         setRaw(patch, reverb + "reverb_duck", 9);
+        if (index == 7) {
+            setRaw(patch, "outputGain", -6);
+            setRaw(patch, reverb + "Mix", 32);
+            graph.getChildWithProperty("id", 99 + slot).setProperty("mix", .32f, nullptr);
+            setRaw(patch, reverb + "reverb_decay", 5);
+            setRaw(patch, reverb + "reverb_pitch", 12);
+            setRaw(patch, reverb + "reverb_pitch_amount", 38);
+            setRaw(patch, reverb + "reverb_swell", 450);
+        }
         addLink(graph, previous, 13);
         patch.addChild(graph, -1, nullptr);
         auto active = graph.createCopy();
@@ -309,6 +338,7 @@ private:
         graph.addChild(link, -1, nullptr);
     }
     static void stripPreferences(juce::ValueTree& patch) {
+        patch.removeProperty("skin", nullptr);
         patch.removeProperty("flash", nullptr); patch.removeProperty("advancedVisible", nullptr);
         auto layout = patch.getChildWithName("RoutingLayout");
         // Root layout properties are presentation preferences; node positions live
@@ -317,7 +347,7 @@ private:
     }
     static void retainPreferences(juce::ValueTree& patch, const juce::ValueTree& live) {
         stripPreferences(patch);
-        for (const auto* key : {"flash", "advancedVisible"})
+        for (const auto* key : {"skin", "flash", "advancedVisible"})
             if (live.hasProperty(key)) patch.setProperty(key, live[key], nullptr);
         auto layout = patch.getChildWithName("RoutingLayout");
         if (!layout.isValid()) { layout = juce::ValueTree("RoutingLayout"); patch.addChild(layout, -1, nullptr); }

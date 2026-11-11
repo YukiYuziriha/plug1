@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "VisualTheme.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 namespace vocalstack {
@@ -91,15 +92,18 @@ public:
         const auto x = [&](float value) { return track.getX() + juce::jlimit(0.0f, 1.0f, value) * track.getWidth(); };
         const float base = float(valueToProportionOfLength(getValue())), y = track.getY() - 6;
         if (assignment != 0) {
-            g.setColour(juce::Colour(0xffb798ff).withAlpha(0.4f));
+            g.setColour((componentTheme(*this) == Theme::spectral ? themePalette(*this).accent
+                            : juce::Colour(0xffb798ff)).withAlpha(0.4f));
             g.drawLine(track.getX(), y, track.getRight(), y, 1);
             const float lo = bipolar ? base - std::abs(depth) : base + juce::jmin(0.0f, depth);
             const float hi = bipolar ? base + std::abs(depth) : base + juce::jmax(0.0f, depth);
-            g.setColour(juce::Colour(depth < 0 ? 0xffff96c8 : 0xffb798ff));
+            g.setColour(componentTheme(*this) == Theme::spectral
+                ? (depth < 0 ? themePalette(*this).secondary : themePalette(*this).accent)
+                : juce::Colour(depth < 0 ? 0xffff96c8 : 0xffb798ff));
             g.drawLine(x(lo), y, x(hi), y, 2.5f);
         }
         if (hasEffective) {
-            g.setColour(juce::Colour(0xff64f5e3));
+            g.setColour(componentTheme(*this) == Theme::spectral ? themePalette(*this).secondary : juce::Colour(0xff64f5e3));
             g.drawLine(x(effective), y - 3, x(effective), track.getY() + 4, 1.5f);
         }
     }
@@ -107,7 +111,8 @@ public:
         const auto angle = [=](float value) { return start + juce::jlimit(0.0f, 1.0f, value) * (end - start); };
         const auto base = float(valueToProportionOfLength(getValue()));
         if (assignment != 0) {
-            g.setColour(juce::Colour(0xffb798ff).withAlpha(0.45f));
+            g.setColour((componentTheme(*this) == Theme::spectral ? themePalette(*this).accent
+                            : juce::Colour(0xffb798ff)).withAlpha(0.45f));
             juce::Path eligible;
             eligible.addCentredArc(centre.x, centre.y, radius + 5, radius + 5, 0, start, end, true);
             g.strokePath(eligible, juce::PathStrokeType(1));
@@ -115,12 +120,14 @@ public:
             const float hi = bipolar ? base + std::abs(depth) : base + juce::jmax(0.0f, depth);
             juce::Path range;
             range.addCentredArc(centre.x, centre.y, radius + 5, radius + 5, 0, angle(lo), angle(hi), true);
-            g.setColour(juce::Colour(depth < 0 ? 0xffff96c8 : 0xffb798ff));
+            g.setColour(componentTheme(*this) == Theme::spectral
+                ? (depth < 0 ? themePalette(*this).secondary : themePalette(*this).accent)
+                : juce::Colour(depth < 0 ? 0xffff96c8 : 0xffb798ff));
             g.strokePath(range, juce::PathStrokeType(2.5f));
         }
         if (hasEffective) {
             const auto point = centre.getPointOnCircumference(radius + 1, angle(effective));
-            g.setColour(juce::Colour(0xff64f5e3));
+            g.setColour(componentTheme(*this) == Theme::spectral ? themePalette(*this).secondary : juce::Colour(0xff64f5e3));
             g.fillEllipse(point.x - 2, point.y - 2, 4, 4);
         }
     }
@@ -155,11 +162,12 @@ public:
             const bool bipolar = slider.getMinimum() < 0 && slider.getMaximum() > 0;
             const float origin = bipolar ? track.getX() + float(slider.valueToProportionOfLength(0)) * track.getWidth() : track.getX();
             const float thumb = juce::jlimit(track.getX(), track.getRight(), position);
-            g.setColour(juce::Colour(0xff46515b)); g.fillRect(track);
+            g.setColour(componentTheme(slider) == Theme::device ? juce::Colour(0xff46515b) : themePalette(slider).border);
+            g.fillRect(track);
             g.setColour(slider.findColour(juce::Slider::trackColourId));
             g.fillRect(juce::Rectangle<float>(juce::jmin(origin, thumb), track.getY(), std::abs(thumb - origin), 2));
             if (bipolar) {
-                g.setColour(juce::Colour(0xffd7dfe6));
+                g.setColour(componentTheme(slider) == Theme::device ? juce::Colour(0xffd7dfe6) : themePalette(slider).muted);
                 g.drawVerticalLine(juce::roundToInt(origin), track.getY() - 3, track.getY() + 5);
             }
             g.setColour(slider.findColour(juce::Slider::thumbColourId));
@@ -178,14 +186,14 @@ public:
                 path.addCentredArc(centre.x, centre.y, radius, radius, 0, juce::jmin(a, b), juce::jmax(a, b), true);
                 g.setColour(colour); g.strokePath(path, juce::PathStrokeType(width));
             };
-            arc(start, end, juce::Colour(0xff46515b), 2.5f);
+            arc(start, end, componentTheme(slider) == Theme::spectral ? themePalette(slider).border : juce::Colour(0xff46515b), 2.5f);
             arc(origin, angle, slider.findColour(juce::Slider::trackColourId), 3);
             if (signedRange) {
-                g.setColour(juce::Colour(0xffd7dfe6));
+                g.setColour(componentTheme(slider) == Theme::spectral ? themePalette(slider).muted : juce::Colour(0xffd7dfe6));
                 g.drawLine({centre.getPointOnCircumference(radius + 2, origin),
                             centre.getPointOnCircumference(radius + 5, origin)}, 1);
             }
-            g.setColour(juce::Colour(0xff20262d));
+            g.setColour(componentTheme(slider) == Theme::spectral ? themePalette(slider).inset : juce::Colour(0xff20262d));
             g.fillEllipse(juce::Rectangle<float>(radius * 1.55f, radius * 1.55f).withCentre(centre));
             g.setColour(slider.findColour(juce::Slider::thumbColourId));
             g.drawLine({centre.getPointOnCircumference(radius * 0.35f, angle),
@@ -250,9 +258,14 @@ public:
         auto area = getLocalBounds(); label.setBounds(area.removeFromTop(17)); slider.setBounds(area);
     }
     void setNeon(bool neon) {
-        slider.setColour(juce::Slider::trackColourId, juce::Colour(neon ? 0xffff4ca0 : 0xfff5a24b));
-        slider.setColour(juce::Slider::thumbColourId, juce::Colour(neon ? 0xff64f5e3 : 0xffe4e4df));
-        slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffe4e9ee));
+        const auto p = themePalette(*this, neon);
+        const auto selectedTheme = componentTheme(*this, neon);
+        const auto text = selectedTheme == Theme::device ? juce::Colour(0xffe4e9ee) : p.text;
+        label.setColour(juce::Label::textColourId, text);
+        slider.setColour(juce::Slider::trackColourId, p.accent);
+        slider.setColour(juce::Slider::thumbColourId, selectedTheme == Theme::device ? p.text : p.secondary);
+        slider.setColour(juce::Slider::textBoxTextColourId, text);
+        slider.setColour(juce::Slider::textBoxHighlightColourId, p.accent.withAlpha(0.3f));
         slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
         slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         for (auto* child : slider.getChildren()) {

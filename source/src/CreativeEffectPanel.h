@@ -4,6 +4,7 @@
 #include "DoublerPanel.h"
 #include "ParameterKnob.h"
 #include "ModulationUI.h"
+#include "CreativeEffectVisual.h"
 #include <functional>
 #include <memory>
 #include <vector>
@@ -106,17 +107,18 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             toggle.setBounds(getLocalBounds().reduced(2, 8));
         }
         void setNeon(bool neon) {
-            const auto accent = juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b);
-            label.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
+            const auto palette = themePalette(*this, neon);
+            const auto accent = palette.accent;
+            label.setColour(juce::Label::textColourId, palette.text);
             slider.setColour(juce::Slider::trackColourId, accent);
-            slider.setColour(juce::Slider::thumbColourId, juce::Colour(0xffe4e9ee));
-            slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffe4e9ee));
+            slider.setColour(juce::Slider::thumbColourId, palette.text);
+            slider.setColour(juce::Slider::textBoxTextColourId, palette.text);
             slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
             slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-            toggle.setColour(juce::TextButton::buttonColourId, juce::Colour(neon ? 0xff202b40 : 0xff303932));
+            toggle.setColour(juce::TextButton::buttonColourId, palette.inset);
             toggle.setColour(juce::TextButton::buttonOnColourId, accent);
-            toggle.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
-            toggle.setColour(juce::TextButton::textColourOnId, juce::Colour(0xff151b20));
+            toggle.setColour(juce::TextButton::textColourOffId, palette.text);
+            toggle.setColour(juce::TextButton::textColourOnId, palette.background);
         }
         ParameterKnob::Style style;
         juce::Label label;
@@ -131,13 +133,14 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
     };
 public:
     CreativeEffectPanel(Processor& processor, size_t fxSlot, CreativeKind effectKind)
-        : owner(processor), slot(fxSlot), kind(effectKind) {
+        : owner(processor), slot(fxSlot), kind(effectKind), visual(processor, fxSlot, effectKind) {
         setName(effectName(kind) + " inspector");
         overview.setText(description(kind), juce::dontSendNotification);
         overview.setFont(juce::Font(juce::FontOptions(11.5f)));
         overview.setJustificationType(juce::Justification::topLeft);
         overview.setInterceptsMouseClicks(false, false);
         content.addAndMakeVisible(overview);
+        content.addAndMakeVisible(visual);
         addGroup("BLEND");
         addRow(fxParameterId(slot, "Mix"), "Dry / Wet", "True dry/wet blend for this FX slot.", "%", false);
         const char* previous = "";
@@ -185,7 +188,8 @@ public:
     }
     void setNeon(bool enabled) {
         neon = enabled;
-        overview.setColour(juce::Label::textColourId, juce::Colour(0xffaebbc2));
+        overview.setColour(juce::Label::textColourId, themePalette(*this, neon).muted);
+        visual.setNeon(neon);
         meter.setColour(juce::Label::textColourId, accent());
         for (auto& group : groups) {
             group.heading->setColour(juce::Label::textColourId, accent());
@@ -199,7 +203,7 @@ public:
                 viewport.setViewPosition(0, juce::jmax(0, row->getY() - 26));
     }
     void paint(juce::Graphics& g) override {
-        g.setColour(juce::Colour(neon ? 0xff111827 : 0xff252826));
+        g.setColour(themePalette(*this, neon).panel);
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 5);
     }
     void resized() override {
@@ -210,7 +214,8 @@ public:
         const int columns = width >= 460 ? 2 : 1;
         const int cell = juce::jmax(1, (width - 16) / columns);
         int y = 8;
-        overview.setBounds(8, y, juce::jmax(1, width - 16), 58); y += 64;
+        visual.setBounds(8, y, juce::jmax(1, width - 16), 238); y += 246;
+        overview.setBounds(8, y, juce::jmax(1, width - 16), 44); y += 50;
         if (kind == CreativeKind::compressor) { meter.setBounds(8, y, width - 16, 28); y += 34; }
         for (auto& group : groups) {
             group.heading->setBounds(8, y, width - 16, 23); y += 25;
@@ -222,7 +227,7 @@ public:
         content.setSize(width, juce::jmax(getHeight(), y));
     }
 private:
-    juce::Colour accent() const { return juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b); }
+    juce::Colour accent() const { return themePalette(*this, neon).accent; }
     void addGroup(const char* name) {
         Group group;
         group.heading = std::make_unique<juce::Label>();
@@ -242,6 +247,7 @@ private:
     }
     static const char* groupFor(CreativeParameter p) {
         using P = CreativeParameter;
+        if (p == P::reverbPitch || p == P::reverbPitchAmount || p == P::reverbSwell) return "PITCH & SWELL";
         if (p <= P::delayPingPong) return "TIMING & REPEATS";
         if (p <= P::delayPitch) return "COLOUR & DUCKING";
         if (p <= P::reverbEarly) return "SPACE & DECAY";
@@ -263,6 +269,9 @@ private:
             case P::delayPingPong: return "Cross-feedback between left and right repeat channels.";
             case P::delayPitch: return "Pitch shift applied to repeats, in semitones.";
             case P::reverbDecay: return "Nominal midband RT60 in seconds. Damping changes high-frequency decay.";
+            case P::reverbPitch: return "Pitch shift inside reverb feedback. The parameter schematic is not a measured impulse response.";
+            case P::reverbPitchAmount: return "Blend of pitched feedback, not an additional wet voice. Freeze disables the pitched branch.";
+            case P::reverbSwell: return "Signal-dependent wet attack softens onset without moving predelay taps. The graphic is an onset guide, not an exact envelope prediction.";
             case P::reverbFreeze: return "Hold the reverb tail; disable to return to normal decay.";
             case P::reverbModulation: return "Tail delay modulation depth in milliseconds.";
             case P::compressorSidechainHP: return "High-pass filter in the level detector, not the audible signal.";
@@ -278,9 +287,9 @@ private:
             + " " + d.unit + ". Drag to adjust; double-click resets. In Assign mode, drag to set modulation depth.";
     }
     void updateState() {
+        visual.refresh();
         if (kind == CreativeKind::delay) {
-            const auto* sync = owner.parameters.getRawParameterValue(creativeParameterId(slot, size_t(CreativeParameter::delaySync)));
-            const bool synced = sync && sync->load() >= 0.5f;
+            const bool synced = visual.delaySynced();
             if (timeRow) timeRow->setEnabled(!synced);
             if (beatsRow) beatsRow->setEnabled(synced);
         }
@@ -294,6 +303,7 @@ private:
     size_t slot;
     CreativeKind kind;
     bool neon = false;
+    CreativeEffectVisual visual;
     juce::Component content;
     juce::Viewport viewport;
     juce::Label overview, meter;

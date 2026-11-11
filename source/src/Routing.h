@@ -6,6 +6,7 @@
 #include "Multiband.h"
 #include "FxMonitor.h"
 #include "CreativeEffects.h"
+#include "UtilityFilters.h"
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -21,19 +22,25 @@ namespace vocalstack {
 
 // Serializable model. IDs identify machines, not positions in nodes[]. Changing
 // an effect ID or type creates fresh state; retaining both retains DSP history.
-enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13 };
+enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18 };
 inline constexpr bool isCreativeEffect(NodeType type) noexcept {
     return type >= NodeType::delay && type <= NodeType::granular;
 }
 inline constexpr CreativeKind creativeKind(NodeType type) noexcept {
     return static_cast<CreativeKind>(int(type) - int(NodeType::delay));
 }
+inline constexpr bool isUtilityEffect(NodeType type) noexcept {
+    return type >= NodeType::gain && type <= NodeType::synthFilter;
+}
+inline constexpr UtilityKind utilityKind(NodeType type) noexcept {
+    return static_cast<UtilityKind>(int(type) - int(NodeType::gain));
+}
 struct RoutingNode {
     std::uint32_t id = 0;
     NodeType type = NodeType::lead;
     int voiceSlot = 0; // zero-based, stable 0..7
     bool enabled = true; // effect bypass; crossover bypass routes full-band to port zero
-    float mix = 0.25f, motion = 0.35f;
+    float mix = isUtilityEffect(type) ? 1.0f : 0.25f, motion = 0.35f;
     bool mainControls = false; // Mix: main Mix; Chorale: legacy Chorale controls
     float referencePower = 1.0f; // legacy Sum only; main Mix wet pin has a 2-voice budget
     int latencySamples = 0; // nonzero is unsupported, rejected rather than misaligned
@@ -42,6 +49,7 @@ struct RoutingNode {
     int bandCount = 3;
     float crossoverLow = 250, crossoverHigh = 4000;
     CreativeSettings creative;
+    UtilitySettings utility;
 };
 struct RoutingLink {
     std::uint32_t source = 0, destination = 0;
@@ -107,6 +115,7 @@ struct FxSettings {
     int bandCount = 3;
     float crossoverLow = 250, crossoverHigh = 4000;
     CreativeSettings creative;
+    UtilitySettings utility;
 };
 
 // Stable processor automation identities. Unmapped standalone machines keep
@@ -453,6 +462,23 @@ public:
                     fxMonitor->setGainReduction(size_t(monitorSlot), fx.enabled ? step.fx->creative.gainReductionDb() : 0.f);
                 break;
             }
+            case NodeType::gain: case NodeType::stereo: case NodeType::gate:
+            case NodeType::xpFilter: case NodeType::synthFilter: {
+                value = input(0);
+                if (monitoring) monitorInput = value.audio;
+                const auto fx = effectSettings(n, controls);
+                // Clock the wet machine even while dry so bypass preserves history.
+                const auto wet = step.fx->utility.process(value.audio.left, value.audio.right, fx.utility);
+                const float target = fx.enabled ? unit(fx.mix, 1.f) : 0.f;
+                if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
+                else step.smoothedMix += mixSmoothing * (target - step.smoothedMix);
+                if (std::abs(step.smoothedMix - target) < 1.e-7) step.smoothedMix = target;
+                const float m = float(step.smoothedMix);
+                value.audio = {blend(value.audio.left, wet[0], m), blend(value.audio.right, wet[1], m)};
+                if (fxMonitor && monitorSlot >= 0)
+                    fxMonitor->setGainReduction(size_t(monitorSlot), fx.enabled && m > 0 ? step.fx->utility.gainReductionDb() : 0.f);
+                break;
+            }
             case NodeType::output: value = input(0); break;
             }
             if (monitoring) {
@@ -499,16 +525,20 @@ private:
             case NodeType::waveshaper: waveshaper.prepare(sr); break;
             case NodeType::equalizer: eq.prepare(sr); break;
             case NodeType::crossover: crossover.prepare(sr); break;
-            default: if (isCreativeEffect(type)) creative.prepare(sr, creativeKind(type)); break;
+            default:
+                if (isCreativeEffect(type)) creative.prepare(sr, creativeKind(type));
+                else if (isUtilityEffect(type)) utility.prepare(sr, utilityKind(type));
+                break;
             }
         }
-        void reset() { chorale.reset(); waveshaper.reset(); eq.reset(); crossover.reset(); creative.reset(); }
+        void reset() { chorale.reset(); waveshaper.reset(); eq.reset(); crossover.reset(); creative.reset(); utility.reset(); }
         NodeType type;
         Chorale chorale;
         Waveshaper waveshaper;
         Equalizer eq;
         Multiband crossover;
         CreativeEffect creative;
+        UtilityEffect utility;
     };
     static constexpr double moduleTailSeconds(NodeType type) noexcept {
         switch (type) {
@@ -518,12 +548,15 @@ private:
         case NodeType::crossover: return 8;
 
         case NodeType::compressor: case NodeType::bitcrusher: return 2;
+        // Cover ringing and old comb contents across mode/cutoff/feedback edits,
+        // even when today's mode is non-comb or the machine is bypassed.
+        case NodeType::xpFilter: case NodeType::synthFilter: return 256;
         default: return 0;
         }
     }
     static bool isEffect(NodeType t) noexcept {
         return t == NodeType::chorale || t == NodeType::waveshaper
-            || t == NodeType::equalizer || t == NodeType::crossover || isCreativeEffect(t);
+            || t == NodeType::equalizer || t == NodeType::crossover || isCreativeEffect(t) || isUtilityEffect(t);
     }
     struct Step {
         RoutingNode node;
@@ -546,7 +579,7 @@ private:
         // Slot zero belongs exclusively to legacy Chorale, not new effect types.
         if (controls.fxAutomation && slot > 0) return controls.fxSettings[slot];
         FxSettings fx{n.enabled, n.mix, n.motion};
-        fx.waveshaper = n.waveshaper; fx.eq = n.eq; fx.creative = n.creative;
+        fx.waveshaper = n.waveshaper; fx.eq = n.eq; fx.creative = n.creative; fx.utility = n.utility;
         fx.bandCount = n.bandCount; fx.crossoverLow = n.crossoverLow; fx.crossoverHigh = n.crossoverHigh;
         return fx;
     }
@@ -574,7 +607,11 @@ private:
         }
         case NodeType::reverb:
             if (value(P::reverbFreeze) >= .5) return std::numeric_limits<double>::infinity();
-            return .001 * value(P::reverbPredelay) + 2 * value(P::reverbDecay) + residual;
+            // Pitched feedback adds up to a 60 ms read window per traversal.
+            // Keep the old unpitched bound while allowing extra shimmer decay.
+            return .001 * value(P::reverbPredelay) + residual
+                + (value(P::reverbPitchAmount) > 0 && std::abs(value(P::reverbPitch)) > 1.e-6
+                    ? 4 * value(P::reverbDecay) + .75 : 2 * value(P::reverbDecay));
         case NodeType::granular: {
             if (value(P::granularFreeze) >= .5) return std::numeric_limits<double>::infinity();
             // Old grains retain size/pitch across automation. Cover the maximum
@@ -671,6 +708,14 @@ private:
                 for (size_t p = 0; p < creativeParameterCount; ++p) {
                     const auto& d = creativeParameters[p]; const float x = n.creative.values[p];
                     if (!std::isfinite(x) || x < d.min || x > d.max) return {false, "invalid creative effect controls"};
+                }
+                ++effects; break;
+            case NodeType::gain: case NodeType::stereo: case NodeType::gate:
+            case NodeType::xpFilter: case NodeType::synthFilter:
+                for (size_t p = 0; p < utilityParameterCount; ++p) {
+                    const auto& d = utilityParameters[p]; const float x = n.utility.values[p];
+                    if (!std::isfinite(x) || x < d.min || x > d.max || (d.discrete && x != std::round(x)))
+                        return {false, "invalid utility effect controls"};
                 }
                 ++effects; break;
             case NodeType::output: ++outputs; break;

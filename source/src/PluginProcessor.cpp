@@ -269,21 +269,32 @@ State::ParameterLayout Processor::makeParameters() {
                     if (text.trim().equalsIgnoreCase(Waveshaper::shapeNames[i])) return int(i + 1);
                 return 0;
             })));
-    for (size_t slot = 1; slot < 16; ++slot) {
-        for (size_t p = 0; p < creativeParameterCount; ++p) {
-            const auto& d = creativeParameters[p];
-            const auto id = creativeParameterId(slot, p);
-            const auto name = "FX " + juce::String(int(slot)) + " " + juce::String(d.label);
-            if (d.discrete) {
-                layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id, 1}, name, d.initial >= .5f));
-            } else {
-                juce::NormalisableRange<float> range(d.min, d.max);
-                if (d.min > 0 && d.max / d.min >= 20) range.setSkewForCentre(std::sqrt(d.min * d.max));
-                layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, name, range, d.initial,
-                    juce::AudioParameterFloatAttributes{}.withLabel(d.unit)));
-            }
+    const auto appendDescriptor = [&](const juce::String& id, const juce::String& name, const auto& d) {
+        if (d.discrete && d.min == 0 && d.max == 1) {
+            layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id, 1}, name, d.initial >= .5f));
+        } else if (d.discrete) {
+            layout.add(std::make_unique<DiscreteAudioParameterInt>(juce::ParameterID{id, 1}, name,
+                int(d.min), int(d.max), int(d.initial)));
+        } else {
+            juce::NormalisableRange<float> range(d.min, d.max);
+            if (d.min > 0 && d.max / d.min >= 20) range.setSkewForCentre(std::sqrt(d.min * d.max));
+            layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, name, range, d.initial,
+                juce::AudioParameterFloatAttributes{}.withLabel(d.unit)));
         }
-    }
+    };
+    // Append new Reverb fields after every historical Creative slot block.
+    for (int pass = 0; pass < 2; ++pass)
+        for (size_t slot = 1; slot < 16; ++slot)
+            for (size_t p = pass == 0 ? 0 : legacyCreativeParameterCount;
+                 p < (pass == 0 ? legacyCreativeParameterCount : creativeParameterCount); ++p) {
+                const auto& d = creativeParameters[p];
+                appendDescriptor(creativeParameterId(slot, p), "FX " + juce::String(int(slot)) + " " + d.label, d);
+            }
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t p = 0; p < utilityParameterCount; ++p) {
+            const auto& d = utilityParameters[p];
+            appendDescriptor(utilityParameterId(slot, p), "FX " + juce::String(int(slot)) + " " + d.label, d);
+        }
     return layout;
 }
 
@@ -332,7 +343,9 @@ Settings Processor::settingsFromValues(const std::array<float, parameterIds.size
         const int algorithm = std::clamp(int(value(waveAlgorithmParameterStart + slot - 1)), 0, 19);
         if (algorithm > 0) result.fxSettings[slot].waveshaper.shape = algorithm - 1;
         for (size_t p = 0; p < creativeParameterCount; ++p)
-            result.fxSettings[slot].creative.values[p] = value(creativeParameterStart + (slot - 1) * creativeParameterCount + p);
+            result.fxSettings[slot].creative.values[p] = value(creativeParameterIndex(slot, p));
+                    for (size_t p = 0; p < utilityParameterCount; ++p)
+                        result.fxSettings[slot].utility.values[p] = value(utilityParameterStart + (slot - 1) * utilityParameterCount + p);
     }
     result.tempoBpm = hostTempo.load(std::memory_order_relaxed);
     result.localMixAutomation = true;
@@ -487,6 +500,7 @@ bool Processor::remoteControlsPageFill(uint32_t index, juce::String& section, ui
 juce::ValueTree Processor::copyState() {
     const std::lock_guard<std::recursive_mutex> lock(controlMutex);
     auto state = parameters.copyState();
+    state.setProperty("skin", getSkin(), nullptr);
     state.setProperty(themeProperty, isFlash(), nullptr);
     state.setProperty("advancedVisible", isAdvancedVisible(), nullptr);
     state.setProperty("advancedInitialized", advancedInitialized.load(std::memory_order_relaxed), nullptr);
@@ -656,12 +670,23 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                         && node.waveshaper.shape > 2)
                         initial = float(node.waveshaper.shape + 1);
             }
-            if (graphTree.isValid() && i >= creativeParameterStart) {
-                const size_t slot = 1 + (i - creativeParameterStart) / creativeParameterCount;
-                const size_t field = (i - creativeParameterStart) % creativeParameterCount;
+            if (graphTree.isValid() && i >= creativeParameterStart && i < utilityParameterStart) {
+                const size_t offset = i - creativeParameterStart;
+                const bool legacy = offset < 15 * legacyCreativeParameterCount;
+                const size_t width = legacy ? legacyCreativeParameterCount : creativeParameterCount - legacyCreativeParameterCount;
+                const size_t relative = legacy ? offset : offset - 15 * legacyCreativeParameterCount;
+                const size_t slot = 1 + relative / width;
+                const size_t field = relative % width + (legacy ? 0 : legacyCreativeParameterCount);
                 for (const auto& node : active.nodes)
                     if (isCreativeEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
                         initial = node.creative.values[field];
+            }
+            if (graphTree.isValid() && i >= utilityParameterStart) {
+                const size_t slot = 1 + (i - utilityParameterStart) / utilityParameterCount;
+                const size_t field = (i - utilityParameterStart) % utilityParameterCount;
+                for (const auto& node : active.nodes)
+                    if (isUtilityEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
+                        initial = node.utility.values[field];
             }
             initial = parameter->convertFrom0to1(parameter->convertTo0to1(initial));
             missing.setProperty("value", initial, nullptr);
@@ -670,7 +695,8 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
     }
     const bool initialized = legacyVoices
         || static_cast<bool>(restored.getProperty("advancedInitialized", hasAdvancedState));
-    flash.store(static_cast<bool>(restored.getProperty(themeProperty, false)), std::memory_order_relaxed);
+    skin.store(std::clamp(int(restored.getProperty("skin",
+        static_cast<bool>(restored.getProperty(themeProperty, false)) ? 1 : 0)), 0, 2), std::memory_order_relaxed);
     advancedVisible.store(static_cast<bool>(restored.getProperty("advancedVisible", false)), std::memory_order_relaxed);
     parameters.replaceState(restored);
     advancedInitialized.store(initialized, std::memory_order_relaxed);
@@ -704,9 +730,14 @@ bool Processor::pasteSettings(const juce::String& text) {
     return true;
 }
 
-void Processor::setFlash(bool enabled) {
-    if (flash.exchange(enabled, std::memory_order_relaxed) != enabled)
+void Processor::setSkin(int requested) {
+    const int next = std::clamp(requested, 0, 2);
+    if (skin.exchange(next, std::memory_order_relaxed) != next)
         updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+}
+
+void Processor::setFlash(bool enabled) {
+    setSkin(enabled ? 1 : 0);
 }
 
 void Processor::setParameterValue(const char* id, float value) {
@@ -884,9 +915,14 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
                 if (slot > 0 && isCreativeEffect(node.type)) {
                     for (size_t p = 0; p < creativeParameterCount; ++p)
                         if (old == previous.nodes.end() || node.creative.values[p] != old->creative.values[p])
-                            setParameterValue(parameterIds[creativeParameterStart + (slot - 1) * creativeParameterCount + p], node.creative.values[p]);
+                            setParameterValue(parameterIds[creativeParameterIndex(slot, p)], node.creative.values[p]);
                 }
-                if (slot > 0 && node.type != NodeType::chorale && !isCreativeEffect(node.type)) {
+                if (slot > 0 && isUtilityEffect(node.type)) {
+                    for (size_t p = 0; p < utilityParameterCount; ++p)
+                        if (old == previous.nodes.end() || node.utility.values[p] != old->utility.values[p])
+                            setParameterValue(parameterIds[utilityParameterStart + (slot - 1) * utilityParameterCount + p], node.utility.values[p]);
+                }
+                if (slot > 0 && node.type != NodeType::chorale && !isCreativeEffect(node.type) && !isUtilityEffect(node.type)) {
                     const auto next = processorToneValues(node);
                     const auto before = old == previous.nodes.end() ? next : processorToneValues(*old);
                     if (node.type == NodeType::waveshaper && (old == previous.nodes.end() || node.waveshaper.shape != old->waveshaper.shape))

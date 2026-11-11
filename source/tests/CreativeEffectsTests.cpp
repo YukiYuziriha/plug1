@@ -65,7 +65,24 @@ void finite(const std::array<float, 2>& v) {
     check(std::abs(v[0]) <= 64 && std::abs(v[1]) <= 64, "Unbounded output");
 }
 void descriptors() {
-    check(creativeParameterCount == 48, "Host parameter count changed");
+    check(creativeParameterCount == 51, "Host parameter count changed");
+    constexpr std::array<const char*, 48> legacyIds {{
+        "delay_time", "delay_sync", "delay_beats", "delay_feedback", "delay_pingpong",
+        "delay_lowcut", "delay_highcut", "delay_drive", "delay_duck", "delay_duck_release", "delay_pitch",
+        "reverb_predelay", "reverb_size", "reverb_decay", "reverb_diffusion", "reverb_early",
+        "reverb_lowcut", "reverb_highcut", "reverb_damping", "reverb_width", "reverb_modulation",
+        "reverb_duck", "reverb_duck_release", "reverb_saturation", "reverb_freeze",
+        "compressor_threshold", "compressor_ratio", "compressor_knee", "compressor_attack",
+        "compressor_release", "compressor_makeup", "compressor_sidechain_hp",
+        "crusher_bits", "crusher_rate", "crusher_lowpass", "crusher_drive", "crusher_dither",
+        "granular_pitch", "granular_size", "granular_density", "granular_spread", "granular_position",
+        "granular_freeze", "granular_reverse", "granular_lowcut", "granular_highcut", "granular_jitter", "granular_drive"
+    }};
+    for (std::size_t i = 0; i < legacyIds.size(); ++i)
+        check(std::strcmp(creativeParameters[i].id, legacyIds[i]) == 0, "Legacy host ID/index moved");
+    check(static_cast<std::size_t>(P::reverbPitch) == 48
+        && static_cast<std::size_t>(P::reverbPitchAmount) == 49
+        && static_cast<std::size_t>(P::reverbSwell) == 50, "Reverb controls must be appended");
     CreativeSettings s;
     std::array<int, 5> counts{};
     for (std::size_t i = 0; i < creativeParameterCount; ++i) {
@@ -201,6 +218,123 @@ void reverbTests() {
         if (i > 144000) frozenEnergy += v[0] * v[0] + v[1] * v[1];
     }
     check(frozenEnergy > 1.e-9, "Freeze failed to hold tail");
+}
+// A sustained sine has no energy at either octave until it passes through
+// the feedback pitch path. Measure both stereo channels to avoid FDN notches.
+void reverbPitchAndSwell() {
+    for (double sr : {8000., 48000., 192000.}) for (float pitch : {-12.f, 12.f}) {
+        CreativeEffect plain, shifted; CreativeSettings a, b;
+        a[P::reverbPredelay] = 0; a[P::reverbDuck] = 0; a[P::reverbModulation] = 0;
+        a[P::reverbDamping] = 20000; a[P::reverbLowCut] = 20; a[P::reverbHighCut] = 20000;
+        a[P::reverbSaturation] = 0; a[P::reverbEarly] = 0; a[P::reverbDecay] = 5;
+        b = a; b[P::reverbPitch] = pitch; b[P::reverbPitchAmount] = 100;
+        plain.prepare(sr, CreativeKind::reverb); shifted.prepare(sr, CreativeKind::reverb);
+        std::array<double, 2> refSin{}, refCos{}, outSin{}, outCos{};
+        const double hz = pitch < 0 ? 400 : 200;
+        const double target = hz * std::pow(2., pitch / 12.);
+        for (int i = 0; i < static_cast<int>(sr * 3); ++i) {
+            const float x = sine(i, sr, hz) * .15f;
+            const auto u = plain.process(x, x, a), v = shifted.process(x, x, b);
+            finite(v);
+            if (i >= static_cast<int>(sr)) for (int c = 0; c < 2; ++c) {
+                const double phase = 2 * pi * target * i / sr;
+                refSin[c] += u[c] * std::sin(phase); refCos[c] += u[c] * std::cos(phase);
+                outSin[c] += v[c] * std::sin(phase); outCos[c] += v[c] * std::cos(phase);
+            }
+        }
+        double reference = 0, octave = 0;
+        for (int c = 0; c < 2; ++c) {
+            reference += refSin[c] * refSin[c] + refCos[c] * refCos[c];
+            octave += outSin[c] * outSin[c] + outCos[c] * outCos[c];
+        }
+        check(octave > 100 * (1 + reference), "Reverb feedback missing audible up/down octave");
+    }
+    for (float pitch : {-12.f, 0.f, 12.f}) {
+        CreativeEffect plain, disabled; CreativeSettings a, b;
+        b = a; b[P::reverbPitch] = pitch;
+        // Zero amount, or unity pitch even at full amount, retains the legacy sound.
+        b[P::reverbPitchAmount] = pitch == 0 ? 100.f : 0.f;
+        plain.prepare(48000, CreativeKind::reverb); disabled.prepare(48000, CreativeKind::reverb);
+        for (int i = 0; i < 24000; ++i) {
+            const float x = sine(i, 48000) * .2f;
+            check(plain.process(x, -.5f * x, a) == disabled.process(x, -.5f * x, b), "Disabled pitch changed reverb");
+        }
+    }
+    for (double sr : {8000., 48000., 384000.}) {
+        CreativeEffect plain, swell; CreativeSettings a, b;
+        a[P::reverbPredelay] = 0; a[P::reverbDuck] = 0; a[P::reverbEarly] = 100;
+        a[P::reverbModulation] = 0; a[P::reverbWidth] = 0;
+        b = a; b[P::reverbSwell] = 600;
+        plain.prepare(sr, CreativeKind::reverb); swell.prepare(sr, CreativeKind::reverb);
+        double earlyPlain = 0, earlySwell = 0, latePlain = 0, lateSwell = 0;
+        for (int i = 0; i < static_cast<int>(sr * 3); ++i) {
+            const float x = .2f * sine(i, sr, 311);
+            const auto u = plain.process(x, x, a), v = swell.process(x, x, b);
+            finite(v); check(v[0] == v[1], "Swell changed mono width");
+            if (i < sr * .1) { earlyPlain += u[0] * u[0]; earlySwell += v[0] * v[0]; }
+            if (i > sr * 2) { latePlain += u[0] * u[0]; lateSwell += v[0] * v[0]; }
+        }
+        check(earlyPlain > 1.e-5 && earlySwell < earlyPlain * .08, "Wet attack did not soften onset");
+        check(lateSwell > latePlain * .5 && lateSwell <= latePlain * 1.001, "Swell did not recover / boosted tail");
+        // An isolated transient must also swell, rather than just gating the dry input.
+        plain.reset(); swell.reset(); earlyPlain = earlySwell = latePlain = lateSwell = 0;
+        for (int i = 0; i < static_cast<int>(sr); ++i) {
+            const auto u = plain.process(i == 0 ? .5f : 0, 0, a);
+            const auto v = swell.process(i == 0 ? .5f : 0, 0, b);
+            if (i < sr * .05) { earlyPlain += u[0] * u[0]; earlySwell += v[0] * v[0]; }
+            if (i > sr * .4) { latePlain += u[0] * u[0]; lateSwell += v[0] * v[0]; }
+        }
+        check(earlySwell < earlyPlain * .08, "Impulse onset was not softened");
+        check(lateSwell > latePlain * .01, "Swell gated away the impulse tail");
+    }
+}
+void reverbPitchFreezeAndReset() {
+    for (double sr : {8000., 44100., 48000., 96000., 192000., 384000.}) for (float pitch : {-12.f, 12.f}) {
+        CreativeEffect fx; CreativeSettings s;
+        s[P::reverbPitch] = pitch; s[P::reverbPitchAmount] = 100; s[P::reverbSwell] = 200;
+        s[P::reverbDuck] = 0; s[P::reverbDecay] = 20;
+        fx.prepare(sr, CreativeKind::reverb);
+        for (int i = 0; i < static_cast<int>(sr * .4); ++i)
+            fx.process(.15f * sine(i, sr, 400), .1f * sine(i, sr, 311), s);
+        s[P::reverbFreeze] = 1;
+        double first = 0, last = 0;
+        for (int i = 0; i < static_cast<int>(sr * 4); ++i) {
+            const auto v = fx.process(0, 0, s); finite(v);
+            const double energy = v[0] * v[0] + v[1] * v[1];
+            if (i >= sr && i < sr * 2) first += energy;
+            if (i >= sr * 3) last += energy;
+        }
+        check(last > 1.e-12 && last < first * 2, "Pitched freeze died or grew unstable");
+        s[P::reverbFreeze] = 0;
+        CreativeEffect fresh; fresh.prepare(sr, CreativeKind::reverb);
+        fx.reset();
+        double replayEnergy = 0;
+        for (int i = 0; i < static_cast<int>(sr * .4); ++i) {
+            const auto v = fx.process(i == 0 ? .5f : 0, 0, s);
+            check(v == fresh.process(i == 0 ? .5f : 0, 0, s), "Pitched/swell reset not deterministic");
+            replayEnergy += v[0] * v[0] + v[1] * v[1];
+        }
+        check(replayEnergy > 1.e-12, "Pitched reset replay did not exercise the tail");
+        fx.reset();
+        for (int i = 0; i < static_cast<int>(sr * .2); ++i)
+            check(fx.process(0, 0, s) == std::array<float, 2>{}, "Reset retained pitched/swell tail");
+    }
+}
+void reverbPitchedDecay() {
+    for (float pitch : {-12.f, 12.f}) for (float amount : {25.f, 100.f}) {
+        CreativeEffect fx; CreativeSettings s;
+        s[P::reverbPitch] = pitch; s[P::reverbPitchAmount] = amount;
+        s[P::reverbSwell] = 2000; s[P::reverbDecay] = .3f; s[P::reverbDuck] = 0;
+        fx.prepare(48000, CreativeKind::reverb);
+        double onset = 0, tail = 0;
+        for (int i = 0; i < 480000; ++i) {
+            const auto v = fx.process(i == 0 ? 1.f : 0, 0, s); finite(v);
+            const double energy = v[0] * v[0] + v[1] * v[1];
+            if (i < 48000) onset += energy;
+            if (i >= 432000) tail += energy;
+        }
+        check(onset > 1.e-12 && tail < 1.e-12, "Pitched/swell tail missing or failed to decay");
+    }
 }
 void crusherTests() {
     CreativeEffect fx; CreativeSettings s;
@@ -347,7 +481,7 @@ void pitchedDelayAndTempoSlew() {
     check(maximumStep < .25f, "Pitch/tempo automation jumped delay taps");
 }
 void automationAndRealtime() {
-    for (double sr : {8000., 44100., 96000., 192000.}) for (auto kind : kinds) {
+    for (double sr : {8000., 44100., 48000., 96000., 192000., 384000.}) for (auto kind : kinds) {
         CreativeEffect fx; CreativeSettings s;
         fx.prepare(sr, kind);
         bool allFinite = true;
@@ -409,9 +543,10 @@ void decayingTails() {
 int main() {
     try {
         descriptors(); silenceAndReset(); delayTiming(); compression(); reverbTests();
+        reverbPitchAndSwell(); reverbPitchFreezeAndReset(); reverbPitchedDecay();
         crusherTests(); granularTests(); granularOverlapAutomation(); duckingAndCrusherRate(); pitchedDelayAndTempoSlew();
         automationAndRealtime(); blockIndependenceAndPreparation(); decayingTails();
-        std::cout << "CreativeEffects: all tests passed (48 parameters, 5 effects; zero audio allocations/frees)\n";
+        std::cout << "CreativeEffects: all tests passed (51 parameters, 5 effects; zero audio allocations/frees)\n";
         return 0;
     } catch (const std::exception& e) {
         audioThread = false;

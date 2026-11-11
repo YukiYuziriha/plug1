@@ -112,8 +112,8 @@ inline double render(Processor& p, double rate, int channels, int samples, bool 
 
 inline void parameterContract() {
     Processor p;
-    require(creativeParameterStart == 1007 && creativeParameterCount == 48, "Creative append contract changed");
-    require(parameterIds.size() == 1007 + 15 * 48 && p.getParameters().size() == int(parameterIds.size()), "Wrong creative host parameter count");
+    require(creativeParameterStart == 1007 && creativeParameterCount == 51, "Creative append contract changed");
+    require(parameterIds.size() == 2087 && p.getParameters().size() == int(parameterIds.size()), "Wrong expanded host parameter count");
     std::set<std::string> unique;
     for (size_t i = 0; i < parameterIds.size(); ++i) {
         require(unique.insert(parameterIds[i]).second, "Duplicate parameter ID");
@@ -123,7 +123,8 @@ inline void parameterContract() {
     for (size_t slot = 1; slot <= 15; ++slot) for (size_t i = 0; i < creativeParameterCount; ++i) {
         const auto id = creativeParameterId(slot, i);
         const auto& descriptor = creativeParameters[i];
-        require(id == parameterIds[creativeParameterStart + (slot - 1) * creativeParameterCount + i], "Creative helper host offset: " + id);
+        require(id == parameterIds[creativeParameterIndex(slot, i)], "Creative helper host offset: " + id);
+                if (i < 48) require(creativeParameterIndex(slot, i) == 1007 + (slot - 1) * 48 + i, "Historical creative host index changed");
         auto& target = parameter(p, id);
         near(target.getNormalisableRange().start, descriptor.min, "Creative range minimum: " + id);
         near(target.getNormalisableRange().end, descriptor.max, "Creative range maximum: " + id);

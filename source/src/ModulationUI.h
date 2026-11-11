@@ -11,11 +11,84 @@ namespace vocalstack::modulationui {
 using RotaryStyle = ParameterKnob::Style;
 
 inline void styleRotary(juce::Slider& slider, bool neon) {
-    slider.setColour(juce::Slider::trackColourId, juce::Colour(neon ? 0xffff4ca0 : 0xfff5a24b));
-    slider.setColour(juce::Slider::thumbColourId, juce::Colour(neon ? 0xff64f5e3 : 0xffe4e4df));
-    slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffe4e9ee));
+    const auto p = themePalette(slider, neon);
+    const bool device = componentTheme(slider, neon) == Theme::device;
+    slider.setColour(juce::Slider::trackColourId, p.accent);
+    slider.setColour(juce::Slider::thumbColourId, device ? p.text : p.secondary);
+    slider.setColour(juce::Slider::textBoxTextColourId, device ? juce::Colour(0xffe4e9ee) : p.text);
+    slider.setColour(juce::Slider::textBoxHighlightColourId, p.accent.withAlpha(0.3f));
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+}
+
+// Scoped to inspector panels; rotary controls retain their own drawing styles.
+class PanelStyle final : public juce::LookAndFeel_V4 {
+public:
+    void setPalette(const ThemePalette& p) {
+        setColour(juce::Label::textColourId, p.text);
+        setColour(juce::PopupMenu::backgroundColourId, p.inset);
+        setColour(juce::PopupMenu::textColourId, p.text);
+        setColour(juce::PopupMenu::headerTextColourId, p.muted);
+        setColour(juce::PopupMenu::highlightedBackgroundColourId, p.accent.withAlpha(0.22f));
+        setColour(juce::PopupMenu::highlightedTextColourId, p.text);
+    }
+    void drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour&,
+                              bool hover, bool down) override {
+        const auto p = themePalette(button);
+        const bool active = button.getToggleState();
+        const auto accent = button.findColour(juce::TextButton::buttonOnColourId);
+        auto fill = active ? accent : button.findColour(juce::TextButton::buttonColourId);
+        if (hover) fill = fill.interpolatedWith(p.text, 0.07f);
+        if (down) fill = fill.interpolatedWith(p.inset, 0.18f);
+        if (!button.isEnabled()) fill = fill.withMultipliedAlpha(0.45f);
+        const auto area = button.getLocalBounds().toFloat().reduced(0.5f);
+        g.setColour(fill);
+        g.fillRect(area);
+        g.setColour((active || button.hasKeyboardFocus(false) ? accent : p.border)
+                        .withMultipliedAlpha(button.isEnabled() ? 1.0f : 0.45f));
+        g.drawRect(area, button.hasKeyboardFocus(false) ? 2.0f : 1.0f);
+    }
+    juce::Font getTextButtonFont(juce::TextButton& button, int) override {
+        return juce::Font(juce::FontOptions(12.0f,
+            componentTheme(button) == Theme::spectral ? juce::Font::plain : juce::Font::bold));
+    }
+    void drawComboBox(juce::Graphics& g, int width, int height, bool, int, int, int, int,
+                      juce::ComboBox& box) override {
+        const auto p = themePalette(box);
+        const auto area = juce::Rectangle<float>(0.5f, 0.5f, float(width) - 1, float(height) - 1);
+        g.setColour(box.findColour(juce::ComboBox::backgroundColourId));
+        g.fillRect(area);
+        g.setColour(box.hasKeyboardFocus(false) ? p.accent : p.border);
+        g.drawRect(area, 1.0f);
+        const auto x = float(width) - 12, y = float(height) * 0.5f;
+        juce::Path arrow;
+        arrow.startNewSubPath(x - 3, y - 2);
+        arrow.lineTo(x, y + 1);
+        arrow.lineTo(x + 3, y - 2);
+        g.setColour(p.muted.withMultipliedAlpha(box.isEnabled() ? 1.0f : 0.4f));
+        g.strokePath(arrow, juce::PathStrokeType(1.0f));
+    }
+};
+
+inline void styleButton(juce::TextButton& button, const ThemePalette& p) {
+    button.setColour(juce::TextButton::buttonColourId, p.inset);
+    button.setColour(juce::TextButton::buttonOnColourId, p.accent);
+    button.setColour(juce::TextButton::textColourOffId, p.text);
+    button.setColour(juce::TextButton::textColourOnId, p.background);
+}
+
+inline void styleCombo(juce::ComboBox& box, const ThemePalette& p) {
+    box.setColour(juce::ComboBox::backgroundColourId, p.inset);
+    box.setColour(juce::ComboBox::textColourId, p.text);
+    box.setColour(juce::ComboBox::outlineColourId, p.border);
+    box.setColour(juce::ComboBox::arrowColourId, p.muted);
+}
+
+inline void styleViewport(juce::Viewport& viewport, const ThemePalette& p) {
+    for (auto* bar : {&viewport.getVerticalScrollBar(), &viewport.getHorizontalScrollBar()}) {
+        bar->setColour(juce::ScrollBar::backgroundColourId, p.inset);
+        bar->setColour(juce::ScrollBar::thumbColourId, p.muted.withAlpha(0.45f));
+    }
 }
 
 // Selection is UI state, deliberately separate from the audio/gesture Assign ID.
@@ -128,8 +201,9 @@ public:
         for (const auto& a : owner->getModulationState().assignments)
             if (a.modulatorId == source && a.targetParameterId == this->getComponentID() && a.enabled) assigned = true;
         if (owner->modulationAssignmentId() || assigned) {
-            g.setColour(juce::Colour(0xffb798ff).withAlpha(assigned ? .9f : .5f));
-            g.drawRoundedRectangle(this->getLocalBounds().toFloat().reduced(1), 3, assigned ? 2.0f : 1.0f);
+            const bool device = componentTheme(*this) == Theme::device;
+            g.setColour((device ? juce::Colour(0xffb798ff) : themePalette(*this).accent).withAlpha(assigned ? .9f : .5f));
+            g.drawRoundedRectangle(this->getLocalBounds().toFloat().reduced(1), device ? 3.0f : 0.0f, assigned ? 2.0f : 1.0f);
         }
     }
 private:

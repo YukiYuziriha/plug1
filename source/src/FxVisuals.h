@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "Multiband.h"
+#include "VisualTheme.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <algorithm>
 #include <array>
@@ -35,6 +36,10 @@ inline int effectiveWaveShape(Processor& owner, size_t slot, const ModulationSna
     return algorithm > 0 ? algorithm - 1 : std::clamp(int(visualParameter(owner, toneParameterId(slot, "WaveShape"), 0, snapshot)), 0, 2);
 }
 inline juce::Colour visualAccent(bool neon) { return juce::Colour(neon ? 0xff64f5e3 : 0xfff5a24b); }
+
+inline auto visualPalette(const juce::Component& component, bool neon) {
+    return themePalette(component, neon);
+}
 inline juce::Colour crossoverColour(int band) {
     constexpr std::array<juce::uint32, 3> colours{0xfff5a24b, 0xff64d5ba, 0xffa99afa};
     return juce::Colour(colours[size_t(juce::jlimit(0, 2, band))]);
@@ -132,10 +137,13 @@ public:
     void setNeon(bool enabled) { neon = enabled; repaint(); }
 protected:
     void paintBackground(juce::Graphics& g) const {
-        g.setColour(juce::Colour(neon ? 0xff0d1420 : 0xff1c211f));
+        const auto palette = visualPalette(*this, neon);
+        g.setColour(palette.inset);
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 5);
+        g.setColour(palette.border.withAlpha(0.6f));
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 5, 1);
         g.setFont(juce::Font(juce::FontOptions(10.0f)));
-        g.setColour(juce::Colour(0xffa8b3bb));
+        g.setColour(palette.muted);
     }
     void paintSpectrum(juce::Graphics& g, juce::Rectangle<float> area, bool withOutput) const {
         if (!hasLiveFrame()) return;
@@ -213,6 +221,7 @@ public:
     }
     void paint(juce::Graphics& g) override {
         paintBackground(g);
+        const auto palette = visualPalette(*this, neon);
         auto next = monitorOwner.getModulationSnapshot();
         // Match knob feedback: an overlapping publication must not flash base values.
         if (next.consistent) modulationSnapshot = std::move(next);
@@ -235,10 +244,14 @@ public:
         const int shape = effectiveWaveShape(monitorOwner, monitorSlot, &modulationSnapshot);
         const double shapeAmount = parameter(toneParameterId(monitorSlot, "WaveShapeAmount"), 50) * 0.01;
         auto yFor = [&](double y) { return curve.getCentreY() - float(juce::jlimit(-1.0, 1.0, y)) * curve.getHeight() * 0.5f; };
-        g.setColour(juce::Colour(0xff819398).withAlpha(0.25f));
-        g.drawHorizontalLine(int(curve.getCentreY()), curve.getX(), curve.getRight());
-        g.drawVerticalLine(int(curve.getCentreX()), curve.getY(), curve.getBottom());
-        g.drawLine(curve.getX(), curve.getBottom(), curve.getRight(), curve.getY(), 1);
+        g.setColour(palette.border.withAlpha(0.45f));
+        for (int i = 0; i <= 4; ++i) {
+            const float t = float(i) / 4;
+            g.drawHorizontalLine(int(curve.getY() + t * curve.getHeight()), curve.getX(), curve.getRight());
+            g.drawVerticalLine(int(curve.getX() + t * curve.getWidth()), curve.getY(), curve.getBottom());
+        }
+        g.setColour(palette.muted.withAlpha(0.3f));
+        g.drawLine(curve.getX(), curve.getBottom(), curve.getRight(), curve.getY(), 0.75f);
         juce::Path p;
         bool outside = false;
         for (int i = 0; i <= 256; ++i) {
@@ -248,8 +261,14 @@ public:
             const float px = curve.getX() + curve.getWidth() * float(i) / 256;
             if (i == 0) p.startNewSubPath(px, yFor(y)); else p.lineTo(px, yFor(y));
         }
-        g.setColour(visualAccent(neon)); g.strokePath(p, juce::PathStrokeType(1.8f));
-        g.setColour(juce::Colour(0xffa8b3bb));
+        auto fill = p;
+        fill.lineTo(curve.getRight(), curve.getCentreY());
+        fill.lineTo(curve.getX(), curve.getCentreY()); fill.closeSubPath();
+        g.setGradientFill(juce::ColourGradient(palette.accent.withAlpha(0.20f), curve.getX(), curve.getY(),
+            palette.accent.withAlpha(0.025f), curve.getX(), curve.getBottom(), false));
+        g.fillPath(fill);
+        g.setColour(palette.accent); g.strokePath(p, juce::PathStrokeType(1.15f));
+        g.setColour(palette.muted);
         g.drawText("+1", 2, int(curve.getY()), 24, 12, juce::Justification::centredLeft);
         g.drawText("-1", 2, int(curve.getBottom()) - 12, 24, 12, juce::Justification::centredLeft);
         g.drawText(outside ? "Input -1 ... +1 | output outside +/-1 off scale" : "Input -1 ... +1 | Output -1 ... +1", bounds.removeFromTop(16), juce::Justification::centred);
@@ -258,9 +277,9 @@ public:
         g.drawText("PRE dim / POST bright | L / R | " + juce::String(ms, 1) + " ms", bounds.removeFromTop(16), juce::Justification::centredLeft);
         for (size_t ch = 0; ch < 2; ++ch) {
             auto lane = bounds.removeFromTop(29).toFloat().withTrimmedLeft(17);
-            g.setColour(juce::Colour(0xffa8b3bb));
+            g.setColour(palette.muted);
             g.drawText(ch == 0 ? "L" : "R", 7, int(lane.getY()), 14, 26, juce::Justification::centredLeft);
-            g.setColour(juce::Colour(0xff819398).withAlpha(0.2f));
+            g.setColour(palette.border.withAlpha(0.5f));
             g.drawHorizontalLine(int(lane.getCentreY()), lane.getX(), lane.getRight());
             if (!hasLiveFrame()) continue;
             auto draw = [&](const auto& samples, juce::Colour colour) {
@@ -277,10 +296,10 @@ public:
                     g.drawVerticalLine(int(lane.getX()) + x, a, std::max(a + 0.7f, b));
                 }
             };
-            draw(frame.input[ch], juce::Colour(0xffa8b3bb).withAlpha(0.4f));
-            draw(frame.output[ch], visualAccent(neon).withAlpha(0.85f));
+            draw(frame.input[ch], palette.muted.withAlpha(0.4f));
+            draw(frame.output[ch], palette.accent.withAlpha(0.85f));
         }
-        g.setColour(juce::Colour(0xffa8b3bb));
+        g.setColour(palette.muted);
         g.drawText(isStreamStalled() ? "No new frames | fading last L/R capture"
                                : hasLiveFrame() ? "Waveforms: +/-1 FS (over-range off scale)" : "No live audio | waveform scale +/-1 FS", bounds.removeFromTop(16), juce::Justification::centredLeft);
     }

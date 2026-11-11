@@ -79,6 +79,10 @@ void automationAndFreeze() {
     auto& s = c.fxSettings[1].creative;
     s[P::reverbDecay] = 3; s[P::reverbPredelay] = 100;
     install(r, g, c); near(r.tailSeconds(), 6.35, "activation missed automated reverb controls");
+    s[P::reverbPitchAmount] = 40; s[P::reverbPitch] = 12;
+    render(r, c, 2048); near(r.tailSeconds(), 13.1, "pitched feedback tail allowance missing");
+    s[P::reverbPitchAmount] = 0;
+    render(r, c, 2048); near(r.tailSeconds(), 6.35, "zero shimmer changed historical reverb tail");
     s[P::reverbFreeze] = 1;
     render(r, c, 2048); check(std::isinf(r.tailSeconds()), "reverb freeze not infinite");
     s[P::reverbFreeze] = 0; s[P::reverbDecay] = .5f;
@@ -100,6 +104,96 @@ void automationAndFreeze() {
     for (auto type : {NodeType::compressor, NodeType::bitcrusher}) {
         install(r, single(type)); near(r.tailSeconds(), 2, "fixed creative allowance changed");
     }
+}
+void utilityRouting() {
+    using U = UtilityParameter;
+    auto r = std::make_unique<RoutingExecutor>(); r->prepare(48000);
+    const RoutingSources source{{.125f, -.25f}};
+    for (const auto type : {NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter}) {
+        auto g = single(type);
+        check(g.nodes[1].mix == 1, "utility default is not full wet");
+        g.nodes[1].mix = 0;
+        install(*r, g); render(*r, {}, 20000);
+        audio = true;
+        const auto dry = r->process(source, {});
+        audio = false;
+        check(dry.left == source.lead.left && dry.right == source.lead.right, "utility zero Mix is not exact dry");
+        g.nodes[1].enabled = false; g.nodes[1].mix = 1;
+        install(*r, g); render(*r, {}, 20000);
+        const auto bypass = r->process(source, {});
+        check(bypass.left == source.lead.left && bypass.right == source.lead.right, "utility bypass is not exact dry");
+        near(r->tailSeconds(), type == NodeType::xpFilter || type == NodeType::synthFilter ? 256 : 0, "utility tail allowance");
+    }
+    auto g = single(NodeType::gain);
+    g.nodes[1].utility[U::gainDb] = -6;
+    install(*r, g); render(*r, {}, 20000);
+    const auto gain = r->process(source, {});
+    check(std::abs(gain.left - .125 * std::pow(10., -.3)) < 1.e-6, "routed Gain ignored authored settings");
+    g.nodes.push_back({101, NodeType::gain}); g.nodes.back().utility[U::gainDb] = -6;
+    g.links = {{1, 100, 0}, {100, 101, 0}, {101, 2, 0}};
+    install(*r, g); render(*r, {}, 20000);
+    const auto serial = r->process(source, {});
+    check(std::abs(serial.left - .125 * std::pow(10., -.6)) < 1.e-6, "independent serial Gain machines failed");
+    RoutingControls c; c.fxAutomation = true;
+    c.fxSettings[1].mix = c.fxSettings[2].mix = 1;
+    c.fxSettings[1].utility[U::gainDb] = -12;
+    c.fxSettings[2].utility[U::gainDb] = 6;
+    render(*r, c, 20000);
+    check(std::abs(r->process(source, c).left - gain.left) < 1.e-6, "utility slot automation failed");
+    g = single(NodeType::synthFilter);
+    g.nodes[1].utility[U::synthMode] = 5;
+    g.nodes[1].utility[U::synthCutoff] = 20;
+    g.nodes[1].utility[U::synthFeedback] = 95;
+    install(*r, g);
+    audio = true;
+    r->process(source, {});
+    double energy = 0;
+    for (int i = 0; i < 6000; ++i) {
+        const auto y = r->process({}, {});
+        energy += y.left * y.left + y.right * y.right;
+    }
+    audio = false;
+    check(energy > 1.e-6 && std::isfinite(energy), "routed comb has no retained tail");
+    r->reset();
+    audio = true;
+    for (int i = 0; i < 6000; ++i) {
+        const auto y = r->process({}, {});
+        check(y.left == 0 && y.right == 0, "utility reset retained comb audio");
+    }
+    audio = false;
+    // Two same-kind machines must not double-clock a shared comb ring.
+    g.nodes.push_back({101, NodeType::synthFilter});
+    g.nodes.back().utility[U::synthMode] = 5;
+    g.nodes.back().utility[U::synthCutoff] = 37;
+    g.nodes.back().utility[U::synthFeedback] = -60;
+    g.links = {{1, 100, 0}, {100, 101, 0}, {101, 2, 0}};
+    install(*r, g); r->reset();
+    UtilityEffect first, second;
+    first.prepare(48000, UtilityKind::synthFilter); second.prepare(48000, UtilityKind::synthFilter);
+    audio = true;
+    for (int i = 0; i < 8000; ++i) {
+        const RoutingSources in{i == 0 ? source.lead : StereoSample{}};
+        const auto a = first.process(in.lead.left, in.lead.right, g.nodes[1].utility);
+        const auto b = second.process(a[0], a[1], g.nodes.back().utility);
+        const auto actual = r->process(in, {});
+        check(std::abs(actual.left - b[0]) < 1.e-6 && std::abs(actual.right - b[1]) < 1.e-6,
+            "same-kind routed filters shared DSP history");
+    }
+    audio = false;
+    near(r->tailSeconds(), 512, "serial filter allowances not added");
+    g.links = {{1, 100, 0}, {1, 101, 0}, {100, 2, 0}, {101, 2, 0}};
+    install(*r, g); near(r->tailSeconds(), 256, "parallel filter allowances not maxed");
+    // Retain the conservative bound after comb-to-SVF automation or bypass.
+    c.fxSettings[1].utility[U::synthMode] = 0; c.fxSettings[1].enabled = false;
+    render(*r, c, 2048); near(r->tailSeconds(), 256, "comb history tail lost after mode edit");
+    g.links = {{1, 2, 0}};
+    install(*r, g); near(r->tailSeconds(), 0, "dead-end filter contaminated Output tail");
+    g.nodes[1].utility[U::synthMode] = utilityParameters[size_t(U::synthMode)].max + 1;
+    check(!r->requestGraph(g), "invalid utility mode accepted");
+    g.nodes[1].utility[U::synthMode] = .5f;
+    check(!r->requestGraph(g), "fractional utility mode accepted");
+    g.nodes[1].utility[U::synthMode] = std::numeric_limits<float>::quiet_NaN();
+    check(!r->requestGraph(g), "nonfinite utility mode accepted");
 }
 void topologyAndLegacy() {
     RoutingExecutor r; r.prepare(8000);
@@ -134,9 +228,9 @@ void topologyAndLegacy() {
 }
 int main() {
     try {
-        delayControls(); automationAndFreeze(); topologyAndLegacy();
+        delayControls(); automationAndFreeze(); topologyAndLegacy(); utilityRouting();
         check(allocations == 0 && frees == 0, "audio tail updates allocated or freed memory");
-        std::cout << "Creative tails: controls, tempo, refresh cadence, freeze, topology, legacy exact tails and zero audio allocations/frees passed\n";
+        std::cout << "Creative/utility routing: tails, tempo, freeze, topology, true dry, Gain, comb/reset and zero audio allocations/frees passed\n";
     } catch (const std::exception& e) {
         audio = false;
         std::cerr << e.what() << '\n';

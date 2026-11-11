@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 #include "VocalEngine.h"
+#include "VisualTheme.h"
 
 namespace vocalstack {
 

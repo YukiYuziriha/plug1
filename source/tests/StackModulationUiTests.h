@@ -23,7 +23,8 @@ T& component(juce::Component& root) {
 }
 
 void localMixerInspector() {
-    Processor owner;
+    std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+    Processor& owner = *ownerStorage;
     vocalstack::RoutingNode mixer{200, vocalstack::NodeType::mix}; mixer.mix = .2f;
     vocalstack::Graph graph{{{1, vocalstack::NodeType::lead}, mixer, {13, vocalstack::NodeType::output}},
         {{1, 200, 0}, {200, 13, 0}}};
@@ -57,7 +58,8 @@ void localMixerInspector() {
 
 void eqModulationGestures() {
     for (const bool neon : {false, true}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         setParameter(owner, "fx1EqBand1On", 1);
         setParameter(owner, "fx1EqBand1Frequency", 1000);
         setParameter(owner, "fx1EqBand1Gain", 0);
@@ -94,7 +96,8 @@ void eqModulationGestures() {
 
 void waveQualityRaw() {
     for (const bool neon : {false, true}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         owner.setFlash(neon);
         vocalstack::ToneEffectPanel panel(owner, 1, vocalstack::NodeType::waveshaper);
         panel.setNeon(neon);
@@ -122,7 +125,8 @@ void waveQualityRaw() {
 
 void globalMixBypass() {
     for (const bool neon : {false, true}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         owner.setFlash(neon);
         std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
         editor->addToDesktop(0);
@@ -155,7 +159,8 @@ void globalMixBypass() {
 
 void resizeTabs() {
     for (const bool neon : {false, true}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         owner.setFlash(neon);
         owner.setAdvancedVisible(true);
         std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
@@ -198,7 +203,8 @@ void resizeTabs() {
 
 void sharedInspectors() {
     for (const bool neon : {false, true}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         owner.setFlash(neon);
         owner.setAdvancedEnabled(true);
         owner.setAdvancedVisible(true);
@@ -258,7 +264,8 @@ void sharedInspectors() {
 
 void modulationInspector() {
     for (const bool neon : {false, true}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         owner.setFlash(neon);
         owner.setAdvancedVisible(true);
         vocalstack::ModulationState state;
@@ -398,7 +405,8 @@ void peerClick(juce::Component& root, juce::Component& target, juce::Point<int> 
 
 void compactCards() {
     for (const bool neon : {false, true}) {
-        Processor owner; owner.setFlash(neon);
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage; owner.setFlash(neon);
         std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
         editor->addToDesktop(0); editor->setVisible(true);
         auto& stack = component<vocalstack::DoublerPanel>(*editor);
@@ -448,7 +456,8 @@ void compactCards() {
 
 void modulationRailGeometry() {
     for (const bool neon : {false, true}) {
-        Processor owner; owner.setFlash(neon);
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage; owner.setFlash(neon);
         vocalstack::ModulationState state;
         state.modulators = {{1}, {2, vocalstack::ModulatorType::random}};
         juce::String error;
@@ -552,7 +561,8 @@ void modulationRailGeometry() {
 
 void resizableInspector() {
     for (const bool neon : {false, true}) {
-        Processor owner; owner.setFlash(neon); owner.setAdvancedEnabled(true);
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage; owner.setFlash(neon); owner.setAdvancedEnabled(true);
         vocalstack::ModulationState state; state.modulators = {{1}};
         juce::String error;
         expect(owner.setModulationState(state, error), "Divider modulation fixture rejected");
@@ -644,7 +654,8 @@ void resizableInspector() {
 
 void resizableModulationPanel() {
     for (const bool neon : {false, true}) {
-        Processor owner; owner.setFlash(neon); owner.setAdvancedEnabled(true);
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage; owner.setFlash(neon); owner.setAdvancedEnabled(true);
         vocalstack::ModulationState state; state.modulators = {{1}};
         state.assignments.push_back({1, "voice1Gain", -0.15f, true});
         juce::String error;
@@ -754,7 +765,8 @@ void leadMonitor() {
         voices = {}; monitor.update(voices, lead); selected = 99;
         ui::click(monitor, {452, 52});
         expect(selected == 8, "Lead-only monitor cannot be selected");
-        Processor owner; owner.setAdvancedEnabled(true);
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage; owner.setAdvancedEnabled(true);
         setParameter(owner, "leadPan", .4f); setParameter(owner, "leadGain", -6);
         owner.prepareToPlay(48000, 256);
         expect(owner.getLeadSnapshot().present && owner.getLeadSnapshot().activity == 0,
@@ -784,7 +796,8 @@ void leadMonitor() {
 void modulatedWaveshaperCurve() {
     using namespace vocalstack;
     for (const bool neon : {false, true}) {
-        Processor owner;
+        std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
+        Processor& owner = *ownerStorage;
         setParameter(owner, "fx1WaveDrive", 6);
         setParameter(owner, "fx1WaveOutput", -6);
         setParameter(owner, "fx1Mix", 100);
@@ -842,16 +855,20 @@ void modulatedWaveshaperCurve() {
                 displaced |= std::abs(y - base) * curve.getHeight() * .5 > 5;
                 const auto p = juce::Point<float>(curve.getX() + float(x + 1) * .5f * curve.getWidth(),
                     curve.getCentreY() - float(juce::jlimit(-1.0, 1.0, y)) * curve.getHeight() * .5f).roundToInt();
-                const auto accent = toneui::visualAccent(neon);
+                const auto accent = toneui::visualPalette(visual, neon).accent;
+                // Thin strokes on integer graph edges cover only part of a pixel.
+                const auto edgeAccent = toneui::visualPalette(visual, neon).inset.overlaidWith(accent.withAlpha(.55f));
                 bool found = false;
                 for (int py = p.y - 2; py <= p.y + 2; ++py) for (int px = p.x - 2; px <= p.x + 2; ++px) {
                     if (!image.getBounds().contains(px, py)) continue;
                     const auto pixel = image.getPixelAt(px, py);
-                    found |= std::abs(int(pixel.getRed()) - int(accent.getRed())) < 35
-                        && std::abs(int(pixel.getGreen()) - int(accent.getGreen())) < 35
-                        && std::abs(int(pixel.getBlue()) - int(accent.getBlue())) < 35;
+                    for (const auto expected : {accent, edgeAccent})
+                        found |= std::abs(int(pixel.getRed()) - int(expected.getRed())) < 35
+                            && std::abs(int(pixel.getGreen()) - int(expected.getGreen())) < 35
+                            && std::abs(int(pixel.getBlue()) - int(expected.getBlue())) < 35;
                 }
-                expect(found, "Rendered waveshaper curve does not follow effective modulation");
+
+                expect(found, "Rendered waveshaper curve does not follow effective modulation: x=" + juce::String(x) + " y=" + juce::String(y) + " neon=" + juce::String(int(neon)));
             }
             expect(displaced, "Curve regression fixture must distinguish modulated and base curves");
             for (const auto& target : snapshot.targets)

@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
+#include "VisualTheme.h"
 #include "MeterPanel.h"
 #include "DoublerPanel.h"
 #include "RoutingPanel.h"
@@ -32,6 +33,7 @@ private:
     void openRouting();
     void drawDevice(juce::Graphics&);
     void drawFlash(juce::Graphics&);
+        void drawSpectral(juce::Graphics&);
     void rememberWindow();
     void revealParameter(const juce::String&);
     bool keyPressed(const juce::KeyPress&) override;

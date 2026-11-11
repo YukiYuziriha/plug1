@@ -59,7 +59,7 @@ struct ModulationSnapshot {
 // are latest-wins; a slot is returned only after the audio consumer releases it.
 class ModulationBackend {
 public:
-    static constexpr size_t maxModulators = 16, maxAssignments = 256, maxTargets = 2048;
+    static constexpr size_t maxModulators = 16, maxAssignments = 256, maxTargets = 4096;
     static constexpr int quantum = 32;
     struct ResolvedAssignment { uint16_t modulator = 0, target = 0; float depth = 0; };
     struct Plan {

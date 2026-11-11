@@ -24,12 +24,12 @@ public:
         const auto cy = float(y) + float(height) * 0.5f;
         const bool signedTrack = slider.getMinimum() < 0 && slider.getMaximum() > 0;
         const float origin = float(x) + (signedTrack ? float(slider.valueToProportionOfLength(0)) * float(width) : 0.0f);
-        g.setColour(juce::Colour(0xff46515b));
+        g.setColour(componentTheme(slider) == Theme::device ? juce::Colour(0xff46515b) : themePalette(slider).border);
         g.drawLine(float(x), cy, float(x + width), cy, 3.0f);
         g.setColour(slider.findColour(juce::Slider::trackColourId));
         g.drawLine(origin, cy, sliderPos, cy, 3.0f);
         if (signedTrack) {
-            g.setColour(juce::Colour(0xffd7dfe6));
+            g.setColour(componentTheme(slider) == Theme::device ? juce::Colour(0xffd7dfe6) : themePalette(slider).muted);
             g.drawLine(origin, cy - 5, origin, cy + 5, 1.0f);
         }
         g.setColour(slider.findColour(juce::Slider::thumbColourId));
@@ -40,11 +40,13 @@ public:
 };
 
 inline void styleSlider(juce::Slider& slider, bool neon) {
-    slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffe4e9ee));
-    slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff20262d));
-    slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff526071));
-    slider.setColour(juce::Slider::trackColourId, juce::Colour(neon ? 0xffff4ca0 : 0xfff5a24b));
-    slider.setColour(juce::Slider::thumbColourId, juce::Colour(neon ? 0xff64f5e3 : 0xffe4e4df));
+    const auto p = themePalette(slider, neon);
+    const bool device = componentTheme(slider, neon) == Theme::device;
+    slider.setColour(juce::Slider::textBoxTextColourId, p.text);
+    slider.setColour(juce::Slider::textBoxBackgroundColourId, device ? juce::Colour(0xff20262d) : p.inset);
+    slider.setColour(juce::Slider::textBoxOutlineColourId, device ? juce::Colour(0xff526071) : p.border);
+    slider.setColour(juce::Slider::trackColourId, p.accent);
+    slider.setColour(juce::Slider::thumbColourId, device ? p.text : p.secondary);
     passiveControl(slider);
 }
 
@@ -93,7 +95,10 @@ public:
         label.setBounds(area.removeFromLeft(70));
         slider.setBounds(area);
     }
-    void setNeon(bool neon) { styleSlider(slider, neon); }
+    void setNeon(bool neon) {
+        label.setColour(juce::Label::textColourId, themePalette(*this, neon).text);
+        styleSlider(slider, neon);
+    }
     ModulationSlider slider;
 private:
     ParameterLookAndFeel style;
@@ -170,19 +175,25 @@ class VoiceControls final : public juce::Component {
         }
 
         void paint(juce::Graphics& g) override {
-            g.setColour(juce::Colour(neon ? 0xff111827 : 0xff252826));
-            g.fillRoundedRectangle(getLocalBounds().toFloat(), 4.0f);
-            const auto colour = voiceSlot < 0 ? juce::Colour(0xfff8de6b) : VoiceMonitor::voiceColour(size_t(voiceSlot));
-            g.setColour(selected ? colour : juce::Colour(neon ? 0xff2b3a53 : 0xff515850));
-            g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.7f), 4.0f, selected ? 1.6f : 1.0f);
-            g.setColour(colour.withAlpha(0.12f));
-            g.fillRoundedRectangle(5.0f, 5.0f, float(getWidth() - 10), 32.0f, 3.0f);
+            const auto p = themePalette(*this, neon);
+            const auto selectedTheme = componentTheme(*this, neon);
+            const bool device = selectedTheme == Theme::device;
+            const float radius = device ? 4.0f : 0.0f;
+            g.setColour(p.panel);
+            g.fillRoundedRectangle(getLocalBounds().toFloat(), radius);
+            const auto colour = device
+                ? (voiceSlot < 0 ? juce::Colour(0xfff8de6b) : VoiceMonitor::voiceColour(size_t(voiceSlot)))
+                : (voiceSlot < 0 ? p.secondary : p.accent);
+            g.setColour(selected ? colour : device ? juce::Colour(0xff515850) : p.border);
+            g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.7f), radius, selected ? 1.6f : 1.0f);
+            g.setColour(colour.withAlpha(device || selected ? 0.12f : 0.05f));
+            g.fillRoundedRectangle(5.0f, 5.0f, float(getWidth() - 10), 32.0f, device ? 3.0f : 0.0f);
             g.setColour(colour);
             g.fillEllipse(12, 10, 22, 22);
             g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
             g.setColour(juce::Colour(0xff151b20));
             g.drawText(voiceSlot < 0 ? "L" : juce::String(voiceSlot + 1), 12, 10, 22, 22, juce::Justification::centred);
-            g.setColour(juce::Colour(0xffe4e9ee));
+            g.setColour(p.text);
             g.drawText(voiceSlot < 0 ? "LEAD" : "VOICE", 42, 10, 66, 22, juce::Justification::centredLeft);
         }
         void setCompact(bool value) {
@@ -195,7 +206,7 @@ class VoiceControls final : public juce::Component {
         void setNeon(bool value) {
             neon = value;
             for (auto* button : std::array<juce::TextButton*, 2>{&enabled, &remove}) {
-                button->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
+                button->setColour(juce::TextButton::textColourOffId, themePalette(*this, neon).text);
                 button->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
             }
             pitch.setNeon(neon);
@@ -291,10 +302,13 @@ public:
     }
     void setNeon(bool neon) {
         for (auto* button : {&reset, &add}) {
-            button->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
+            button->setColour(juce::TextButton::textColourOffId, themePalette(*this, neon).text);
             button->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
         }
 
+        const auto p = themePalette(*this, neon);
+        viewport.getHorizontalScrollBar().setColour(juce::ScrollBar::thumbColourId, p.muted.withAlpha(0.45f));
+        viewport.getHorizontalScrollBar().setColour(juce::ScrollBar::backgroundColourId, p.inset);
         monitor.setNeon(neon);
         lead.setNeon(neon);
         for (auto& card : cards) card->setNeon(neon);
@@ -374,14 +388,17 @@ public:
         motion.setBounds(312, 2, 140, 60);
     }
     void paint(juce::Graphics& g) override {
-        g.setColour(juce::Colour(neon ? 0xff111827 : 0xff252826));
-        g.fillRoundedRectangle(getLocalBounds().toFloat(), 4.0f);
-        g.setColour(juce::Colour(neon ? 0xff2b3a53 : 0xff515850));
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 4.0f, 1.0f);
+        const auto p = themePalette(*this, neon);
+        const bool device = componentTheme(*this, neon) == Theme::device;
+        const float radius = device ? 4.0f : 0.0f;
+        g.setColour(p.panel);
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), radius);
+        g.setColour(device ? juce::Colour(0xff515850) : p.border);
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), radius, 1.0f);
     }
     void setNeon(bool value) {
         neon = value;
-        enabled.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe4e9ee));
+        enabled.setColour(juce::TextButton::textColourOffId, themePalette(*this, neon).text);
         enabled.setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
         mix.setNeon(neon);
         motion.setNeon(neon);
