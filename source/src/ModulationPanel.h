@@ -10,6 +10,12 @@ inline juce::String modulatorName(const Modulator& m) {
     return (m.type == ModulatorType::lfo ? "LFO " : "Random ") + juce::String(m.id);
 }
 
+inline juce::Font modulationFont(float size) {
+    static const auto family = juce::Font::findAllTypefaceNames().contains("Cascadia Mono")
+        ? juce::String("Cascadia Mono") : juce::Font::getDefaultMonospacedFontName();
+    return juce::Font(juce::FontOptions(family, size, juce::Font::plain));
+}
+
 // Control-thread editor. Neither selection nor refresh resets the audio clock.
 class ModulationPanel final : public juce::Component, private juce::Timer {
     class OutputView final : public juce::Component {
@@ -28,21 +34,44 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
                 if (i == 0) p.startNewSubPath(x, y); else p.lineTo(x, y);
             }
             g.setColour(juce::Colour(0xff64f5e3)); g.strokePath(p, juce::PathStrokeType(1.5f));
+            g.setFont(modulationFont(10.0f));
             g.drawText("OUTPUT  " + juce::String(output, 3) + "   phase " + juce::String(phase, 2),
                        a.toNearestInt().removeFromTop(18), juce::Justification::centredLeft);
         }
     } output;
+    class NumericStyle final : public juce::LookAndFeel_V4 {
+    public:
+        void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float value,
+                              float start, float end, juce::Slider& slider) override {
+            rotary.drawRotarySlider(g, x, y, w, h, value, start, end, slider);
+        }
+        juce::Label* createSliderTextBox(juce::Slider& slider) override {
+            auto* label = juce::LookAndFeel_V4::createSliderTextBox(slider);
+            label->setFont(modulationFont(10.0f));
+            return label;
+        }
+    private:
+        modulationui::RotaryStyle rotary;
+    };
     struct Numeric final : juce::Component {
         juce::Label label;
-        modulationui::RotaryStyle style;
+        NumericStyle style;
         juce::Slider slider;
         Numeric(const juce::String& name, double lo, double hi, double step) {
             label.setText(name, juce::dontSendNotification); label.setJustificationType(juce::Justification::centred);
+            label.setFont(modulationFont(10.0f));
             label.setInterceptsMouseClicks(false, false); addAndMakeVisible(label);
             slider.setLookAndFeel(&style);
+            label.setTooltip(name);
+            if (name == "Rate / Hz") label.setText("Rate Hz", juce::dontSendNotification);
+            if (name == "Beats / cycle") label.setText("Beats", juce::dontSendNotification);
+            if (name == "Phase / turns") label.setText("Phase", juce::dontSendNotification);
+            if (name == "Output amount") label.setText("Amount", juce::dontSendNotification);
+            if (name == "Phase skew") label.setText("Skew", juce::dontSendNotification);
+            if (name == "Random smoothing") label.setText("Smooth", juce::dontSendNotification);
                         slider.setName(name); slider.setRange(lo, hi, step);
             slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-            slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 88, 20);
+            slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 46, 16);
             slider.setScrollWheelEnabled(false);
             slider.textFromValueFunction = [](double value) { return juce::String(value, 3); };
             slider.valueFromTextFunction = [](const juce::String& text) { return text.getDoubleValue(); };
@@ -51,7 +80,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             detail::passiveControl(*this);
         }
         ~Numeric() override { slider.setLookAndFeel(nullptr); }
-                void resized() override { auto a = getLocalBounds(); label.setBounds(a.removeFromTop(18)); slider.setBounds(a); }
+                void resized() override { auto a = getLocalBounds(); label.setBounds(a.removeFromTop(16)); slider.setBounds(a); }
     } rate{"Rate / Hz", .001, 100, .001}, division{"Beats / cycle", .015625, 256, 0},
       phase{"Phase / turns", 0, .999, .001}, depth{"Output amount", 0, 1, .001},
       shape{"Phase skew", 0, 1, .001}, smooth{"Random smoothing", 0, 1, .001};
@@ -149,6 +178,8 @@ public:
         for (auto* c : {&rate, &division, &phase, &depth, &shape, &smooth})
             c->slider.setDoubleClickReturnValue(true, c == &rate || c == &division || c == &depth ? 1 : c == &shape ? .5 : 0);
         content.addAndMakeVisible(waveform); content.addAndMakeVisible(retrigger); content.addAndMakeVisible(divisions); content.addAndMakeVisible(output);
+        title.setFont(modulationFont(11.0f));
+        message.setFont(modulationFont(10.0f));
         content.addAndMakeVisible(title);
         content.addAndMakeVisible(message); message.setJustificationType(juce::Justification::topLeft);
         rowsViewport.setViewedComponent(&rowsArea, false); rowsViewport.setScrollBarsShown(false, true); content.addAndMakeVisible(rowsViewport);
@@ -158,7 +189,7 @@ public:
         detail::passiveControl(*this); startTimerHz(20);
     }
     ~ModulationPanel() override { contentViewport.setViewedComponent(nullptr, false); rowsViewport.setViewedComponent(nullptr, false); }
-    static constexpr int preferredHeight = 224;
+    static constexpr int preferredHeight = 240;
     void select(uint32_t id) {
         if (selected != id) {
             output.history.clear(); output.output = output.phase = 0;
@@ -183,7 +214,7 @@ public:
         contentViewport.setBounds(getLocalBounds());
         // Keep control geometry stable; small windows scroll instead of shrinking knobs.
         const int scrollbar = contentViewport.getScrollBarThickness();
-        content.setSize(juce::jmax(1160, getWidth() - scrollbar), preferredHeight - scrollbar);
+        content.setSize(juce::jmax(660, getWidth() - scrollbar), juce::jmax(preferredHeight, getHeight()) - scrollbar);
         contentViewport.setSingleStepSizes(32, 32);
         layoutContent();
     }
@@ -197,23 +228,27 @@ private:
         assign.setBounds(header.removeFromLeft(100)); header.removeFromLeft(8);
         remove.setBounds(header.removeFromLeft(145));
         a.removeFromTop(6);
-        message.setBounds(a.removeFromBottom(36));
+        message.setBounds(a.removeFromBottom(24));
         if (assignments) {
             rowsViewport.setBounds(a);
             rowsArea.setSize(juce::jmax(a.getWidth(), int(rows.size()) * 320), 106);
             int x = 0; for (auto& row : rows) { row->setBounds(x, 0, 312, 106); x += 320; }
             return;
         }
-        output.setBounds(a.removeFromLeft(220).withHeight(116)); a.removeFromLeft(8);
-        auto options = a.removeFromLeft(192);
+        output.setBounds(a.removeFromLeft(220)); a.removeFromLeft(8);
+        auto options = a.removeFromLeft(96);
         waveform.setBounds(options.removeFromTop(26)); options.removeFromTop(4);
         retrigger.setBounds(options.removeFromTop(26)); options.removeFromTop(4);
         divisions.setBounds(options.removeFromTop(26)); options.removeFromTop(4);
         auto switches = options.removeFromTop(26);
-        sync.setBounds(switches.removeFromLeft(100)); bipolar.setBounds(switches);
+        sync.setBounds(switches.removeFromLeft(48)); bipolar.setBounds(switches);
+                sync.setButtonText("Sync");
+                sync.setTooltip("Host tempo sync");
         a.removeFromLeft(8);
+        int index = 0;
         for (auto* c : {&rate, &division, &phase, &depth, &shape, &smooth}) {
-            c->setBounds(a.removeFromLeft(116).withHeight(116)); a.removeFromLeft(2);
+            c->setBounds(a.getX() + (index % 3) * 52, a.getY() + (index / 3) * 76, 52, 76);
+            ++index;
         }
     }
 private:
@@ -280,7 +315,7 @@ private:
             auto row = std::make_unique<AssignmentRow>(*this, a); rowsArea.addAndMakeVisible(*row); rows.push_back(std::move(row));
         }
         message.setText(assignments ? "Signed depth uses target units for linear controls, percent span for logarithmic controls. Base values stay unchanged; effective values are bounded. Reveal opens the target."
-            : "Assign, then drag a highlighted sound control to set signed depth. Escape cancels. Sync division is quarter notes per cycle (1 = quarter, 4 = bar). Random uses a uniform distribution.", juce::dontSendNotification);
+            : "Assign: drag a target to set depth. Esc cancels. Sync: quarter notes / cycle.", juce::dontSendNotification);
         resized();
     }
     void timerCallback() override {
@@ -303,7 +338,12 @@ private:
     juce::String rowSignature;
     juce::TextButton controlsTab, assignmentsTab, assign, remove, sync, bipolar;
     class PassiveCombo final : public juce::ComboBox {
-            void lookAndFeelChanged() override { juce::ComboBox::lookAndFeelChanged(); detail::passiveControl(*this); }
+            void lookAndFeelChanged() override {
+                            juce::ComboBox::lookAndFeelChanged();
+                            for (auto* child : getChildren())
+                                if (auto* label = dynamic_cast<juce::Label*>(child)) label->setFont(modulationFont(10.0f));
+                            detail::passiveControl(*this);
+                        }
         };
         PassiveCombo waveform, retrigger, divisions;
     juce::Component content;

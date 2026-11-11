@@ -57,6 +57,32 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         RoutingPanel& panel;
         int startWidth = 320;
     };
+    class ModulationDivider final : public juce::Component {
+    public:
+        explicit ModulationDivider(RoutingPanel& p) : panel(p) {
+            setName("Resize modulation panel");
+            setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+            detail::passiveControl(*this);
+        }
+        void mouseDown(const juce::MouseEvent&) override {
+            startHeight = panel.modulationPanel.getHeight();
+            panel.resizingModulation = true;
+        }
+        void mouseDrag(const juce::MouseEvent& e) override {
+            const int height = panel.constrainedModulationHeight(startHeight - e.getDistanceFromDragStartY());
+            if (height == panel.modulationPanel.getHeight()) return;
+            panel.desiredModulationHeight = juce::jlimit(160, 480, height);
+            panel.resized();
+            panel.repaint();
+        }
+        void mouseUp(const juce::MouseEvent&) override {
+            panel.resizingModulation = false;
+            panel.saveModulationHeight();
+        }
+    private:
+        RoutingPanel& panel;
+        int startHeight = ModulationPanel::preferredHeight;
+    };
     class ModulatorTile final : public juce::TextButton {
     public:
         explicit ModulatorTile(const Modulator& m) : TextButton(modulatorName(m)), model(m) {}
@@ -107,12 +133,13 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         }
     };
 public:
-    explicit RoutingPanel(Processor& processor) : canvas(*this), owner(processor), inspectorDivider(*this), modulationPanel(processor) {
+    explicit RoutingPanel(Processor& processor) : canvas(*this), owner(processor), inspectorDivider(*this), modulationPanel(processor), modulationDivider(*this) {
         setName("Audio routing canvas and inspector");
         addAndMakeVisible(canvas);
         addAndMakeVisible(inspector);
         addAndMakeVisible(inspectorDivider);
         addChildComponent(modulationPanel);
+        addChildComponent(modulationDivider);
         addAndMakeVisible(status);
                 addAndMakeVisible(modulatorViewport); modulatorViewport.setViewedComponent(&modulatorStrip, false);
                 modulatorViewport.setScrollBarsShown(true, false);
@@ -208,6 +235,8 @@ public:
         g.fillAll(juce::Colour(neon ? 0xff090d17 : 0xff292b2a));
         g.setColour(juce::Colour(neon ? 0xff2b3a53 : 0xff515850));
         g.drawVerticalLine(inspectorDivider.getBounds().getCentreX(), 46.0f, float(inspector.getBottom()));
+        if (modulationDivider.isVisible())
+            g.drawHorizontalLine(modulationDivider.getBounds().getCentreY(), float(canvas.getX()), float(canvas.getRight()));
         g.setColour(juce::Colour(0xffaebaca));
         g.setFont(juce::Font(juce::FontOptions(11.5f)));
         g.drawText("Output drag: move / empty drop disconnects  |  Ctrl/Cmd+drag output: source  |  Wheel: zoom  |  Alt/middle drag: pan", 12, 43, getWidth() - 24, 22, juce::Justification::centredLeft);
@@ -221,7 +250,8 @@ public:
         const int inspectorWidth = constrainedInspectorWidth(desiredInspectorWidth);
         const int railWidth = 132;
         const int bottom = getHeight() - 40;
-        const int stripTop = selectedModulator ? bottom - ModulationPanel::preferredHeight : bottom;
+        const int modulationHeight = constrainedModulationHeight(desiredModulationHeight);
+        const int stripTop = selectedModulator ? bottom - modulationHeight : bottom;
         const int x = getWidth() - inspectorWidth - 12;
         canvas.setBounds(railWidth + 24, 70, juce::jmax(100, x - railWidth - 44), juce::jmax(0, stripTop - 78));
         assignmentBanner.setBounds(x, 44, inspectorWidth, 27);
@@ -232,7 +262,9 @@ public:
         modulatorStrip.setSize(railWidth - modulatorViewport.getScrollBarThickness(), int(modulatorButtons.size()) * 88);
         for (size_t i = 0; i < modulatorButtons.size(); ++i)
             modulatorButtons[i]->setBounds(0, int(i) * 88, modulatorStrip.getWidth(), 82);
-        modulationPanel.setBounds(railWidth + 24, stripTop, canvas.getWidth(), ModulationPanel::preferredHeight);
+        modulationDivider.setVisible(selectedModulator != 0);
+        modulationDivider.setBounds(canvas.getX(), stripTop - 8, canvas.getWidth(), 8);
+        modulationPanel.setBounds(canvas.getX(), stripTop, canvas.getWidth(), modulationHeight);
         status.setBounds(8, getHeight() - 33, getWidth() - 16, 28);
         layoutInspector();
     }
@@ -259,6 +291,21 @@ private:
         const bool currentLayout = saved.toXmlString() == lastLayoutSignature;
         if (!saved.isValid()) saved = juce::ValueTree("RoutingLayout");
         saved.setProperty("inspectorWidth", desiredInspectorWidth, nullptr);
+        owner.setRoutingLayout(saved);
+        // Do not hide a pending external layout change from the timer.
+        if (currentLayout) lastLayoutSignature = saved.toXmlString();
+    }
+    int constrainedModulationHeight(int desired) const {
+        // Canvas starts at 70; reserve the 8px divider and 40px status area.
+        const int available = juce::jmax(0, getHeight() - 118);
+        const int canvasMinimum = juce::jlimit(0, 100, available - 160);
+        return juce::jmin(juce::jlimit(160, 480, desired), available - canvasMinimum);
+    }
+    void saveModulationHeight() {
+        auto saved = owner.getRoutingLayout();
+        const bool currentLayout = saved.toXmlString() == lastLayoutSignature;
+        if (!saved.isValid()) saved = juce::ValueTree("RoutingLayout");
+        saved.setProperty("modulationHeight", desiredModulationHeight, nullptr);
         owner.setRoutingLayout(saved);
         // Do not hide a pending external layout change from the timer.
         if (currentLayout) lastLayoutSignature = saved.toXmlString();
@@ -748,6 +795,7 @@ private:
         if (!tree.isValid()) tree = juce::ValueTree("RoutingLayout");
         for (int i = tree.getNumChildren(); --i >= 0;) if (tree.getChild(i).hasType("NODE")) tree.removeChild(i, nullptr);
         tree.setProperty("inspectorWidth", desiredInspectorWidth, nullptr);
+        tree.setProperty("modulationHeight", desiredModulationHeight, nullptr);
         tree.setProperty("selectedNode", int(selectedNode), nullptr);
         tree.setProperty("selectedModulator", int(selectedModulator), nullptr);
         if (const auto* n = node(selectedNode); n && (n->type == NodeType::voice || n->type == NodeType::lead))
@@ -761,9 +809,12 @@ private:
         }
         return tree;
     }
-    void loadLayout(const juce::ValueTree& tree, bool restoreInspectorWidth = true) {
-        if (restoreInspectorWidth)
+    void loadLayout(const juce::ValueTree& tree, bool restorePanelSizes = true) {
+        // Divider preferences are independent of graph undo/redo snapshots.
+        if (restorePanelSizes) {
             desiredInspectorWidth = juce::jlimit(320, 480, int(tree.getProperty("inspectorWidth", 320)));
+            desiredModulationHeight = juce::jlimit(160, 480, int(tree.getProperty("modulationHeight", ModulationPanel::preferredHeight)));
+        }
         positions.clear(); names.clear();
         selectedNode = uint32_t(int(tree.getProperty("selectedNode", 0)));
         selectedModulator = uint32_t(int(tree.getProperty("selectedModulator", 0)));
@@ -1181,7 +1232,7 @@ private:
     void timerCallback() override {
         refreshAssignmentBanner();
         // A divider gesture changes bounds only; defer external rebuilds until release.
-        if (resizingInspector) return;
+        if (resizingInspector || resizingModulation) return;
         rebuildModulatorStripIfChanged();
         const auto modulators = owner.getModulationState().modulators;
         const auto snapshot = owner.getModulationSnapshot();
@@ -1260,6 +1311,9 @@ private:
         std::unique_ptr<ParameterKnob> mixControl;
         std::unique_ptr<VoiceControls> voiceControls;
         ModulationPanel modulationPanel;
+        ModulationDivider modulationDivider;
+        int desiredModulationHeight = ModulationPanel::preferredHeight;
+        bool resizingModulation = false;
         uint32_t selectedModulator = 0;
             int lastSelectedVoiceSlot = -2;
         juce::String modulatorSignature;

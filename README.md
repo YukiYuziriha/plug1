@@ -1,7 +1,14 @@
-# Vocal Stack 1.5.1
+# Vocal Stack 1.5.2
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
+
+1.5.2 tightens the LFO controls into two rows of three smaller knobs with compact
+value text and half-width selectors. Drag the bottom panel's top divider to resize
+its height (160–480 px when space permits); the height is saved, controls stay
+fixed-size, and the graph fills the available height. LFO readouts use Cascadia Mono
+when installed, otherwise the system monospace fallback. No audio parameters or
+DSP behavior changed.
 
 1.5.1 separates waveform-tile modulators on the left and their bottom control strip
 from the full-height node inspector. Stack is always visible with compact two-column
@@ -515,6 +522,12 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.5.2:** Release CLAP/VST3 builds and all **16 focused CTest suites passed**,
+including **40 editor/state groups**. New checks cover the compact LFO grid,
+half-width selectors, vertical divider limits and height recall without graph,
+parameter, or inspector changes. Both skins visually reviewed. The long legacy
+DSP suite was excluded; no actual Bitwig listening check was performed.
 
 **1.5.1:** Release CLAP/VST3 builds and all **16 focused CTest suites passed**,
 including **39 editor/state test groups**. Coverage includes compact Stack sliders,

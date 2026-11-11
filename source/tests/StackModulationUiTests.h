@@ -477,30 +477,57 @@ void modulationRailGeometry() {
         expect(retained && retained->isShowing() && routingPolish::labelIs(routing, "VOICE 1"),
                "Selecting LFO destroyed/replaced the node inspector");
         expect(strip.getParentComponent() == &routing && strip.isShowing()
-                   && strip.getBounds() == juce::Rectangle<int>(156, 536, 772, 224)
-                   && canvas.getBounds() == juce::Rectangle<int>(156, 70, 772, 458),
+                   && strip.getBounds() == juce::Rectangle<int>(156, 520, 772, 240)
+                   && canvas.getBounds() == juce::Rectangle<int>(156, 70, 772, 442),
                "LFO bottom strip must span only the audio canvas width");
         expect(nodeInspector.getBounds() == inspectorBounds && !strip.getBounds().intersects(inspectorBounds),
                "Selecting LFO must not shorten or overlap the full-height node inspector");
         saveSnapshot(routing, neon ? "routing-lfo-inspector-neon.png" : "routing-lfo-inspector-device.png");
-        auto* rate = ui::find<juce::Slider>(strip, [](auto& s) { return s.getName() == "Rate / Hz"; });
-        expect(rate != nullptr, "Missing bottom-strip rate knob");
-        const auto fixedBounds = rate->getParentComponent()->getBounds();
-        expect(fixedBounds.getWidth() == 116 && fixedBounds.getHeight() == 116,
-               "LFO knobs must have fixed 116px geometry");
+        auto* viewport = ui::find<juce::Viewport>(strip, [](auto& v) { return v.getViewedComponent() != nullptr; });
+        expect(viewport != nullptr, "Missing bottom-strip scroll viewport");
+        const auto checkControls = [&] {
+            const std::array<const char*, 6> fields{
+                "Rate / Hz", "Beats / cycle", "Phase / turns", "Output amount", "Phase skew", "Random smoothing"};
+            for (size_t i = 0; i < fields.size(); ++i) {
+                auto* knob = ui::find<juce::Slider>(strip, [&](auto& s) { return s.getName() == fields[i]; });
+                expect(knob && knob->isVisible() && knob->getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag,
+                       "Missing bottom-strip rotary: " + juce::String(fields[i]));
+                expect(knob->getParentComponent()->getBounds()
+                           == juce::Rectangle<int>(338 + int(i % 3) * 52, 40 + int(i / 3) * 76, 52, 76),
+                       "LFO knobs must retain three columns and two fixed 52x76px rows: " + juce::String(fields[i]));
+            }
+            int selectors = 0;
+            for (auto* child : viewport->getViewedComponent()->getChildren()) {
+                if (auto* selector = dynamic_cast<juce::ComboBox*>(child)) {
+                    expect(selector->getBounds() == juce::Rectangle<int>(234, 40 + selectors * 30, 96, 26),
+                           "LFO selectors must retain half-width 96px geometry");
+                    ++selectors;
+                }
+            }
+            expect(selectors == 3, "LFO must retain all three half-width selectors");
+            auto* sync = findButton(strip, "Sync");
+            auto* bipolar = findButton(strip, "Bipolar");
+            expect(sync && bipolar && sync->getBounds() == juce::Rectangle<int>(234, 130, 48, 26)
+                       && bipolar->getBounds() == juce::Rectangle<int>(282, 130, 48, 26),
+                   "Sync and Bipolar must share the 96px selector width");
+            expect(viewport->getViewedComponent()->getWidth() == juce::jmax(660, strip.getWidth() - viewport->getScrollBarThickness()),
+                   "LFO content must retain a 660px minimum width instead of shrinking controls");
+        };
+        checkControls();
         for (const auto size : {juce::Point<int>(904, 442), juce::Point<int>(1600, 1000)}) {
             routing.setSize(size.x, size.y);
-            expect(rate->getParentComponent()->getBounds() == fixedBounds, "Resizing shrank/stretched an LFO knob");
+            checkControls();
             expect(retained && retained->isShowing(), "Resizing strip lost node inspector");
             expect(nodeInspector.getBounds() == juce::Rectangle<int>(size.x - 332, 76, 320, size.y - 124),
                    "Selected LFO must leave inspector at full available height after resizing");
-            expect(strip.getX() == canvas.getX() && strip.getWidth() == canvas.getWidth()
-                       && strip.getY() > canvas.getBottom() && !strip.getBounds().intersects(nodeInspector.getBounds()),
+            const int stripHeight = size.y == 442 ? 224 : 240;
+            expect(strip.getBounds() == juce::Rectangle<int>(156, size.y - 40 - stripHeight, size.x - 508, stripHeight)
+                       && canvas.getBounds() == juce::Rectangle<int>(156, 70, size.x - 508, size.y - 118 - stripHeight)
+                       && strip.getY() == canvas.getBottom() + 8 && !strip.getBounds().intersects(nodeInspector.getBounds()),
                    "Resized LFO strip must stay below canvas and outside inspector");
         }
-        auto* viewport = ui::find<juce::Viewport>(strip, [](auto& v) { return v.getViewedComponent() != nullptr; });
-        expect(viewport != nullptr, "Missing bottom-strip scroll viewport");
         routing.setSize(904, 442);
+        checkControls();
         viewport->setViewPosition(10000, 0);
         expect(viewport->getViewPositionX() > 0, "Narrow bottom strip must scroll instead of shrinking controls");
         action(routing, "Random 2");
@@ -557,7 +584,8 @@ void resizableInspector() {
                 expect(divider->getBounds() == juce::Rectangle<int>(inspector.getX() - 13, 44, 10, 708),
                        "Divider did not follow inspector edge");
                 expect(strip.isShowing() && strip.selectedId() == 1 && strip.getX() == canvas.getX()
-                           && strip.getWidth() == canvas.getWidth() && strip.getHeight() == 224
+                           && strip.getWidth() == canvas.getWidth() && strip.getHeight() == 240
+                           && strip.getY() == 520 && canvas.getY() == 70 && canvas.getHeight() == 442
                            && canvas.getWidth() >= 100 && !strip.getBounds().intersects(inspector.getBounds()),
                        "Divider changed selected LFO or overlapped its canvas-only strip");
                 expect(retainedSlider && retainedVoice && &ui::slider(*routing, "voice1Pitch") == retainedSlider.getComponent()
@@ -609,6 +637,100 @@ void resizableInspector() {
                        && restoredViewport->getParentComponent()->getHeight() == 676,
                    "Recreated routing panel lost simultaneous LFO and full-height voice inspector");
             expect(graphText(owner.getRoutingGraph()) == graph, "Recreating inspector changed audio graph");
+        }
+    }
+}
+
+void resizableModulationPanel() {
+    for (const bool neon : {false, true}) {
+        Processor owner; owner.setFlash(neon); owner.setAdvancedEnabled(true);
+        vocalstack::ModulationState state; state.modulators = {{1}};
+        state.assignments.push_back({1, "voice1Gain", -0.15f, true});
+        juce::String error;
+        expect(owner.setModulationState(state, error), "Vertical divider fixture rejected");
+        auto routing = std::make_unique<vocalstack::RoutingPanel>(owner);
+        routing->addToDesktop(0); routing->setVisible(true); routing->selectVoice(0);
+        auto* divider = ui::find<juce::Component>(*routing, [](auto& c) { return c.getName() == "Resize modulation panel"; });
+        expect(divider && !divider->isVisible(), "Vertical divider must be hidden without a selected modulator");
+        action(*routing, "LFO 1"); pumpTimers();
+        expect(component<vocalstack::ModulationPanel>(*routing).getHeight() == 240,
+               "Missing modulationHeight must default to the preferred 240px height");
+        const auto graph = graphText(owner.getRoutingGraph());
+        const auto modulationXml = [&] {
+            auto xml = juce::parseXML(owner.settingsText());
+            expect(xml && xml->getChildByName("Modulation"), "Missing serialized modulation fixture");
+            return xml->getChildByName("Modulation")->toString();
+        };
+        const auto modulation = modulationXml();
+        std::vector<float> bases;
+        for (auto* p : owner.getParameters()) bases.push_back(p->getValue());
+        auto originalLayout = owner.getRoutingLayout().createCopy();
+        originalLayout.removeProperty("modulationHeight", nullptr);
+        const auto checkState = [&] {
+            expect(graphText(owner.getRoutingGraph()) == graph && owner.getRoutingError().isEmpty(),
+                   "Vertical divider changed audio graph");
+            auto layout = owner.getRoutingLayout().createCopy(); layout.removeProperty("modulationHeight", nullptr);
+            expect(layout.toXmlString() == originalLayout.toXmlString(),
+                   "Vertical divider changed inspector width, node positions, pan, zoom or selection");
+            expect(modulationXml() == modulation, "Vertical divider changed modulation model");
+            for (int i = 0; i < owner.getParameters().size(); ++i)
+                expectNear(owner.getParameters()[i]->getValue(), bases[size_t(i)], "Vertical divider wrote a host parameter");
+        };
+
+        for (const int height : {480, 160, 336}) {
+            auto& slider = ui::slider(*routing, "voice1Pitch");
+            juce::Component::SafePointer<juce::Slider> retainedSlider(&slider);
+            auto& voice = *slider.getParentComponent()->getParentComponent();
+            juce::Component::SafePointer<juce::Component> retainedVoice(&voice);
+            auto* viewport = slider.findParentComponentOfClass<juce::Viewport>();
+            expect(viewport != nullptr, "Vertical divider fixture has no voice viewport");
+            auto& inspector = *viewport->getParentComponent();
+            auto& canvas = *routing->getChildComponent(0);
+            auto& strip = component<vocalstack::ModulationPanel>(*routing);
+            divider = ui::find<juce::Component>(*routing, [](auto& c) { return c.getName() == "Resize modulation panel"; });
+            expect(divider && divider->isShowing(), "Missing visible vertical resize divider");
+            const auto check = [&](int actualHeight) {
+                expect(inspector.getBounds() == juce::Rectangle<int>(948, 76, 320, routing->getHeight() - 124),
+                       "Vertical divider shortened or moved the full-height inspector");
+                expect(strip.isShowing() && strip.selectedId() == 1
+                           && strip.getBounds() == juce::Rectangle<int>(156, routing->getHeight() - 40 - actualHeight, 772, actualHeight)
+                           && canvas.getBounds() == juce::Rectangle<int>(156, 70, 772, routing->getHeight() - 118 - actualHeight)
+                           && canvas.getHeight() >= 100 && !strip.getBounds().intersects(inspector.getBounds()),
+                       "Vertical divider lost selection, canvas minimum or independent strip geometry");
+                expect(divider->getBounds() == juce::Rectangle<int>(canvas.getX(), canvas.getBottom(), canvas.getWidth(), 8)
+                           && divider->getBottom() == strip.getY(),
+                       "Vertical divider must fill the 8px gap above the modulation panel");
+                expect(retainedSlider && retainedVoice && retainedSlider->isShowing()
+                           && &ui::slider(*routing, "voice1Pitch") == retainedSlider.getComponent()
+                           && slider.getParentComponent()->getParentComponent() == retainedVoice.getComponent(),
+                       "Vertical divider rebuilt the live voice inspector");
+            };
+            const auto from = juce::Point<float>(40, 4);
+            const int delta = height == 480 ? -10000 : height == 160 ? 10000 : strip.getHeight() - height;
+            const auto to = from.translated(0, float(delta));
+            divider->mouseDown(ui::mouse(*divider, from, from));
+            divider->mouseDrag(ui::mouse(*divider, to, from, true));
+            check(height); pumpTimers(); check(height);
+            divider->mouseUp(ui::mouse(*divider, to, from, true, 0));
+            pumpTimers(); check(height);
+            expect(int(owner.getRoutingLayout().getProperty("modulationHeight", -1)) == height,
+                   "Vertical divider release did not persist clamped desired height");
+            if (height == 480) {
+                routing->setSize(1280, 442); pumpTimers(); check(224);
+                expect(int(owner.getRoutingLayout().getProperty("modulationHeight", -1)) == 480,
+                       "Temporary short window overwrote desired modulation height");
+                routing->setSize(1280, 800); pumpTimers(); check(480);
+            }
+            checkState(); expectPassiveControls(*routing);
+            routing.reset();
+            routing = std::make_unique<vocalstack::RoutingPanel>(owner);
+            routing->addToDesktop(0); routing->setVisible(true); pumpTimers();
+            auto& restoredStrip = component<vocalstack::ModulationPanel>(*routing);
+            auto* restoredViewport = ui::slider(*routing, "voice1Pitch").findParentComponentOfClass<juce::Viewport>();
+            expect(restoredStrip.isShowing() && restoredStrip.selectedId() == 1 && restoredStrip.getHeight() == height
+                       && restoredViewport && restoredViewport->getParentComponent()->getBounds() == juce::Rectangle<int>(948, 76, 320, 676),
+                   "Recreated panel lost saved modulation height or full-height voice inspector");
+            checkState();
         }
     }
 }

@@ -677,7 +677,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 39> tests{{
+    const std::array<Test, 40> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -712,6 +712,7 @@ int main() {
                 {"Compact Stack cards, fixed inspector rows and click activation", stackModulationUi::compactCards},
                 {"Left modulator rail and independent fixed-knob bottom strip", stackModulationUi::modulationRailGeometry},
                         {"Inspector divider clamps, persistence and live component identity", stackModulationUi::resizableInspector},
+                {"Modulation divider clamps, persistence and full-height inspector identity", stackModulationUi::resizableModulationPanel},
                 {"Lead monitor index 8, selection and processor publication", stackModulationUi::leadMonitor},
                 {"Waveshaper transfer follows live effective modulation", stackModulationUi::modulatedWaveshaperCurve},
                 {"Routing context and Add Node menus anchor to cursor", stackModulationUi::menuCursorPlacement},

@@ -4,6 +4,20 @@
 
 This document records the staged implementation plan and the subsequent control-design decisions.
 
+### 1.5.2 — compact, vertically resizable modulation panel
+
+Validation: Release CLAP/VST3 builds and all 16 focused CTest suites passed,
+including 40 editor/state groups. Both skins reviewed. Long legacy DSP suite
+excluded; Bitwig listening remains manual validation.
+
+- Compact 52x76 control cells in two rows of three, reduced value text, shorter
+  labels with full-name tooltips, and 96 px selectors.
+- Cascadia Mono LFO labels/readouts when installed, with system monospace fallback.
+- Graph fills the panel's usable height; controls do not stretch.
+- Drag the top divider to resize the panel, with saved 160–480 px desired height
+  constrained to retain canvas space. Small panels scroll; right inspector and
+  audio topology remain unchanged. Graph undo/redo preserves panel size preferences.
+
 ### 1.5.1 — routing layout and compact Stack polish
 
 Validation: Release CLAP/VST3 rebuilt; all 16 focused CTest suites passed,
