@@ -36,9 +36,9 @@ list. When requirements conflict, the latest release record takes precedence.
 
 ### Next UI proposal — expandable routing nodes (not implemented)
 
-Finish and validate the performance/half-speed-slider update first. Then review
-this user-proposed workflow separately; this list records requested behavior,
-not a claim that the UI is already delivered.
+The performance/half-speed-slider update is complete in 1.7.1. This section
+records the next UI workflow, not a claim that it is already implemented.
+Separate remembered compact and expanded layouts are approved by the user.
 
 - [ ] Right inspector has a small hide arrow and an always-reachable unhide button.
   Hidden is an explicit sticky state: choosing another node must NOT reopen it.
@@ -48,9 +48,13 @@ not a claim that the UI is already delivered.
 - [ ] Every expandable node has its own expand/collapse button; mixed states are
   supported. Expanding a node presents its actual controls/visuals, not duplicates
   of DSP state. Source/output nodes need a defined compact set of relevant controls.
-- [ ] Expansion adjusts node positions to prevent overlapping cards. Preserve the
-  existing compact arrangement so collapse restores it, except for nodes explicitly
-  moved while expanded (exact mapping needs agreement before implementation).
+- [ ] Keep separate remembered compact and expanded positions keyed by stable node
+  IDs. Collapse restores the compact arrangement; expanding again restores the
+  expanded arrangement, including manual moves. Dragging a node in one layout
+  must not move its counterpart in the other layout.
+- [ ] Initial expansion adjusts positions to prevent overlapping cards without
+  overwriting the compact arrangement. Subsequent expansion reuses the remembered
+  expanded layout rather than repacking away deliberate manual moves.
 - [ ] Keep cables attached, port hit targets usable, pan/zoom predictable, DAW keys
   passive and parameter gestures/automation/modulation unchanged. UI layout edits
   must never rebuild or republish the audio topology.
@@ -59,10 +63,7 @@ not a claim that the UI is already delivered.
   Use a shared bounded response-render budget rather than a worker per expanded
   filter, and prioritize visible controls while dragging.
 
-Recommended additions / decisions to review after optimization:
-
-- Keep independent compact/expanded positions keyed by stable node IDs; move each
-  deliberately, rather than projecting a large-card drag into compact coordinates.
+Remaining recommendations / decisions:
 - Expansion packing should be deterministic and local, not a new whole-graph
   rearrangement on every edit. Expansion/collapse should be one layout Undo step.
 - Define whether manually expanding one node hides the inspector; recommended:
