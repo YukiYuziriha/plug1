@@ -1,8 +1,82 @@
-# Vocal Stack: Advanced voices and modular FX routing
+# Vocal Stack: Current roadmap and release history
 
-## Status and scope
+## Current status — 1.6.0
 
-This document records the staged implementation plan and the subsequent control-design decisions.
+This section is the current roadmap. Release records below describe what shipped
+in each version; the original design at the end is historical, not a fresh task
+list. When requirements conflict, the latest release record takes precedence.
+
+### Delivered
+
+- [x] Editable Lead and up to eight generated voices; independent pitch, formant,
+  gain, pan, delay and motion controls, plus the measured Voice Motion monitor.
+- [x] Authoritative audio routing, independent FX instances, automatic compensated
+  fan-in, band-aware recombination, cable editing and graph undo/redo.
+- [x] Chorale, EQ8 with live spectra, 2-/3-band splitter, and 19 waveshapers.
+- [x] Classic LFO/Random modulation, assignments and effective-value feedback.
+- [x] Compact Stack sliders, independent right node inspector with adjustable
+  width, and compact LFO controls in a vertically resizable bottom panel.
+- [x] Delay, Reverb, Compressor, Bitcrusher and Granular routing nodes.
+- [x] Whole-patch factory/user presets, user-selected local save folder and
+  one-step Undo load. Five original vocal starting points are included.
+- [x] Release CLAP/VST3 packages and automated verification for 1.6.0.
+
+### Outstanding requested feature
+
+- [ ] **XP-style character filter.** Independent routing node; research the
+  reference version's configurations and controls before implementation. Aim for
+  its useful resonant/drive character with original DSP, not an unmeasured claim
+  of sonic equivalence. Reference renders are needed for meaningful comparison.
+  Existing EQ8 and the multiband splitter do not fulfill this character-filter
+  request. The original reference brief is retained in historical section 8.
+
+### Proposed follow-ups — not delivered or automatically scheduled
+
+- [ ] **Reverb pitch-feedback / shimmer:** an optional pitched component in the
+  wet feedback path, including a dark octave-down texture. This was proposed in
+  discussion but is not in 1.6.0; define its controls, level bounds and CPU budget
+  before implementation. Delay already has pitched repeats.
+- [ ] **Reverb attack / swell:** adjustable wet-tail entrance without softening
+  the direct vocal. Also proposed but not implemented in 1.6.0.
+
+Suggested order if these follow-ups are approved: reverb pitch-feedback and
+swell, then the XP-style filter. This is a recommendation, not authorization to
+start another implementation.
+
+### Validation and delivery still open
+
+- [ ] Listen in Bitwig to the five effects and factory patches on real vocals;
+  check wet/dry balance, ducking, grit, granular transitions and freeze/unfreeze.
+- [ ] Exercise Bitwig transport, tempo changes, automation and session recall.
+- [ ] Profile populated new-effect patches, including eight voices and active
+  modulation. Previous waveshaper stress results are not a CPU guarantee for the
+  new effects.
+- [ ] Install 1.6.0 when requested and only while both plugin binaries are unlocked.
+  The release was built, packaged and pushed, but not installed.
+
+All 18 focused suites and the packaged CLAP smoke test passed for 1.6.0. The long
+legacy `VocalStackDSP` suite was excluded; actual Bitwig listening/transport checks
+have not been performed. These are validation gaps, not known failing tests.
+
+### Explicitly deferred / outside current scope
+
+- Negative-formant **Preserve Clarity** remains a listening-evaluation idea, not
+  approved implementation scope. Do not silently change formant sound or ranges.
+- General nonzero-integer-latency branch compensation is not implemented;
+  unsupported latency-producing routing is rejected.
+- External reference-track EQ analysis, full proprietary-device parity and a
+  complete Thermal-style multiband/macro environment are not promised.
+- Spectral freeze/smear, a dedicated stutter buffer and tuned resonators were
+  discussed as ideas but are not committed roadmap items. A frequency shifter
+  was dropped from the recommended vocal-focused direction.
+- Backward compatibility is not a priority for new work per the latest user
+  direction. Existing compatibility code need not be removed, but new migration
+  infrastructure is not a deliverable unless separately requested.
+
+## Release history
+
+These records retain the implementation and validation details of each release.
+They are not pending checklists; later records supersede earlier design choices.
 
 ### 1.6.0 — creative vocal effects and whole-patch presets
 
@@ -395,16 +469,27 @@ precedence wherever they conflict (especially tabs, cable edits, and monitors):
 - Advanced header groups Voice stack, Add voice, Open Routing and Reset to Basic; routing inspectors have a wider native panel and expanded EQ view.
 - XP-style character Filter, delay and reverb remain future work.
 
-The remaining sections retain the original staged design and longer-term
-requirements, including historical gestures and analyzer parity goals that are
-not the current implementation contract. The latest 1.4.1 amendments above take
-precedence wherever the design evolved.
+The remaining sections retain the original staged design and reference briefs,
+including superseded gestures and analyzer parity goals. They are not the current
+implementation contract. Use Current status for remaining work and the latest
+applicable release record for implemented behavior.
 
 Keep Basic mode quick to use. Advanced adds **up to eight generated voices, a live voice monitor, and an optional FX-routing editor**, backed by separate processing modules.
 
 Implement in stages, with a working, tested plugin after each stage. The first routing release includes Chorale, not a collection of new effects. Follow-up effects include a waveshaper, an XP-style Filter, and an EQ targeting Bitwig EQ+'s UI and editing workflow, as specified below.
 
 **Architecture goal:** adding an effect must not require teaching it what a voice is.
+
+## Historical design archive — not the current implementation contract
+
+Sections 1–9 below preserve the original staged requirements and reference briefs.
+They intentionally include superseded proposals: explicit Sum/recombine nodes,
+voice-card knobs, right-inspector modulator controls, and delay/reverb as future
+work. Current behavior is automatic compensated fan-in/band recombination, compact
+Stack sliders, independent right node and bottom modulator panels, and the five
+creative effects delivered in 1.6.0. Use the current roadmap above for outstanding
+work; do not reimplement archived requirements simply because they use imperative
+wording.
 
 ## 1. Separate the existing engine's responsibilities
 
