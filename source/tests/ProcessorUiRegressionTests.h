@@ -223,7 +223,9 @@ std::vector<float> renderProcessorRegression(Processor& owner) {
 }
 
 void fxAutomationRegression() {
-    Processor owner;
+    // Six Processor fixtures exceed the default 1 MiB Windows thread stack.
+    auto ownerStorage = std::make_unique<Processor>();
+    auto& owner = *ownerStorage;
     expect(juce::String(vocalstack::fxParameterId(0, "On")) == "choraleOn" &&
            juce::String(vocalstack::fxParameterId(0, "Mix")) == "choraleMix" &&
            juce::String(vocalstack::fxParameterId(0, "Motion")) == "choraleMotion", "Legacy FX slot mapping changed");
@@ -239,7 +241,8 @@ void fxAutomationRegression() {
     const auto graphBefore = graphText(owner.getRoutingGraph());
     setParameter(owner, "fx15Mix", 91);
     expect(graphText(owner.getRoutingGraph()) == graphBefore, "FX automation rewrote routing topology");
-    Processor restored;
+    auto restoredStorage = std::make_unique<Processor>();
+    auto& restored = *restoredStorage;
     expect(restored.pasteSettings(owner.settingsText()), "FX automation state rejected");
     for (size_t slot = 0; slot < 16; ++slot)
         for (size_t field = 0; field < 3; ++field)
@@ -274,7 +277,8 @@ void fxAutomationRegression() {
                    "FX Motion settings bridge uses the wrong scale or slot");
     }
     for (const size_t slot : {size_t(1), size_t(15)}) {
-        Processor audible;
+        auto audibleStorage = std::make_unique<Processor>();
+        auto& audible = *audibleStorage;
         setParameter(audible, "levelOn", 0);
         setParameter(audible, "formantOn", 0);
         expect(audible.setRoutingGraph(serialFxGraph(std::uint32_t(slot + 99)), error), "FX audio fixture rejected");
@@ -292,7 +296,8 @@ void fxAutomationRegression() {
     }
     // A serial lead graph sounds even when the main Mix is fully wet and every voice is muted.
     // Therefore falling back to defaultGraph instead of the retained active graph is observable.
-    Processor fallback;
+    auto fallbackStorage = std::make_unique<Processor>();
+    auto& fallback = *fallbackStorage;
     setParameter(fallback, "levelOn", 0);
     setParameter(fallback, "formantOn", 0);
     setParameter(fallback, "advancedOn", 1);
@@ -304,7 +309,8 @@ void fxAutomationRegression() {
     auto incomplete = retained;
     incomplete.links.push_back(incomplete.links.front());
     expect(!fallback.setRoutingGraph(incomplete, error), "Invalid audio draft accepted");
-    Processor recalled;
+    auto recalledStorage = std::make_unique<Processor>();
+    auto& recalled = *recalledStorage;
     expect(recalled.pasteSettings(fallback.settingsText()), "Active fallback audio recall failed");
     const auto output = renderProcessorRegression(recalled);
     const int latency = recalled.getLatencySamples();
@@ -318,7 +324,8 @@ void fxAutomationRegression() {
     const auto silent = renderProcessorRegression(fallback);
     for (int i = 24000; i < int(silent.size()); ++i)
         expectNear(silent[size_t(i)], 0, "Disconnected Output retained audible old graph");
-    Processor disconnectedRecall;
+    auto disconnectedRecallStorage = std::make_unique<Processor>();
+    auto& disconnectedRecall = *disconnectedRecallStorage;
     expect(disconnectedRecall.pasteSettings(fallback.settingsText()), "Disconnected graph recall rejected");
     expectSavedGraph(savedProcessorState(disconnectedRecall), "ActiveRoutingGraph", disconnected);
 }

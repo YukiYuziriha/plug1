@@ -5,6 +5,8 @@
 #include "ProcessorRoutingState.h"
 #include "ToneProcessorTests.h"
 #include "ToneUiTests.h"
+#include "PresetTests.h"
+#include "CreativeIntegrationTests.h"
 
 #include <array>
 #include <cmath>
@@ -50,7 +52,7 @@ void advancedParameterContract() {
     Processor owner;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 1007, "Expected 874 preserved + 133 appended parameters");
+    expect(owner.getParameters().size() == 1727, "Expected 1007 preserved + 720 creative parameters");
         for (size_t slot = 1; slot < 16; ++slot)
             expect(parameter(owner, vocalstack::toneParameterId(slot, "WaveQuality")).getParameterIndex() == 914 + int(slot - 1),
                    "WaveQuality append-only host index changed");
@@ -394,7 +396,10 @@ void expectPassiveControls(juce::Component& component) {
         dynamic_cast<juce::TextEditor*>(&component) != nullptr)
         return;
     expect(!component.getWantsKeyboardFocus() && !component.getMouseClickGrabsKeyboardFocus(),
-           "An idle plugin control can steal host keyboard focus: " + component.getName());
+           "An idle plugin control can steal host keyboard focus: "
+               + vocalstack::toneUiTests::componentPath(component)
+               + " [wants=" + juce::String(int(component.getWantsKeyboardFocus()))
+               + ", mouse=" + juce::String(int(component.getMouseClickGrabsKeyboardFocus())) + "]");
     for (int i = 0; i < component.getNumChildComponents(); ++i)
         expectPassiveControls(*component.getChildComponent(i));
 }
@@ -605,8 +610,8 @@ void editorSkin(bool neon) {
     for (const auto* obsolete : {"Show Advanced", "Hide Advanced", "Voice stack", "Open Routing"})
         expect(findButton(*editor, obsolete) == nullptr, "Obsolete Stack action remains: " + juce::String(obsolete));
     expect(!owner.settings().advanced, "Always-visible Stack changed legacy activation");
-    expect(editor->isResizable() && windowHeight == 872 && windowWidth == 940,
-           "Fresh editor must be resizable at 940x872");
+    expect(editor->isResizable() && windowHeight == 924 && windowWidth == 940,
+           "Fresh editor must be resizable at 940x924, including the preset toolbar");
     expect(canvas.getHeight() == 872 && canvas.getTransform().isIdentity(),
            "Fresh Stack must use its fixed unscaled 872px design");
     int advancedSliders = 0, advancedButtons = 0, choraleSliders = 0, choraleButtons = 0;
@@ -642,7 +647,7 @@ void editorSkin(bool neon) {
         auto& p = parameter(owner, id);
         p.setValueNotifyingHost(p.getDefaultValue());
     }
-    editor->setSize(940, 872);
+    editor->setSize(940, 924);
     saveSnapshot(*editor, neon ? "editor-neon-advanced.png" : "editor-device-advanced.png");
     for (int i = 0; i < 6; ++i) addVoice->onClick();
     expectPassiveControls(*editor);
@@ -677,7 +682,7 @@ int main() {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 40> tests{{
+    const std::array<Test, 42> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -695,6 +700,10 @@ int main() {
         {"Fixed FX automation slots", fxAutomationRegression},
         {"Tone FX parameters, recall and rendered automation", vocalstack::toneProcessorTests::run},
         {"Tone FX UI, EQ gestures and multiband cable endpoints", vocalstack::toneUiTests::run},
+        {"Preset validation, full patch recall, files and toolbar", vocalstack::presetTests::run},
+        {"Creative FX processor, state, automation, factories and both skins", [] {
+            expect(vocalstack::creativeIntegrationTests::run(), "Creative integration group failed; see named failures above");
+        }},
         {"Voice 1 FX alters only Voice 1 with automatic merging", perVoiceFxSignalPath},
         {"Routing mouse edits, history, focus and both skins", routingUiRegression},
         {"Embedded Stack/Routing tabs retain Advanced in both skins", routingPolish::embeddedTabs},
@@ -721,6 +730,7 @@ int main() {
     }};
     int failures = 0;
     for (const auto& test : tests) {
+        std::cout << "[RUN] " << test.name << std::endl;
         try {
             test.run();
             std::cout << "[PASS] " << test.name << '\n';

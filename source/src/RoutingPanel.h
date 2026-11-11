@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ToneEffectPanel.h"
+#include "CreativeEffectPanel.h"
 #include "ModulationPanel.h"
 #include <map>
 
@@ -15,7 +16,11 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         std::array<std::array<float, toneParametersPerSlot>, 15> toneValues{};
                 std::array<std::array<float, 2>, 15> waveValues{};
                         std::array<float, 15> qualityValues{}, levelMatchValues{};
+        std::array<std::array<float, creativeParameterCount>, 15> creativeValues{};
+        std::array<std::uint64_t, 15> creativeUndoMasks{};
+        unsigned fxMixUndoMask = 0;
         unsigned fxOnUndoMask = 0;
+        bool parameterEdit = false;
     };
     class Canvas final : public juce::Component {
     public:
@@ -225,6 +230,7 @@ public:
         }
         for (auto& field : fields) field->setNeon(neon);
         if (tonePanel) tonePanel->setNeon(neon);
+        if (creativePanel) creativePanel->setNeon(neon);
                 if (voiceControls) voiceControls->setNeon(neon);
                 if (mixControl) mixControl->setNeon(neon);
                 modulationPanel.setNeon(neon);
@@ -380,6 +386,7 @@ private:
             }
         }
         if (tonePanel) tonePanel->revealParameter(id);
+        if (creativePanel) creativePanel->revealParameter(id);
         std::function<juce::Component*(juce::Component&)> find = [&](juce::Component& c) -> juce::Component* {
             if (c.getComponentID() == id) return &c;
             for (auto* child : c.getChildren()) if (auto* match = find(*child)) return match;
@@ -418,12 +425,18 @@ private:
         case NodeType::waveshaper: return "WAVESHAPER " + juce::String(routingFxSlot(n.id));
         case NodeType::equalizer: return "EQ8 " + juce::String(routingFxSlot(n.id));
         case NodeType::crossover: return "MULTIBAND " + juce::String(routingFxSlot(n.id));
+        case NodeType::delay:
+        case NodeType::reverb:
+        case NodeType::compressor:
+        case NodeType::bitcrusher:
+        case NodeType::granular:
+            return CreativeEffectPanel::effectName(creativeKind(n.type)).toUpperCase() + " " + juce::String(routingFxSlot(n.id));
         }
         return {};
     }
     static bool isEffect(NodeType type) {
         return type == NodeType::chorale || type == NodeType::waveshaper
-            || type == NodeType::equalizer || type == NodeType::crossover;
+            || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type);
     }
     static int inputs(const RoutingNode& n) {
         return n.type == NodeType::mix ? 2 : isEffect(n.type) || n.type == NodeType::output ? 1 : 0;
@@ -854,7 +867,12 @@ private:
             case NodeType::chorale:
             case NodeType::waveshaper:
             case NodeType::equalizer:
-            case NodeType::crossover: p = {710, 30}; break;
+            case NodeType::crossover:
+            case NodeType::delay:
+            case NodeType::reverb:
+            case NodeType::compressor:
+            case NodeType::bitcrusher:
+            case NodeType::granular: p = {710, 30}; break;
             case NodeType::output: p = {930, 30}; break;
             }
             if (n.id >= 100) p = {270.0f + float(extra % 3) * 200, 460.0f + float(extra / 3) * 100};
@@ -885,6 +903,10 @@ private:
         for (size_t slot = 1; slot < 16; ++slot)
             if (const auto* p = owner.parameters.getRawParameterValue(toneParameterId(slot, "WaveLevelMatch")))
                 result.levelMatchValues[slot - 1] = p->load();
+        for (size_t slot = 1; slot < 16; ++slot)
+            for (size_t field = 0; field < creativeParameterCount; ++field)
+                if (const auto* p = owner.parameters.getRawParameterValue(creativeParameterId(slot, field)))
+                    result.creativeValues[slot - 1][field] = p->load();
         return result;
     }
     void limitHistory() { if (undoStates.size() > 80) undoStates.erase(undoStates.begin()); }
@@ -897,26 +919,38 @@ private:
         auto current = state();
         const auto s = from.back(); from.pop_back();
         current.fxOnUndoMask = s.fxOnUndoMask;
+        current.fxMixUndoMask = s.fxMixUndoMask;
+        current.creativeUndoMasks = s.creativeUndoMasks;
+        current.parameterEdit = s.parameterEdit;
         to.push_back(current);
-        graph = s.graph; loadLayout(s.layout, false); selectedNode = 0; selectedLink = -1;
-        if (!publish(false)) { from.push_back(s); to.pop_back(); rebuildInspector(); return; }
+        if (!s.parameterEdit) {
+            graph = s.graph; loadLayout(s.layout, false); selectedNode = 0; selectedLink = -1;
+            if (!publish(false)) { from.push_back(s); to.pop_back(); rebuildInspector(); return; }
+        }
         for (size_t slot = 0; slot < 16; ++slot) {
             const auto id = slot == 0 ? 12u : unsigned(slot + 99);
             const auto findFx = [id](const Graph& g) -> const RoutingNode* {
                 for (const auto& n : g.nodes) if (n.id == id && isEffect(n.type)) return &n;
                 return nullptr;
             };
-            const auto* before = findFx(current.graph); const auto* after = findFx(s.graph);
+            const auto* before = findFx(current.graph);
+            const auto* after = findFx(s.parameterEdit ? current.graph : s.graph);
             const bool lifecycleChange = (!before != !after) || (before && after && before->type != after->type);
             // Cable/position undo must not rewind unrelated host automation.
             for (size_t field = 0; field < 3; ++field) {
                 const bool changed = lifecycleChange || (field == 0 && (s.fxOnUndoMask & (1u << slot)))
+                    || (field == 1 && (s.fxMixUndoMask & (1u << slot)))
                     || (before && after && (field == 0 ? before->enabled != after->enabled
                         : field == 1 ? before->mix != after->mix : before->motion != after->motion));
                 if (!changed) continue;
                 const auto parameter = fxParameterId(slot, field);
                 if (const auto* p = owner.parameters.getRawParameterValue(parameter); p && p->load() != s.fxValues[slot][field])
                     setParameter(parameter, s.fxValues[slot][field]);
+            }
+            if (slot > 0) {
+                for (size_t field = 0; field < creativeParameterCount; ++field)
+                    if (lifecycleChange || (s.creativeUndoMasks[slot - 1] & (std::uint64_t(1) << field)))
+                        setParameter(creativeParameterId(slot, field), s.creativeValues[slot - 1][field]);
             }
             if (slot > 0 && lifecycleChange) {
                 for (size_t field = 0; field < toneParametersPerSlot; ++field)
@@ -927,6 +961,7 @@ private:
                 setParameter(toneParameterId(slot, "WaveLevelMatch"), s.levelMatchValues[slot - 1]);
             }
         }
+        graph = owner.getRoutingGraph(); lastSignature = signature(graph);
         rebuildInspector();
     }
 
@@ -1015,6 +1050,12 @@ private:
         menu.addItem(5, "EQ8", effectRoom);
         menu.addItem(6, "Multiband | 2 / 3 bands", effectRoom);
         menu.addSeparator();
+        menu.addItem(50, "Delay | stereo / tempo sync", effectRoom);
+        menu.addItem(51, "Reverb | space / ducking", effectRoom);
+        menu.addItem(52, "Compressor | stereo dynamics", effectRoom);
+        menu.addItem(53, "Bitcrusher | digital texture", effectRoom);
+        menu.addItem(54, "Granular | capture / pitch", effectRoom);
+        menu.addSeparator();
         menu.addItem(3, "Dry / Wet Mix", room);
         menu.addSeparator();
         menu.addItem(10, "Restore Lead source", room && !hasSource(-1));
@@ -1032,8 +1073,18 @@ private:
     void addNode(int kind) {
         if (graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
         RoutingNode n;
-        if (kind == 1 || kind == 4 || kind == 5 || kind == 6) {
-            n.type = kind == 1 ? NodeType::chorale : kind == 4 ? NodeType::waveshaper : kind == 5 ? NodeType::equalizer : NodeType::crossover;
+        if (kind == 1 || kind == 4 || kind == 5 || kind == 6 || (kind >= 50 && kind <= 54)) {
+            switch (kind) {
+                case 1: n.type = NodeType::chorale; break;
+                case 4: n.type = NodeType::waveshaper; break;
+                case 5: n.type = NodeType::equalizer; break;
+                case 6: n.type = NodeType::crossover; break;
+                case 50: n.type = NodeType::delay; break;
+                case 51: n.type = NodeType::reverb; break;
+                case 52: n.type = NodeType::compressor; break;
+                case 53: n.type = NodeType::bitcrusher; break;
+                case 54: n.type = NodeType::granular; break;
+            }
             for (std::uint32_t id = 100; id <= 114; ++id) if (!node(id)) { n.id = id; break; }
             if (!n.id) return;
             int effects = 0;
@@ -1062,6 +1113,8 @@ private:
             setParameter(fxParameterId(slot, "On"), 1);
             setParameter(fxParameterId(slot, "Mix"), n.type == NodeType::chorale ? 25.0f : 100.0f);
             setParameter(fxParameterId(slot, "Motion"), 35);
+            for (size_t field = 0; field < creativeParameterCount; ++field)
+                setParameter(creativeParameterId(slot, field), n.creative.values[field]);
             for (size_t field = 0; field < toneParametersPerSlot; ++field) {
                 const auto id = parameterIds[toneParameterIndex(slot, field)];
                 if (const auto* parameter = owner.parameters.getParameter(id))
@@ -1075,7 +1128,7 @@ private:
         updateModulationPanel();
         inspectorTitle.setEditable(false, node(selectedNode) != nullptr, false);
         toneViewport.setViewedComponent(nullptr, false);
-        tonePanel.reset(); voiceControls.reset(); mixControl.reset(); fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
+        tonePanel.reset(); creativePanel.reset(); voiceControls.reset(); mixControl.reset(); fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
 
         inspector.addAndMakeVisible(inspectorTitle); inspector.addAndMakeVisible(inspectorInfo);
         inspectorTitle.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
@@ -1103,6 +1156,7 @@ private:
                 if (slot >= 0) {
                     fxOn.setModulationOwner(owner);
                                         fxOn.setButtonText("FX enabled"); fxOn.setClickingTogglesState(true); inspector.addAndMakeVisible(fxOn);
+                    fxOn.setTooltip("Enable this FX slot; disable for latency-aligned dry bypass.");
                     fxOn.setComponentID(fxParameterId(size_t(slot), size_t(0)));
                     const auto* on = owner.parameters.getRawParameterValue(fxParameterId(size_t(slot), size_t(0)));
                     fxOn.setToggleState(on ? on->load() > 0.5f : n->enabled, juce::dontSendNotification);
@@ -1113,6 +1167,30 @@ private:
                             inspector.addAndMakeVisible(*fields.back());
                         }
                         info += "\nOne independent machine; routing chooses its input.\nNew Chorale slots start On / 25% Mix / 35% Motion.";
+                    } else if (slot > 0 && isCreativeEffect(n->type)) {
+                        creativePanel = std::make_unique<CreativeEffectPanel>(owner, size_t(slot), creativeKind(n->type));
+                        creativePanel->onBeginEdit = [this, slot](const juce::String& id) {
+                            remember();
+                            undoStates.back().parameterEdit = true;
+                            if (id == fxParameterId(size_t(slot), "Mix"))
+                                undoStates.back().fxMixUndoMask |= 1u << unsigned(slot);
+                            else for (size_t field = 0; field < creativeParameterCount; ++field)
+                                if (id == creativeParameterId(size_t(slot), field))
+                                    undoStates.back().creativeUndoMasks[size_t(slot - 1)] |= std::uint64_t(1) << field;
+                            inspectorDragging = true;
+                            updateButtons();
+                        };
+                        creativePanel->onValueChanged = [this] {
+                            graph = owner.getRoutingGraph(); lastSignature = signature(graph);
+                        };
+                        creativePanel->onEndEdit = [this] {
+                            inspectorDragging = false;
+                            graph = owner.getRoutingGraph(); lastSignature = signature(graph);
+                            updateButtons();
+                        };
+                        inspector.addAndMakeVisible(*creativePanel);
+                        info = "Slot " + juce::String(slot) + " | host automation / modulation";
+                        fxOn.setTooltip(CreativeEffectPanel::description(creativeKind(n->type)));
                     } else if (slot > 0) {
                         tonePanel = std::make_unique<ToneEffectPanel>(owner, size_t(slot), n->type);
                         toneViewport.setScrollBarsShown(true, false);
@@ -1200,6 +1278,13 @@ private:
                 }
         fxOn.setBounds(4, 34, 160, 26);
         disconnect.setBounds(4, 34, 130, 28);
+        if (creativePanel) {
+            const int available = juce::jmax(0, inspector.getHeight() - 96);
+            creativePanel->setBounds(0, 68, inspector.getWidth(), available);
+            inspectorInfo.setFont(juce::Font(juce::FontOptions(11.0f)));
+            inspectorInfo.setBounds(0, 72 + available, inspector.getWidth(), 24);
+            return;
+        }
         if (tonePanel) {
             const bool crossover = node(selectedNode) && node(selectedNode)->type == NodeType::crossover;
             const int footerHeight = crossover ? 79 : 28;
@@ -1323,6 +1408,7 @@ private:
             juce::BubbleMessageComponent revealBubble;
         std::vector<std::unique_ptr<ModulatorTile>> modulatorButtons;
     std::unique_ptr<ToneEffectPanel> tonePanel;
+    std::unique_ptr<CreativeEffectPanel> creativePanel;
     juce::Viewport toneViewport;
 };
 

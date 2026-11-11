@@ -5,6 +5,7 @@
 #include "Equalizer.h"
 #include "Multiband.h"
 #include "FxMonitor.h"
+#include "CreativeEffects.h"
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -20,7 +21,13 @@ namespace vocalstack {
 
 // Serializable model. IDs identify machines, not positions in nodes[]. Changing
 // an effect ID or type creates fresh state; retaining both retains DSP history.
-enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8 };
+enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13 };
+inline constexpr bool isCreativeEffect(NodeType type) noexcept {
+    return type >= NodeType::delay && type <= NodeType::granular;
+}
+inline constexpr CreativeKind creativeKind(NodeType type) noexcept {
+    return static_cast<CreativeKind>(int(type) - int(NodeType::delay));
+}
 struct RoutingNode {
     std::uint32_t id = 0;
     NodeType type = NodeType::lead;
@@ -34,6 +41,7 @@ struct RoutingNode {
     EqualizerSettings eq{};
     int bandCount = 3;
     float crossoverLow = 250, crossoverHigh = 4000;
+    CreativeSettings creative;
 };
 struct RoutingLink {
     std::uint32_t source = 0, destination = 0;
@@ -98,6 +106,7 @@ struct FxSettings {
     EqualizerSettings eq{};
     int bandCount = 3;
     float crossoverLow = 250, crossoverHigh = 4000;
+    CreativeSettings creative;
 };
 
 // Stable processor automation identities. Unmapped standalone machines keep
@@ -114,6 +123,7 @@ struct RoutingControls {
     bool fxAutomation = false;
     std::array<float, 48> localMix{};
     bool localMixAutomation = false;
+    double tempoBpm = 120;
 };
 
 // Fan-in contract: distinct source voices are orthogonal, duplicate paths are
@@ -149,12 +159,12 @@ public:
     // latency is still rejected rather than pretending it is compensated.
     static constexpr int integerLatencySamples = Waveshaper::latencySamples;
     int additionalLatencySamples() const noexcept { return integerLatencySamples; }
-    // Theoretical graph limit, NOT the tail reported for every graph. IIR tails
-    // are asymptotic; their finite reporting allowances do not truncate audio.
+    // Legacy finite graph allowance, NOT a cap on creative tails (Freeze can
+    // report infinity). IIR allowances do not truncate audio.
     static constexpr double maximumTailSeconds = maxEffects * 256.0;
     // Reports the active plan only. Queued edits become visible when audio
-    // installs them; prepare publishes the default immediately. Controls/bypass
-    // do not reduce bounds, since automation can reactivate connected effects.
+    // installs them; prepare publishes the default immediately. Creative controls
+    // refresh every 2048 samples; bypass/mix do not remove retained tails.
     double tailSeconds() const noexcept { return reportedTail.load(std::memory_order_acquire); }
     // Non-owning, opt-in instrumentation. Set only with audio quiescent; the
     // monitor must outlive the executor. Standalone DSP remains uninstrumented.
@@ -180,7 +190,7 @@ public:
         transitionLength = std::max(1, int(rate * 0.010));
         requestGraph(defaultGraph());
         active = pending.exchange(nullptr);
-        reportedTail.store(active->tailSeconds, std::memory_order_release);
+        updateTail(*active, RoutingControls{});
         reset();
     }
     RoutingValidation requestGraph(const Graph& g) {
@@ -192,7 +202,7 @@ public:
         auto plan = std::make_unique<Plan>();
         plan->count = int(g.nodes.size());
         std::array<int, maxNodes> remap{};
-        std::array<double, maxNodes> pathTails{};
+
         for (int i = 0; i < plan->count; ++i) remap[order[i]] = i;
         for (int i = 0; i < plan->count; ++i) {
             auto& step = plan->steps[i];
@@ -212,16 +222,11 @@ public:
                     weak = step.fx;
                 }
             }
-            // Topological DP: serial effects add, parallel branches take max.
-            // Reading only Output's result excludes every disconnected/dead-end
-            // branch, but retains tails of connected machines with silent input.
-            for (int wire = 0; wire < step.inputCount; ++wire)
-                pathTails[i] = std::max(pathTails[i], pathTails[step.inputs[wire]]);
-            pathTails[i] += moduleTailSeconds(step.node.type);
+
             plan->hasCrossover |= step.node.type == NodeType::crossover;
             if (step.node.type == NodeType::output) plan->output = i;
         }
-        plan->tailSeconds = pathTails[plan->output];
+
         delete pending.exchange(plan.release(), std::memory_order_acq_rel);
         // Do not accumulate expired machine identities after repeated editing.
         for (auto it = machines.begin(); it != machines.end();)
@@ -258,6 +263,7 @@ public:
         last = correction = {};
         transition = 0;
         rendered = false;
+        tailSamplesUntilUpdate = 0;
         if (fxMonitor) fxMonitor->reset(rate > 0 ? rate : 48000);
     }
     StereoSample process(const RoutingSources& sources, const RoutingControls& controls) noexcept {
@@ -269,7 +275,7 @@ public:
                 auto* old = active;
                 active = next;
                 if (fxMonitor) fxMonitor->reset(rate);
-                reportedTail.store(next->tailSeconds, std::memory_order_release);
+                tailSamplesUntilUpdate = 0;
                 if (old) {
                     retired[write % retired.size()] = old;
                     retireWrite.store(write + 1, std::memory_order_release);
@@ -278,6 +284,11 @@ public:
             }
         }
         if (!active) return {};
+        if (tailSamplesUntilUpdate == 0) {
+            updateTail(*active, controls);
+            tailSamplesUntilUpdate = 2048;
+        }
+        --tailSamplesUntilUpdate;
         if (fxMonitor) fxMonitor->beginSample();
         updateRegions(controls);
         for (int i = 0; i < active->count; ++i) {
@@ -427,6 +438,21 @@ public:
                 }
                 break;
             }
+            case NodeType::delay: case NodeType::reverb: case NodeType::compressor:
+            case NodeType::bitcrusher: case NodeType::granular: {
+                value = input(0);
+                if (monitoring) monitorInput = value.audio;
+                const auto fx = effectSettings(n, controls);
+                const auto wet = step.fx->creative.process(value.audio.left, value.audio.right, fx.creative, controls.tempoBpm);
+                const float target = fx.enabled ? unit(fx.mix, .25f) : 0.f;
+                if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
+                else step.smoothedMix += mixSmoothing * (target - step.smoothedMix);
+                const float m = float(step.smoothedMix);
+                value.audio = {blend(value.audio.left, wet[0], m), blend(value.audio.right, wet[1], m)};
+                if (fxMonitor && monitorSlot >= 0)
+                    fxMonitor->setGainReduction(size_t(monitorSlot), fx.enabled ? step.fx->creative.gainReductionDb() : 0.f);
+                break;
+            }
             case NodeType::output: value = input(0); break;
             }
             if (monitoring) {
@@ -473,15 +499,16 @@ private:
             case NodeType::waveshaper: waveshaper.prepare(sr); break;
             case NodeType::equalizer: eq.prepare(sr); break;
             case NodeType::crossover: crossover.prepare(sr); break;
-            default: break;
+            default: if (isCreativeEffect(type)) creative.prepare(sr, creativeKind(type)); break;
             }
         }
-        void reset() { chorale.reset(); waveshaper.reset(); eq.reset(); crossover.reset(); }
+        void reset() { chorale.reset(); waveshaper.reset(); eq.reset(); crossover.reset(); creative.reset(); }
         NodeType type;
         Chorale chorale;
         Waveshaper waveshaper;
         Equalizer eq;
         Multiband crossover;
+        CreativeEffect creative;
     };
     static constexpr double moduleTailSeconds(NodeType type) noexcept {
         switch (type) {
@@ -489,12 +516,14 @@ private:
         case NodeType::waveshaper: return Waveshaper::tailSeconds; // DC / IIR resampling / smoothing
         case NodeType::equalizer: return 256; // conservative extreme-Q/low-cutoff IIR decay
         case NodeType::crossover: return 8;
+
+        case NodeType::compressor: case NodeType::bitcrusher: return 2;
         default: return 0;
         }
     }
     static bool isEffect(NodeType t) noexcept {
         return t == NodeType::chorale || t == NodeType::waveshaper
-            || t == NodeType::equalizer || t == NodeType::crossover;
+            || t == NodeType::equalizer || t == NodeType::crossover || isCreativeEffect(t);
     }
     struct Step {
         RoutingNode node;
@@ -509,7 +538,7 @@ private:
         std::array<std::array<Value, 3>, maxNodes> values{};
         std::array<double, regionCount> boundaries{};
         int regions = 1, count = 0, output = 0;
-        double tailSeconds = 0;
+        std::array<double, maxNodes> pathTails{};
         bool hasCrossover = false;
     };
     static FxSettings effectSettings(const RoutingNode& n, const RoutingControls& controls) noexcept {
@@ -517,9 +546,63 @@ private:
         // Slot zero belongs exclusively to legacy Chorale, not new effect types.
         if (controls.fxAutomation && slot > 0) return controls.fxSettings[slot];
         FxSettings fx{n.enabled, n.mix, n.motion};
-        fx.waveshaper = n.waveshaper; fx.eq = n.eq;
+        fx.waveshaper = n.waveshaper; fx.eq = n.eq; fx.creative = n.creative;
         fx.bandCount = n.bandCount; fx.crossoverLow = n.crossoverLow; fx.crossoverHigh = n.crossoverHigh;
         return fx;
+    }
+    double creativeTailSeconds(NodeType type, const CreativeSettings& settings, double bpm) const noexcept {
+        using P = CreativeParameter;
+        const auto value = [&](P p) {
+            const auto i = static_cast<size_t>(p);
+            const auto& d = creativeParameters[i];
+            const float x = settings.values[i];
+            return double(std::isfinite(x) ? std::clamp(x, d.min, d.max) : d.initial);
+        };
+        // Practical decay allowances, not sample-exact silence. 250 ms covers
+        // the creative one-pole filters and control slews, including 20 Hz HP.
+        constexpr double residual = .25;
+        switch (type) {
+        case NodeType::delay: {
+            const double tempo = std::isfinite(bpm) && bpm >= 20 && bpm <= 400 ? bpm : 120;
+            const double time = value(P::delaySync) >= .5
+                ? 60 * value(P::delayBeats) / tempo : .001 * value(P::delayTime);
+            const double feedback = .01 * value(P::delayFeedback);
+            // Include the first echo, then enough repeats to fall below -80 dB.
+            const double repeats = feedback > 0 ? std::ceil(std::log(1.e-4) / std::log(feedback)) : 0;
+            const double pitchWindow = std::abs(value(P::delayPitch)) > 1.e-6 ? .06 : 0;
+            return (time + pitchWindow) * (1 + repeats) + residual;
+        }
+        case NodeType::reverb:
+            if (value(P::reverbFreeze) >= .5) return std::numeric_limits<double>::infinity();
+            return .001 * value(P::reverbPredelay) + 2 * value(P::reverbDecay) + residual;
+        case NodeType::granular: {
+            if (value(P::granularFreeze) >= .5) return std::numeric_limits<double>::infinity();
+            // Old grains retain size/pitch across automation. Cover the maximum
+            // lifetime plus reverse traversal (2x), not just today's grain size.
+            const double maxGrain = .001 * creativeParameters[static_cast<size_t>(P::granularSize)].max;
+            return .001 * (value(P::granularPosition) + value(P::granularJitter))
+                + 3 * maxGrain + 4 / rate + residual;
+        }
+        default: return moduleTailSeconds(type);
+        }
+    }
+    void updateTail(Plan& plan, const RoutingControls& controls) noexcept {
+        // Bounded topological DP over cached arrays: serial adds, parallel max.
+        // Only Output's result is published; dead ends (even frozen) cannot
+        // contribute, but connected silent-input machines may retain history.
+        for (int i = 0; i < plan.count; ++i) {
+            const auto& step = plan.steps[i];
+            double upstream = 0;
+            for (int wire = 0; wire < step.inputCount; ++wire)
+                upstream = std::max(upstream, plan.pathTails[step.inputs[wire]]);
+            const auto& n = step.node;
+            const int slot = routingFxSlot(n.id);
+            const auto& settings = controls.fxAutomation && slot > 0
+                ? controls.fxSettings[size_t(slot)].creative : n.creative;
+            plan.pathTails[i] = upstream + (isCreativeEffect(n.type)
+                ? creativeTailSeconds(n.type, settings, controls.tempoBpm) : moduleTailSeconds(n.type));
+        }
+        reportedTail.store(plan.pathTails[plan.output], std::memory_order_release);
     }
     void updateRegions(const RoutingControls& controls) noexcept {
         if (!active->hasCrossover) return;
@@ -583,6 +666,13 @@ private:
                 [[fallthrough]];
             case NodeType::equalizer:
             case NodeType::chorale: ++effects; break;
+            case NodeType::delay: case NodeType::reverb: case NodeType::compressor:
+            case NodeType::bitcrusher: case NodeType::granular:
+                for (size_t p = 0; p < creativeParameterCount; ++p) {
+                    const auto& d = creativeParameters[p]; const float x = n.creative.values[p];
+                    if (!std::isfinite(x) || x < d.min || x > d.max) return {false, "invalid creative effect controls"};
+                }
+                ++effects; break;
             case NodeType::output: ++outputs; break;
             case NodeType::sum: case NodeType::mix: break;
             default: return {false, "unknown node type"};
@@ -636,6 +726,7 @@ private:
     static_assert(std::atomic<unsigned>::is_always_lock_free, "retirement requires lock-free indices");
     std::unordered_map<std::uint32_t, std::weak_ptr<Machine>> machines;
     StereoSample last{}, correction{};
+    int tailSamplesUntilUpdate = 0;
     int transition = 0, transitionLength = 480;
     bool rendered = false;
 };

@@ -39,7 +39,8 @@ inline Graph graph(NodeType type) {
 
 inline void parameterContract() {
     Processor p;
-    require(p.getParameters().size() == 1007 && parameterIds.size() == 1007, "Incorrect tone host count");
+    require(p.getParameters().size() == 1727 && parameterIds.size() == 1727 && creativeParameterStart == 1007,
+            "Incorrect host count or creative append offset");
     std::unordered_set<std::string> unique;
     for (size_t i = 0; i < parameterIds.size(); ++i) {
         require(unique.insert(parameterIds[i]).second, "Duplicate host ID");

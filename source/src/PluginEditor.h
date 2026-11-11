@@ -5,6 +5,7 @@
 #include "MeterPanel.h"
 #include "DoublerPanel.h"
 #include "RoutingPanel.h"
+#include "PresetManager.h"
 
 namespace vocalstack {
 
@@ -36,6 +37,7 @@ private:
     bool keyPressed(const juce::KeyPress&) override;
 
     Processor& owner;
+    PresetBar presets;
     Style style;
     juce::Component layoutCanvas;
     float layoutScale = 1.0f;

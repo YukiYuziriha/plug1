@@ -452,6 +452,7 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
     routingControls.fxAutomation = targets.fxAutomation;
     routingControls.localMix = targets.localMix;
     routingControls.localMixAutomation = targets.localMixAutomation;
+    routingControls.tempoBpm = targets.tempoBpm;
     for (int i = 0; i < count; ++i) {
         const float mixTarget = targets.doubleOn ? std::clamp(targets.doubles, 0.0f, 1.0f) : 0.0f;
         controls.doubles = mix(controls.doubles, mixTarget, parameterStep);

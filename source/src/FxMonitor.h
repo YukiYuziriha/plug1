@@ -33,6 +33,12 @@ struct FxMonitorFrame {
 class FxMonitor {
 public:
     static constexpr size_t slotCount = 16;
+    void setGainReduction(size_t slot, float db) noexcept {
+        if (slot < slotCount) reductions[slot].store(db, std::memory_order_relaxed);
+    }
+    float gainReduction(size_t slot) const noexcept {
+        return slot < slotCount ? reductions[slot].load(std::memory_order_relaxed) : 0.f;
+    }
     FxMonitor() : slots(std::make_unique<std::array<Slot, slotCount>>()) {}
     FxMonitor(const FxMonitor&) = delete;
     FxMonitor& operator=(const FxMonitor&) = delete;
@@ -88,6 +94,7 @@ public:
     void reset(double sampleRate) noexcept {
         rate = sampleRate;
         poll = 0;
+        for (auto& x : reductions) x.store(0, std::memory_order_relaxed);
         interval = size_t(std::max(1.0, sampleRate / 30.0));
         for (auto& s : *slots) {
             s.latest.store(0, std::memory_order_release);
@@ -143,6 +150,7 @@ public:
     }
 
 private:
+    std::array<std::atomic<float>, slotCount> reductions{};
     struct Buffer {
         // 0=unowned, -1=writer, 1=reader. Nobody waits for an owner.
         std::atomic<int> owner{0};

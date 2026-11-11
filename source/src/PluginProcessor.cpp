@@ -269,6 +269,21 @@ State::ParameterLayout Processor::makeParameters() {
                     if (text.trim().equalsIgnoreCase(Waveshaper::shapeNames[i])) return int(i + 1);
                 return 0;
             })));
+    for (size_t slot = 1; slot < 16; ++slot) {
+        for (size_t p = 0; p < creativeParameterCount; ++p) {
+            const auto& d = creativeParameters[p];
+            const auto id = creativeParameterId(slot, p);
+            const auto name = "FX " + juce::String(int(slot)) + " " + juce::String(d.label);
+            if (d.discrete) {
+                layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id, 1}, name, d.initial >= .5f));
+            } else {
+                juce::NormalisableRange<float> range(d.min, d.max);
+                if (d.min > 0 && d.max / d.min >= 20) range.setSkewForCentre(std::sqrt(d.min * d.max));
+                layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, name, range, d.initial,
+                    juce::AudioParameterFloatAttributes{}.withLabel(d.unit)));
+            }
+        }
+    }
     return layout;
 }
 
@@ -316,7 +331,10 @@ Settings Processor::settingsFromValues(const std::array<float, parameterIds.size
         result.fxSettings[slot].waveshaper.levelMatch = value(waveLevelMatchParameterStart + slot - 1) >= 0.5f;
         const int algorithm = std::clamp(int(value(waveAlgorithmParameterStart + slot - 1)), 0, 19);
         if (algorithm > 0) result.fxSettings[slot].waveshaper.shape = algorithm - 1;
+        for (size_t p = 0; p < creativeParameterCount; ++p)
+            result.fxSettings[slot].creative.values[p] = value(creativeParameterStart + (slot - 1) * creativeParameterCount + p);
     }
+    result.tempoBpm = hostTempo.load(std::memory_order_relaxed);
     result.localMixAutomation = true;
     for (size_t slot = 0; slot < result.localMix.size(); ++slot)
         result.localMix[slot] = value(localMixParameterStart + slot) * 0.01f;
@@ -384,7 +402,10 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
         engine.resetMeters();
     if (auto* playHead = getPlayHead()) {
         if (auto position = playHead->getPosition()) {
-            if (auto bpm = position->getBpm()) modulation.setTempo(*bpm);
+            if (auto bpm = position->getBpm()) {
+                modulation.setTempo(*bpm);
+                if (std::isfinite(*bpm) && *bpm > 0) hostTempo.store(*bpm, std::memory_order_relaxed);
+            }
             const bool playing = position->getIsPlaying();
             if (playing && !transportPlaying) modulation.retrigger(ModulationRetrigger::transport);
             transportPlaying = playing;
@@ -628,12 +649,19 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
             }
             // Older three-shape sessions stay in Follow Legacy mode. A graph-only
             // expanded curve can seed the new selector without remapping old automation.
-            if (graphTree.isValid() && i >= waveAlgorithmParameterStart) {
+            if (graphTree.isValid() && i >= waveAlgorithmParameterStart && i < creativeParameterStart) {
                 const size_t slot = 1 + i - waveAlgorithmParameterStart;
                 for (const auto& node : active.nodes)
                     if (node.type == NodeType::waveshaper && processorRouting::fxSlot(node.id) == int(slot)
                         && node.waveshaper.shape > 2)
                         initial = float(node.waveshaper.shape + 1);
+            }
+            if (graphTree.isValid() && i >= creativeParameterStart) {
+                const size_t slot = 1 + (i - creativeParameterStart) / creativeParameterCount;
+                const size_t field = (i - creativeParameterStart) % creativeParameterCount;
+                for (const auto& node : active.nodes)
+                    if (isCreativeEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
+                        initial = node.creative.values[field];
             }
             initial = parameter->convertFrom0to1(parameter->convertTo0to1(initial));
             missing.setProperty("value", initial, nullptr);
@@ -853,7 +881,12 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
                     setParameterValue(fxParameterId(slot, size_t(1)), node.mix * 100);
                 if (old == previous.nodes.end() || old->motion != node.motion)
                     setParameterValue(fxParameterId(slot, size_t(2)), node.motion * 100);
-                if (slot > 0 && node.type != NodeType::chorale) {
+                if (slot > 0 && isCreativeEffect(node.type)) {
+                    for (size_t p = 0; p < creativeParameterCount; ++p)
+                        if (old == previous.nodes.end() || node.creative.values[p] != old->creative.values[p])
+                            setParameterValue(parameterIds[creativeParameterStart + (slot - 1) * creativeParameterCount + p], node.creative.values[p]);
+                }
+                if (slot > 0 && node.type != NodeType::chorale && !isCreativeEffect(node.type)) {
                     const auto next = processorToneValues(node);
                     const auto before = old == previous.nodes.end() ? next : processorToneValues(*old);
                     if (node.type == NodeType::waveshaper && (old == previous.nodes.end() || node.waveshaper.shape != old->waveshaper.shape))

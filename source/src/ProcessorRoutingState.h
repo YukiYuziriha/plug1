@@ -7,7 +7,7 @@ namespace vocalstack::processorRouting {
 
 inline bool isEffect(NodeType type) noexcept {
     return type == NodeType::chorale || type == NodeType::waveshaper
-        || type == NodeType::equalizer || type == NodeType::crossover;
+        || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type);
 }
 
 inline float bounded(float value, float low, float high, float fallback) noexcept {
@@ -122,6 +122,10 @@ inline juce::ValueTree encode(const Graph& graph, const char* type) {
             eq.addChild(band, -1, nullptr);
         }
         node.addChild(eq, -1, nullptr);
+        juce::ValueTree creative("Creative");
+        for (size_t p = 0; p < creativeParameterCount; ++p)
+            creative.setProperty(creativeParameters[p].id, n.creative.values[p], nullptr);
+        node.addChild(creative, -1, nullptr);
         tree.addChild(node, -1, nullptr);
     }
     for (const auto& l : graph.links) {
@@ -144,7 +148,7 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
             RoutingNode n;
             n.id = static_cast<std::uint32_t>(static_cast<juce::int64>(child.getProperty("id", 0)));
             const int type = child.getProperty("type", -1);
-            if (type < 0 || type > int(NodeType::crossover)) return false;
+            if (type < 0 || type > int(NodeType::granular)) return false;
             n.type = static_cast<NodeType>(type);
             n.voiceSlot = child.getProperty("voiceSlot", 0);
             n.enabled = child.getProperty("enabled", true);
@@ -181,6 +185,11 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
                 band.gainDb = saved.getProperty("gainDb", band.gainDb);
                 band.q = saved.getProperty("q", band.q);
                 band.mode = saved.getProperty("mode", band.mode);
+            }
+            const auto creative = child.getChildWithName("Creative");
+            for (size_t p = 0; p < creativeParameterCount; ++p) {
+                const auto& d = creativeParameters[p];
+                n.creative.values[p] = bounded(float(creative.getProperty(d.id, d.initial)), d.min, d.max, d.initial);
             }
             boundToneSettings(n);
             graph.nodes.push_back(n);

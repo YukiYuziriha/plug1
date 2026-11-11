@@ -4,6 +4,42 @@
 
 This document records the staged implementation plan and the subsequent control-design decisions.
 
+### 1.6.0 — creative vocal effects and whole-patch presets
+
+Implemented and Release-built:
+
+- Five independent routing machines: Delay, Reverb, Compressor, Bitcrusher and
+  Granular, with compact grouped sliders, modulation and host automation.
+- Delay: tempo/free timing, ping-pong that alternates centered mono vocals,
+  filtered/saturated feedback, pitched repeats and ducking.
+- Reverb: eight-line diffuse FDN, separate size/RT60, predelay, early reflections,
+  tone/damping, modulation, width, ducking, saturation and freeze. Pitch/shimmer
+  and swell are not implemented.
+- Compressor: stereo-linked peak detection, knee, timing, detector high-pass,
+  manual makeup and real gain-reduction readout; no lookahead.
+- Crusher: independent bit/rate reduction, drive, gated TPDF dither and postfilter;
+  intentional aliasing. Granular: 32 bounded grains, pitch, reverse, freeze,
+  lookback/scatter, stereo spread and overlap-aware level normalization.
+- Full-patch preset footer: complete parameters, routing, positions and modulation;
+  choose a machine-local user folder, save new files, browse factories/user files,
+  and undo the last preset load. Skin/window preferences stay unchanged.
+- Five original factory starting points: Dark Lead, Grit Adlibs, Deep Double,
+  Night Echo and Cloud Choir. Inspired by dark modern vocal production, not exact
+  artist recreations, proprietary preset copies or automatic pitch correction.
+- Practical connected-path tail reporting; freeze maps safely to infinite tails
+  in CLAP/VST3. 1727 host parameters, including 720 new creative controls.
+
+Validation: all 18 focused CTest suites passed, including 42 editor/state groups,
+creative processor/audio tests and both skins. Standalone DSP tests also covered
+allocation-free processing and sanitizer checks. Tracked CLAP/VST3 packages match
+Release artifacts by SHA256; packaged CLAP smoke passed. The long legacy
+`VocalStackDSP` suite was excluded. No actual Bitwig listening check or installation
+was performed for this build.
+
+Reference principles: Valhalla Delay/VintageVerb (coloured spaces and repeats),
+FabFilter Pro-C 3 (dynamics/detector workflow), Decimort 2 (separate degradation
+controls), and SILO (granular dimensions). Original DSP and UI, not clones.
+
 ### 1.5.2 — compact, vertically resizable modulation panel
 
 Validation: Release CLAP/VST3 builds and all 16 focused CTest suites passed,

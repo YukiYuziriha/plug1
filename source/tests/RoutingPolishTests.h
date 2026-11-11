@@ -289,8 +289,8 @@ void embeddedTabs() {
                                && !routing->isOnDesktop() && routing->getPeer() == editor->getPeer(),
                            "Routing opened outside its editor");
                     expect(editor->getLocalBounds() == windowBounds
-                               && routing->getBounds() == editor->getLocalBounds().reduced(18).withTrimmedTop(82),
-                           "Embedded routing must use available window space without resizing it");
+                               && routing->getBounds() == editor->getLocalBounds().withTrimmedBottom(52).reduced(18).withTrimmedTop(82),
+                           "Embedded routing must use available space above the preset footer without resizing the window");
                     if (repeat == 0) firstLayout = owner.getRoutingLayout().toXmlString();
                     else expect(firstLayout == owner.getRoutingLayout().toXmlString(), "Tab switch refitted saved routing layout");
                     if (!expanded && !active && repeat == 0)

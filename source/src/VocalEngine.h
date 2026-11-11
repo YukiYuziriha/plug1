@@ -34,6 +34,7 @@ struct Settings {
     bool fxAutomation = false;
     std::array<float, 48> localMix{};
     bool localMixAutomation = false;
+    double tempoBpm = 120;
     float globalMix = 1.0f; // Untouched latency-aligned input vs complete graph + trim.
     VoiceSettings leadSettings{true, 0, 0, 0, 0, 0, 0, 0, 0, true};
 };

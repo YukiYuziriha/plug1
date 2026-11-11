@@ -106,8 +106,20 @@ inline const auto waveAlgorithmParameterIdStorage = [] {
         ids[slot - 1] = "fx" + std::to_string(slot) + "WaveAlgorithm";
     return ids;
 }();
+inline constexpr size_t creativeParameterStart = waveAlgorithmParameterStart + 15;
+inline const auto creativeParameterIdStorage = [] {
+    std::array<std::string, 15 * creativeParameterCount> ids;
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t p = 0; p < creativeParameterCount; ++p)
+            ids[(slot - 1) * creativeParameterCount + p] = "fx" + std::to_string(slot) + creativeParameters[p].id;
+    return ids;
+}();
+inline juce::String creativeParameterId(size_t slot, size_t p) {
+    return slot > 0 && slot < 16 && p < creativeParameterCount
+        ? juce::String(creativeParameterIdStorage[(slot - 1) * creativeParameterCount + p]) : juce::String();
+}
 inline const auto parameterIds = [] {
-    std::array<const char*, waveAlgorithmParameterStart + 15> ids{};
+    std::array<const char*, creativeParameterStart + 15 * creativeParameterCount> ids{};
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
         ids[legacyParameterIds.size() + i] = toneParameterIdStorage[i].c_str();
@@ -123,6 +135,8 @@ inline const auto parameterIds = [] {
         ids[localMixParameterStart + i] = localMixParameterIdStorage[i].c_str();
     for (size_t i = 0; i < waveAlgorithmParameterIdStorage.size(); ++i)
         ids[waveAlgorithmParameterStart + i] = waveAlgorithmParameterIdStorage[i].c_str();
+    for (size_t i = 0; i < creativeParameterIdStorage.size(); ++i)
+        ids[creativeParameterStart + i] = creativeParameterIdStorage[i].c_str();
     return ids;
 }();
 static_assert(parameterIds.size() <= ModulationBackend::maxTargets);
@@ -231,6 +245,7 @@ public:
     void retainFxMonitor(size_t slot);
     void releaseFxMonitor(size_t slot);
     bool readFxMonitor(size_t slot, FxMonitorFrame& out) const;
+    float getCreativeGainReduction(size_t slot) const noexcept { return fxMonitor.gainReduction(slot); }
 
 
     bool isFlash() const { return flash.load(std::memory_order_relaxed); }
@@ -273,6 +288,7 @@ private:
     std::array<std::atomic<bool>, parameterIds.size()> snapshotTargeted{};
     std::array<std::atomic<float>, parameterIds.size()> snapshotBase{}, snapshotEffective{};
     bool transportPlaying = false;
+    std::atomic<double> hostTempo{120};
     std::atomic<bool> flash{false}, advancedVisible{false}, advancedInitialized{false};
     MeterBridge metering;
     std::atomic<bool> meterResetRequested{false};

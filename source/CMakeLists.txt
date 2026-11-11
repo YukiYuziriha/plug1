@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.5.2 LANGUAGES C CXX)
+project(VocalStack VERSION 1.6.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -35,6 +35,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
             -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake)
     FetchContent_MakeAvailable(JUCE clap_juce)
+    include(cmake/PatchClapTail.cmake)
 
     juce_add_plugin(VocalStack
         COMPANY_NAME "Vocal Stack"
@@ -61,6 +62,12 @@ endif()
 
 if(VOCALSTACK_BUILD_TESTS)
     enable_testing()
+    add_executable(vocalstack_creative_tests tests/CreativeEffectsTests.cpp)
+    target_include_directories(vocalstack_creative_tests PRIVATE src)
+    add_test(NAME VocalStackCreative COMMAND vocalstack_creative_tests)
+    add_executable(vocalstack_creativetail_tests tests/CreativeTailTests.cpp)
+    target_include_directories(vocalstack_creativetail_tests PRIVATE src)
+    add_test(NAME VocalStackCreativeTail COMMAND vocalstack_creativetail_tests)
     add_executable(vocalstack_dsp_tests tests/DspTests.cpp)
     target_link_libraries(vocalstack_dsp_tests PRIVATE vocalstack_dsp)
     add_test(NAME VocalStackDSP COMMAND vocalstack_dsp_tests)

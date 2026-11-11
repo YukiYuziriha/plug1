@@ -166,21 +166,22 @@ void resizeTabs() {
         auto& routing = component<vocalstack::RoutingPanel>(*editor);
         for (const auto size : {juce::Point<int>(940, 560), juce::Point<int>(1480, 1040)}) {
             editor->setSize(size.x, size.y);
-            const float scale = std::min(1.0f, std::min(float(size.x) / 940, float(size.y) / 872));
+            const int contentHeight = size.y - 52; // Preset toolbar has its own unscaled footer.
+            const float scale = std::min(1.0f, std::min(float(size.x) / 940, float(contentHeight) / 872));
             const auto transform = canvas.getTransform();
             expect(canvas.getWidth() == 940 && canvas.getHeight() == 872,
                    "Stack must retain its fixed design canvas");
             expectNear(transform.mat00, scale, "Stack horizontal scale must never exceed one");
             expectNear(transform.mat11, scale, "Stack vertical scale must never exceed one");
             expectNear(transform.mat02, (size.x - 940 * scale) * .5f, "Stack horizontal centering");
-            expectNear(transform.mat12, (size.y - 872 * scale) * .5f, "Stack vertical centering");
+            expectNear(transform.mat12, (contentHeight - 872 * scale) * .5f, "Stack vertical centering above preset toolbar");
             auto& output = ui::slider(*editor, "outputGain");
             expect(editor->getLocalBounds().contains(editor->getLocalArea(&output, output.getLocalBounds())),
                    "Scaled Stack output is outside the window");
             action(*editor, "Routing");
-            expect(canvas.getTransform().isIdentity() && canvas.getBounds() == editor->getLocalBounds(),
-                   "Routing header must use unscaled window coordinates");
-            expect(routing.getBounds() == juce::Rectangle<int>(18, 100, size.x - 36, size.y - 118),
+            expect(canvas.getTransform().isIdentity() && canvas.getBounds() == juce::Rectangle<int>(0, 0, size.x, contentHeight),
+                   "Routing header must use unscaled content coordinates above preset toolbar");
+            expect(routing.getBounds() == juce::Rectangle<int>(18, 100, size.x - 36, contentHeight - 118),
                    "Routing did not grow with available space");
             action(*editor, "Stack");
             owner.setAdvancedVisible(false); pumpTimers();

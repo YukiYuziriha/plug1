@@ -48,10 +48,16 @@ void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
 }
 
 Editor::Editor(Processor& processor)
-    : AudioProcessorEditor(processor), owner(processor), globalMix(processor, "globalMix", "Mix", "%"), routingPanel(processor),
+    : AudioProcessorEditor(processor), owner(processor), presets(processor), globalMix(processor, "globalMix", "Mix", "%"), routingPanel(processor),
       advancedPanel(processor), choralePanel(processor) {
     setLookAndFeel(&style);
     addAndMakeVisible(layoutCanvas);
+    addAndMakeVisible(presets);
+    presets.onPatchLoaded = [this] {
+
+        applyTheme();
+        syncDrawer();
+    };
     setResizable(true, true);
     setResizeLimits(940, 560, 2400, 2200);
     const auto savedLayout = owner.getRoutingLayout();
@@ -161,7 +167,7 @@ Editor::Editor(Processor& processor)
     syncDrawer();
     applyTheme();
     setSize(juce::jlimit(940, 2400, int(savedLayout.getProperty("editorWidth", editorWidth))),
-            juce::jlimit(560, 2200, int(savedLayout.getProperty("editorHeight", editorHeight + drawerHeight))));
+            juce::jlimit(560, 2200, int(savedLayout.getProperty("editorHeight", editorHeight + drawerHeight + 52))));
     restoringWindow = false;
     bypassUiLink = std::make_unique<ParameterAttachment>(*owner.parameters.getParameter("bypass"),
         [this](float value) { updateBypassControls(value); }, nullptr);
@@ -227,11 +233,13 @@ void Editor::applyTheme() {
 void Editor::resized() {
     if (getWidth() <= 0 || getHeight() <= 0) return;
     const int designHeight = editorHeight + drawerHeight;
-    layoutScale = routingVisible ? 1.0f : jmin(1.0f, jmin(float(getWidth()) / float(editorWidth), float(getHeight()) / float(designHeight)));
+    const int contentHeight = jmax(1, getHeight() - 52);
+    presets.setBounds(18, getHeight() - 48, jmax(0, getWidth() - 36), 44);
+    layoutScale = routingVisible ? 1.0f : jmin(1.0f, jmin(float(getWidth()) / float(editorWidth), float(contentHeight) / float(designHeight)));
     layoutOffset = routingVisible ? Point<float>() : Point<float>((float(getWidth()) - editorWidth * layoutScale) * 0.5f,
-        (float(getHeight()) - designHeight * layoutScale) * 0.5f);
+        (float(contentHeight) - designHeight * layoutScale) * 0.5f);
     layoutCanvas.setTransform(AffineTransform());
-    layoutCanvas.setBounds(0, 0, routingVisible ? getWidth() : editorWidth, routingVisible ? getHeight() : designHeight);
+    layoutCanvas.setBounds(0, 0, routingVisible ? getWidth() : editorWidth, routingVisible ? contentHeight : designHeight);
     layoutCanvas.setTransform(AffineTransform::scale(layoutScale).translated(layoutOffset.x, layoutOffset.y));
     constexpr std::array<int, 6> centers{70, 183, 285, 387, 500, 614};
     for (size_t i = 0; i < knobs.size(); ++i) {
@@ -252,7 +260,7 @@ void Editor::resized() {
 
     stackTab.setBounds(382, 26, 70, 26);
     routingTab.setBounds(458, 26, 78, 26);
-    routingPanel.setBounds(18, 100, jmax(0, getWidth() - 36), jmax(0, getHeight() - 118));
+    routingPanel.setBounds(18, 100, jmax(0, getWidth() - 36), jmax(0, contentHeight - 118));
     assignmentBanner.setBounds(24, routingVisible ? 70 : 408, routingVisible ? jmax(0, getWidth() - 118) : 760, 22);
     endAssignment.setBounds(routingVisible ? getWidth() - 88 : 790, routingVisible ? 70 : 408, 64, 22);
     choralePanel.setBounds(18, 344, 904, 64);

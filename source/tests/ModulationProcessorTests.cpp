@@ -12,7 +12,7 @@ namespace {
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 void processorApiAndRecall() {
     Processor owner;
-    check(parameterIds.size() == 1007, "append-only parameter count changed");
+    check(parameterIds.size() == 1727 && creativeParameterStart == 1007, "append-only creative parameter count/offset changed");
     for (size_t i = 0; i < parameterIds.size(); ++i)
         check(owner.getParameters()[int(i)] == owner.parameters.getParameter(parameterIds[i]), "parameter index changed");
     check(owner.settings().globalMix == 1 && owner.settings().leadSettings.enabled
@@ -130,7 +130,7 @@ void localMixTargets() {
 
 void qualityParametersAndRecall() {
     Processor owner;
-    check(waveQualityParameterStart == 914 && parameterIds.size() == 1007, "quality was not appended after 914");
+    check(waveQualityParameterStart == 914 && parameterIds.size() == 1727, "quality index or expanded parameter count changed");
     check(owner.getParameters()[913] == owner.parameters.getParameter("fx15WaveShapeAmount"),
         "quality moved an existing wave parameter");
     for (size_t slot = 1; slot < 16; ++slot) {
@@ -310,13 +310,46 @@ void populatedGraphStress() {
         << ms << " ms per audio second (informational, machine-dependent)" << char(10);
 }
 
+void finalCreativeTarget() {
+    Processor owner;
+    const auto id = creativeParameterId(15, creativeParameterCount - 1);
+    auto* target = owner.parameters.getParameter(id);
+    check(target && target->getParameterIndex() == 1726, "final creative target moved or is missing");
+    target->setValueNotifyingHost(.25f);
+    const float base = owner.parameters.getRawParameterValue(id)->load();
+    ModulationState state;
+    Modulator source; source.id = 71; source.phase = .25f;
+    state.modulators.push_back(source);
+    state.assignments.push_back({71, id, .25f, true});
+    juce::String error;
+    check(owner.setModulationState(state, error), "final creative target rejected by modulation capacity");
+    juce::MemoryBlock saved; owner.getStateInformation(saved);
+    Processor recalled;
+    recalled.setStateInformation(saved.getData(), int(saved.getSize()));
+    check(recalled.getModulationState().assignments.size() == 1
+        && recalled.getModulationState().assignments[0].targetParameterId == id, "final creative assignment did not roundtrip");
+    recalled.prepareToPlay(48000, 137);
+    juce::AudioBuffer<float> audio(2, 137); audio.clear(); juce::MidiBuffer midi;
+    recalled.processBlock(audio, midi);
+    const auto frame = recalled.getModulationSnapshot();
+    check(frame.consistent, "final creative snapshot is inconsistent");
+    bool moved = false;
+    for (const auto& value : frame.targets) if (value.parameterId == id)
+        moved = value.effectiveNormalized > value.baseNormalized + .1f;
+    check(moved, "final creative target did not receive live modulation");
+    check(recalled.parameters.getRawParameterValue(id)->load() == base, "creative modulation changed host base value");
+}
+
 void discreteZeroCrossingAndIdle(double sampleRate, const char* parameterId = "leadOn") {
     const bool legacyInteger = juce::String(parameterId) == "fx1WaveShape";
     const float initialEffective = legacyInteger ? 1.0f : 0.0f;
     const float baseEffective = legacyInteger ? 0.0f : 1.0f;
     Processor owner;
+    auto* parameter = owner.parameters.getParameter(parameterId);
+    check(parameter != nullptr, "missing discrete dwell parameter");
+    parameter->setValueNotifyingHost(parameter->convertTo0to1(baseEffective));
     if (legacyInteger)
-        check(!owner.parameters.getParameter(parameterId)->isDiscrete(),
+        check(!parameter->isDiscrete(),
             "legacy integer host metadata changed; test no longer exercises inherited false isDiscrete");
     ModulationState state;
     Modulator source;
@@ -362,10 +395,13 @@ int main() {
         processorApiAndRecall();
         qualityParametersAndRecall();
         localMixTargets();
+        finalCreativeTarget();
         populatedGraphStress();
         for (double rate : {48000.0, 96000.0}) {
             discreteZeroCrossingAndIdle(rate);
             discreteZeroCrossingAndIdle(rate, "fx1WaveShape");
+            discreteZeroCrossingAndIdle(rate, "fx1delay_sync");
+            discreteZeroCrossingAndIdle(rate, "fx15granular_freeze");
         }
         std::cout << "Modulation processor tests passed" << char(10);
     }

@@ -1,25 +1,17 @@
-# Vocal Stack 1.5.2
+# Vocal Stack 1.6.0
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-1.5.2 tightens the LFO controls into two rows of three smaller knobs with compact
-value text and half-width selectors. Drag the bottom panel's top divider to resize
-its height (160–480 px when space permits); the height is saved, controls stay
-fixed-size, and the graph fills the available height. LFO readouts use Cascadia Mono
-when installed, otherwise the system monospace fallback. No audio parameters or
-DSP behavior changed.
+1.6.0 adds five independent routing effects—**Delay, Reverb, Compressor,
+Bitcrusher and Granular**—and full-patch factory/user presets in the editor footer.
+Route each effect on one voice, a group, or the complete stack. Existing voice,
+EQ8, multiband, waveshaper and LFO/Random workflows remain available.
 
-1.5.1 separates waveform-tile modulators on the left and their bottom control strip
-from the full-height node inspector. Stack is always visible with compact two-column
-sliders; Lead joins the motion monitor. Waveshaper curves follow live modulation,
-and node/empty-canvas context menus open at the cursor.
-
-1.5.0 added resizable Stack/Routing views, an independently editable Lead, shared
-rotary voice/FX inspectors, global dry/wet Mix, Classic LFO/Random modulation,
-and 19 waveshapers with Raw, 2x/4x quality, and optional RMS level matching.
-Final release verification is recorded below. Bitwig listening/transport checks
-remain manual; these are original processors/workflows, not proprietary clones.
+Release CLAP/VST3 builds, tracked packages and automated validation are complete.
+Packaged binaries match the Release artifacts by SHA256, and the packaged CLAP
+smoke test passed. This delivery does not install plugins, and no actual Bitwig
+listening check was performed.
 
 ## Install
 
@@ -48,9 +40,10 @@ and [VST3](https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical%2BDo
 | Formant | 0.0 st | Moves vocal resonances at the original lead pitch |
 | Output | 0.0 dB | Final output trim, −24 to +12 dB; double-click for unity |
 
-Bitwig's **Plug-in Parameters** button exposes all 1007 parameters, including Lead,
-eight generated voices, musical Pitch, presence, 16 fixed FX slots and 48 local
-mixer slots. All original 874 IDs/indices are retained; new controls append. The original **Vocal Stack**
+Bitwig's **Plug-in Parameters** button exposes all **1727 parameters**, including
+Lead, eight generated voices, musical Pitch, presence, 16 fixed FX slots and 48
+local mixer slots. The previous 1007 IDs/indices are retained; **48 creative-effect
+descriptors × 15 additional FX slots = 720 appended host parameters**. The original **Vocal Stack**
 CLAP Remote Controls page retains its five knobs and three module switches. A
 second **Output** page supplies output trim and bypass. Original parameter IDs,
 indices and remote assignments are unchanged; new parameters are appended.
@@ -223,7 +216,7 @@ outgoing links. It is workflow inspiration, not an exact copy: our single-output
 connection policy is intentional, while inputs still support compensated fan-in.
 
 Available nodes: Lead, Voice sources, Chorale, Waveshaper, EQ8, Multiband,
-Dry/Wet Mix, Output. One FX node is one independent machine; routing chooses
+Delay, Reverb, Compressor, Bitcrusher, Granular, Dry/Wet Mix, Output. One FX node is one independent machine; routing chooses
 whether it processes one voice, a group, or the whole result. Connect several
 voices directly to the same input for an automatically compensated merge.
 Mix retains separate Dry and Wet pins. The default path is:
@@ -244,11 +237,13 @@ shortcut through custom routing. A custom graph may omit it entirely. Global
 bypass always returns latency-aligned original input, ignoring graph and trim.
 
 At most 16 FX instances are supported: the original main Chorale slot plus 15
-shared additional slots for Chorale, Waveshaper, EQ8 or Multiband. FX inspector controls are host parameters; topology
+shared additional slots for Chorale, Waveshaper, EQ8, Multiband and the five
+creative effects. FX inspector controls are host parameters; topology
 and positions are saved separately, not automated. **Disconnections apply immediately:**
 unconnected inputs receive silence, and disconnected Output is silent (after the
 short de-click ramp). An unused disconnected effect does not invalidate a working
-bypass route. An FX whose input alone is disconnected may finish its short tail.
+bypass route. An FX whose input alone is disconnected may continue its retained tail, including
+frozen history.
 Structural errors—cycles, exact duplicate cables, illegal ports, or unsupported
 additional branch latency—are rejected without leaving different cables on screen.
 Visible cables represent accepted topology, never a separate draft. The one
@@ -270,6 +265,62 @@ power-budget edits are replaced by the new automatic rules; check those patches
 on migration. The default Basic signal path remains regression-tested unchanged.
 
 ![Native routing with independent multiband outputs](VocalStack-Routing.png)
+
+### Creative effects
+
+Add an effect in Routing, connect it, then select it to edit its independent
+controls and wet/dry mix. These nodes add no reported processing latency;
+echo/grain timing is intentional, not compensated away.
+
+| Node | Controls and limits |
+| --- | --- |
+| **Delay** | Free time 1–2000 ms or tempo sync 1/16–8 quarter-note beats; feedback 0–95%, ping-pong, low/high cuts, feedback drive, ducking/release and repeat pitch −12…+12 st. Synced storage covers 24 s at 20 BPM; time changes slew with a tape-like pitch change. |
+| **Reverb** | Eight-line feedback delay network (FDN), predelay 0–250 ms, room size, midband RT60 target 0.15–20 s, diffusion, early reflections, low/high cuts, HF damping, width 0–150%, tail modulation, ducking/release, saturation and freeze. No pitch/shimmer or swell controls. |
+| **Compressor** | Zero-lookahead, stereo-linked peak detector; threshold, ratio 1:1–20:1, knee 0–24 dB, attack 0.1–100 ms, release 10–2000 ms, detector high-pass 20–1000 Hz, gain-reduction readout and manual makeup −12…+24 dB. No automatic makeup. |
+| **Bitcrusher** | Bit depth 3–24, sample/hold rate 1–96 kHz (limited by host rate), input drive, input-gated TPDF dither and output low-pass. Aliasing is intentional; the postfilter is not an antialiased sample-rate converter. |
+| **Granular** | Up to 32 grain voices with fixed Hann-like polynomial windows; pitch −24…+12 st, length 20–250 ms, density 4–80 Hz, stereo spread, lookback 0–1500 ms, timing scatter, reverse, capture freeze, low/high cuts and capture drive. Not formant-preserving; launches are skipped when all voices are busy. |
+
+Reverb RT60 is a midband target, not a guaranteed measured decay: damping,
+filters and interpolation shorten it. Reverb freeze is bounded/near-lossless,
+not a bit-exact endless loop. Granular freeze stops capture while grains keep
+progressing through stored history; zero-scatter periodic streams can interfere
+on sustained tones. Use some scatter when useful on vocals.
+
+Tail reporting follows connected Output paths: serial tails add, parallel tails
+use the maximum, and disconnected dead ends do not contribute. Reverb/Granular
+freeze reports an infinite host tail conservatively; the CLAP wrapper maps this
+and very long finite tails safely to CLAP's sentinel without integer overflow.
+Reported decay allowances do not truncate audio.
+
+Design/workflow inspiration, **not copies or claims of sonic equivalence**:
+[Valhalla Delay](https://valhalladsp.com/shop/delay/valhalladelay/),
+[Valhalla VintageVerb](https://valhalladsp.com/shop/reverb/valhalla-vintage-verb/),
+[FabFilter Pro-C 3](https://www.fabfilter.com/products/pro-c-3-compressor-plug-in),
+[D16 Decimort 2](https://d16.pl/decimort2) and
+[Unfiltered Audio SILO](https://www.unfilteredaudio.com/products/silo).
+These are original DSP, UI and presets, not proprietary code/assets/preset ports.
+
+![Reverb inspector and whole-patch preset browser](VocalStack-Reverb.png)
+
+![Granular vocal texture inspector in the Device skin](VocalStack-Granular.png)
+
+### Full-patch presets
+
+Use the **footer browser** for the five original factory patches: **Dark Lead**,
+**Grit Adlibs**, **Deep Double**, **Night Echo** and **Cloud Choir**. Loading replaces
+the full audio patch: parameters, routing, node positions and modulation.
+Your current skin, window size and other presentation preferences are retained.
+
+- **Folder…** chooses an existing user-preset folder using an asynchronous dialog.
+  Its location is persisted locally in user app data, never in host session state.
+  Factory presets remain available without a user folder.
+- **Save…** saves a new `.vocalstackpreset` inside that folder. Choose a new name:
+  existing files are **never overwritten**, even after dialog confirmation.
+  Atomic save requires filesystem hard-link support; failures appear in the footer.
+- **Refresh** rescans that folder (not subfolders). Up to 512 user entries and
+  2 MiB per preset are supported; malformed or invalid patches are rejected.
+- **Undo load** restores the entire patch from before the last successful preset
+  load, in one step. It is not parameter undo or a multi-step preset history.
 
 ### Waveshaper
 
@@ -472,22 +523,26 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The first configure fetches pinned dependencies. With plugins enabled, sixteen
-suites cover DSP, Chorale, routing, voices, FX automation, pitch/formant spectra,
-tone/multiband/FX monitoring, Lead/global Mix, waveshaper expansion, modulation
-backend/processor, CLAP hosting and editor/state. Configure with
-`-DVOCALSTACK_TEST_BASELINE=ON` for the optional pinned-history comparison:
-**17 suites including long `VocalStackDSP`, or 16 excluding it** (`ctest --test-dir build -C Release -E '^VocalStackDSP$'
---output-on-failure`). The baseline requires Python and the pinned pre-routing
-revision in local Git history. These are configured counts, not passing results. The plugins appear under
-`build/VocalStack_artefacts/Release/`. To build just the portable DSP tests,
-configure with `-DVOCALSTACK_BUILD_PLUGIN=OFF`.
+The first configure fetches pinned dependencies. The focused release run uses:
+
+```powershell
+ctest --test-dir build -C Release -E '^VocalStackDSP$' --output-on-failure
+```
+
+The 18 focused suites cover routing/voices, tone/creative DSP and tails,
+automation/modulation, pitch/formant, CLAP hosting and editor/preset/state behavior.
+The long legacy `VocalStackDSP` suite is separate and was excluded from the release
+run. `-DVOCALSTACK_TEST_BASELINE=ON` enables the optional pinned-history comparison;
+it requires Python and the pinned pre-routing revision in local Git history.
+Plugins appear under `build/VocalStack_artefacts/Release/`. To build just portable
+DSP tests, configure with `-DVOCALSTACK_BUILD_PLUGIN=OFF`.
 
 The code uses [JUCE](https://github.com/juce-framework/JUCE),
 [CLAP JUCE Extensions](https://github.com/free-audio/clap-juce-extensions), and
 [Signalsmith Stretch](https://github.com/Signalsmith-Audio/signalsmith-stretch).
 The local CLAP wrapper patch adds mono layouts, marks the bypass parameter,
-and rejects invalid binary XML state.
+rejects invalid binary XML state, and safely maps infinite/very long tails to
+the CLAP tail sentinel.
 
 ## Architecture
 
@@ -497,6 +552,8 @@ and rejects invalid binary XML state.
 - `HarmonyShifter.h`: fixed-latency STFT musical pitch/formant processor.
 - `Waveshaper.h` / `Equalizer.h` / `Multiband.h`: independent tone processors.
 - `ToneEffectPanel.h` / `ToneEqGraph.h`: selected-FX controls and native EQ graph.
+- `CreativeEffects.h` / `CreativeEffectPanel.h`: five creative processors and inspectors.
+- `PresetManager.h`: validated full-patch files, factory patches and footer browser.
 - `Routing.h`: bounded DAG model, validation, explicit mixers, independent FX
   instances, execution-plan publication and off-audio reclamation.
 - `ProcessorRoutingState.h`: graph serialization and fixed FX automation mapping.
@@ -522,6 +579,19 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.6.0:** Release CLAP/VST3 builds and all **18 focused CTest suites passed**,
+including **42 editor/state groups plus creative integration cases**, with both
+skins covered and screenshots reviewed. Coverage includes independent creative
+FX, automation/state, full-patch factories, preset safety/undo and tail reporting.
+The long legacy `VocalStackDSP` suite was excluded, not claimed passed. No actual
+Bitwig listening check was performed. Tracked CLAP/VST3 packages were refreshed and SHA256-verified against the Release
+artifacts; the packaged CLAP smoke test passed. Installation was not requested or
+performed.
+
+### Historical verification
+
+The records below describe earlier releases, not v1.6.0 installation or packaging.
 
 **1.5.2:** Release CLAP/VST3 builds and all **16 focused CTest suites passed**,
 including **40 editor/state groups**. New checks cover the compact LFO grid,
