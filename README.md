@@ -1,11 +1,14 @@
-# Vocal Stack 1.7.1
+# Vocal Stack 1.8.0
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-1.7.1 reduces routing/DSP overhead without lowering quality settings and makes
-horizontal sliders use half-speed relative dragging. Paired heavy-patch benchmarks
-show approximately 23–25% less CPU on this development machine; details below.
+1.8.0 adds **expandable routing nodes** with in-node controls and visuals, a
+sticky hideable inspector, and separate remembered compact/expanded positions.
+This is a UI release: no audio DSP or host parameter changes.
+
+1.7.1 reduced routing/DSP overhead and introduced half-speed horizontal slider
+dragging. Its historical CPU measurements are retained below, not new 1.8.0 results.
 
 1.7.0 added **Gain, Stereo Utility, Gate/Expander, XP Filter and Synth Filter**,
 reverb **pitched feedback / shimmer and wet swell**, themed effect visualizations,
@@ -14,10 +17,10 @@ actual GPL-covered, upstream-derived filter equations—not category stand-ins.
 Delay, Reverb, Compressor, Bitcrusher, Granular and whole-patch presets remain;
 eight factory patches now provide starting points for routing and modulation.
 
-Release CLAP/VST3 builds, tracked packages and automated validation are complete.
-Packaged binaries match the Release artifacts by SHA256, and the packaged CLAP
-smoke test passed. This delivery does not install plugins, and no actual Bitwig
-listening check was performed.
+1.8.0 Release CLAP/VST3 builds and matching tracked packages are complete. All 19
+focused CTest suites, including 57 editor/state groups, passed. The packaged CLAP
+host smoke passed; both plugins were installed to the per-user Common directories
+and SHA256-verified. Actual Bitwig listening/transport checks remain unperformed.
 
 ## Install
 
@@ -91,9 +94,9 @@ The preview uses synthetic readings to demonstrate peak hold and clip indication
 
 Drag the window corner to resize (940x560 minimum, 2400x2200 maximum). Stack
 fits its complete design proportionally up to native size; unmatched space
-is letterboxed, never stretched or enlarged vertically. Routing keeps controls/nodes unscaled and expands
-the canvas and inspector height. The inspector defaults to 320 px wide; drag its
-left divider to resize between 320 and 480 px. Width is saved, and dragging neither
+is letterboxed, never stretched or enlarged vertically. Routing expands the
+canvas and inspector height; expanded node controls scale with canvas zoom.
+The inspector defaults to 320 px wide; drag its left divider to resize between 320 and 480 px. Width is saved, and dragging neither
 refits the graph nor rebuilds the selected effect. Small inspectors scroll. Window size and graph
 pan/zoom are saved; tab changes do not resize the window or refit the graph.
 Stack cards use four rows of two horizontal sliders in narrower, unchanged-height
@@ -212,6 +215,34 @@ Until audio is processed, no live voice measurements are available.
 Select the embedded **Routing** top tab (beside **Stack**). Drag nodes to
 arrange them and blank space to pan. The mouse wheel over the canvas zooms
 around the cursor without Ctrl; +/- and **Fit** are also available.
+
+**Expandable nodes (1.8.0):**
+
+- The toolbar arrow hides/shows the right inspector. Hidden is sticky: selecting
+  another node or cable does not reopen it.
+- **Expand all** opens all supported node cards and hides the inspector;
+  **Collapse all** closes them and shows the inspector, even if manually hidden.
+  A node's own **+ / −** toggle affects only that node, not inspector visibility.
+- Lead/Voice cards expose their voice controls; FX cards reuse their controls and
+  visuals, including FX enable. Chorale offers Mix/Motion, Mix nodes offer their
+  balance, and Output offers trim. These edit the same underlying values as the
+  inspector, not separate DSP instances. Mixed compact/expanded cards are supported.
+- Each stable node ID remembers separate compact and expanded positions. First-use
+  expansion packs the new card downward past neighbours without moving existing
+  cards. Later toggles restore remembered positions rather than repacking manual
+  arrangements. Moving one layout does not move the other.
+- Inspector visibility, expansion states and both position sets persist in the
+  instance layout. Expansion/collapse and node moves support layout-only Undo/Redo
+  without republishing topology or replaying audio parameters.
+- Headers and ports keep their world-space geometry as you pan/zoom. Expanded
+  control bodies are created only while visible onscreen and released when
+  collapsed, hidden or offscreen. Synth response plots share one background worker
+  across editors, with one active render and at most **17 pending requests**;
+  pending targets coalesce per client and cancelled cards discard queued work.
+  This bounds plot work, not total UI cost or audio CPU.
+
+Expanded routing preview: [VocalStack-Expanded-Routing.png](VocalStack-Expanded-Routing.png)
+(screenshot forthcoming).
 
 Drag an output pin to an input to connect it. An already connected output moves
 its cable to the new destination, replacing its existing destination rather than
@@ -632,6 +663,27 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
+**1.8.0:** Release CLAP/VST3 builds and all **19 focused CTest suites passed**,
+including **57 editor/state groups**. New coverage includes separate layout recall,
+packing, sticky inspector visibility, layout-only Undo, parameter bindings in all
+three themes, virtualization, five simultaneous Synth visuals, and interrupted
+parameter drags/numeric entry. Rendered 12 expanded-routing and 15 existing update
+screenshots. Packaged CLAP smoke passed; both tracked packages match the Release
+artifacts. Installed per-user CLAP/VST3 copies were SHA256-verified. No actual
+Bitwig listening/transport check was performed. The separate legacy DSP suite was
+not rerun for this UI-only release; DSP sources are unchanged.
+
+Informational UI profile (`VocalStackEditorTests.exe --profile-routing`): 26 nodes
+(15 FX including two Synth filters, eight voices, Lead, mixer, Output), Device,
+1600×1000, 100% zoom, 120 serial pan/timer/full-panel snapshot frames per pass.
+Compact median/p95/max was **6.951/8.750/36.264 ms**; expanded was
+**12.390/16.972/34.411 ms**, with at most 12 mounted cards. Pacing sleep is excluded;
+mounting/snapshot allocation is included and background curve work may overlap.
+These are development-machine message-thread timings, not native presentation FPS,
+audio CPU measurements, or a glitch-free guarantee.
+
+### Historical 1.7.1 verification
+
 **1.7.1:** Release CLAP/VST3 builds and all **19 focused CTest suites passed**,
 including **48 editor/state groups plus creative/utility integration cases**.
 The separate legacy DSP suite also passed (81.0 s). Fifteen real-editor captures
@@ -642,7 +694,7 @@ Tracked CLAP/VST3 packages are SHA256-matched to Release artifacts, with package
 CLAP smoke validation. No installation or actual Bitwig listening/transport check
 was performed.
 
-### Performance update: 1.7.0 → 1.7.1
+### Historical performance update: 1.7.0 → 1.7.1
 
 - Full-band routing carries nine source weights instead of the maximum 297-band
   provenance entries per node. Graphs with a crossover retain the established
@@ -698,7 +750,7 @@ Measurements are machine-dependent and are not hard real-time guarantees.
 
 ### Historical verification
 
-The records below describe earlier releases, not v1.7.1 installation or packaging.
+The records below describe earlier releases, not 1.8.0 validation or packaging.
 
 **1.5.2:** Release CLAP/VST3 builds and all **16 focused CTest suites passed**,
 including **40 editor/state groups**. New checks cover the compact LFO grid,

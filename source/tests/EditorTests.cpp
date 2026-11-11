@@ -10,8 +10,10 @@
 #include "UtilityIntegrationTests.h"
 #include "UpdateUiTests.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -707,6 +709,7 @@ void editorSkin(int theme) {
 #include "ProcessorUiRegressionTests.h"
 #include "RoutingPolishTests.h"
 #include "StackModulationUiTests.h"
+#include "RoutingExpansionTests.h"
 
 void deviceEditor() { editorSkin(0); }
 void neonEditor() { editorSkin(1); }
@@ -718,21 +721,34 @@ int main(int argc, char** argv) {
     if (argc == 2 && juce::String(argv[1]) == "--render") {
         try {
             vocalstack::updateUiTests::screenshots();
+            routingExpansion::screenshots();
             return 0;
         } catch (const std::exception& error) {
             std::cerr << "[FAIL] Render: " << error.what() << '\n';
             return 1;
         }
     }
-    if (argc != 1) {
-        std::cerr << "Usage: VocalStackEditorTests [--render]\n";
+    if (argc == 2 && juce::String(argv[1]) == "--profile-routing") {
+        try {
+            routingExpansion::profileRouting();
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "[FAIL] Routing profile: " << error.what() << '\n';
+            return 1;
+        }
+    }
+    juce::String filter;
+    if (argc == 3 && juce::String(argv[1]) == "--filter" && juce::String(argv[2]).isNotEmpty())
+        filter = argv[2];
+    else if (argc != 1) {
+        std::cerr << "Usage: VocalStackEditorTests [--render | --profile-routing | --filter <name substring>]\n";
         return 2;
     }
     struct Test {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 48> tests{{
+    const std::array<Test, 57> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -782,12 +798,24 @@ int main(int argc, char** argv) {
                 {"Lead monitor index 8, selection and processor publication", stackModulationUi::leadMonitor},
                 {"Waveshaper transfer follows live effective modulation", stackModulationUi::modulatedWaveshaperCurve},
                 {"Routing context and Add Node menus anchor to cursor", stackModulationUi::menuCursorPlacement},
+        {"Routing sticky inspector and global/individual expansion", routingExpansion::stickyAndGlobal},
+        {"Routing first-use packing and independent manual positions", routingExpansion::packingAndPositions},
+        {"Routing layout-only history preserves newer graph and automation", routingExpansion::layoutHistory},
+        {"Routing expansion and position banks survive reopen/state recall", routingExpansion::reopen},
+        {"Expanded routing controls bind parameters in all three themes", routingExpansion::parameterBindings},
+        {"Expanded routing virtualization, pan and cursor-centred zoom", routingExpansion::virtualization},
+        {"Visible multi-synth scheduler coalescing, cancellation and UI responsiveness", routingExpansion::multiSynthScheduler},
+        {"Interrupted expanded drags close host gestures before unmount", routingExpansion::interruptedDrags},
+        {"Unfinished expanded numeric entry cancels and releases edit scope", routingExpansion::unfinishedTextEntry},
         {"Device editor and PNG", deviceEditor},
         {"Neon editor and PNG", neonEditor},
         {"Spectral editor and PNG", spectralEditor}
     }};
     int failures = 0;
+    int selected = 0;
     for (const auto& test : tests) {
+        if (filter.isNotEmpty() && !juce::String(test.name).containsIgnoreCase(filter)) continue;
+        ++selected;
         std::cout << "[RUN] " << test.name << std::endl;
         try {
             test.run();
@@ -800,6 +828,10 @@ int main(int argc, char** argv) {
             std::cerr << "[FAIL] " << test.name << ": unknown exception\n";
         }
     }
-    std::cout << tests.size() - static_cast<size_t>(failures) << '/' << tests.size() << " editor tests passed\n";
+    if (selected == 0) {
+        std::cerr << "No editor tests match filter: " << filter << '\n';
+        return 2;
+    }
+    std::cout << selected - failures << '/' << selected << " editor tests passed\n";
     return failures == 0 ? 0 : 1;
 }

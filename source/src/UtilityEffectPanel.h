@@ -4,10 +4,13 @@
 #include "FxVisuals.h"
 #include "ParameterKnob.h"
 #include "ModulationUI.h"
+#include <array>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
-#include <future>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace vocalstack {
@@ -140,7 +143,10 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             setComponentID("utilityVisual"); setName("Utility response and live pre/post monitor");
             setTooltip("Filter: drag horizontally for cutoff, vertically for resonance. Curve uses effective modulation targets, not live smoothed DSP state. PRE/POST FFT is stereo power, Hann-normalized peak dBFS; it is not the response curve. Synth curves are cached, finite-impulse small-signal estimates, not exact nonlinear transfer functions. Comb delay is frozen.");
         }
-        ~Visual() override { finishDrag(); }
+        ~Visual() override {
+            if (curveScheduler) curveScheduler->cancel(curveTicket);
+            finishDrag();
+        }
         bool responseReady() const {
             return panel.kind != UtilityKind::synthFilter
                 || (!synthCurve.bins.empty() && synthCurve.request == curveRequest());
@@ -255,6 +261,124 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             CurveRequest request;
             std::vector<UtilityResponse> bins;
         };
+        // Shared by all Synth visuals (including different editors). Tickets contain only
+        // snapshots/results; neither the worker nor its queue can access UI or processors.
+        class CurveScheduler final {
+        public:
+            struct Ticket {
+                CurveRequest pending, active;
+                SynthCurve result;
+                bool queued = false, running = false, completed = false;
+                bool failed = false, cancelled = false;
+            };
+            static std::shared_ptr<CurveScheduler> shared() {
+                // Keep the worker alive across virtualization churn. Visuals also retain
+                // ownership so static teardown cannot invalidate a surviving client.
+                static auto scheduler = std::make_shared<CurveScheduler>();
+                return scheduler;
+            }
+            CurveScheduler() : worker([this] { run(); }) {}
+            ~CurveScheduler() {
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    stopping = true;
+                }
+                wake.notify_one();
+                // Only scheduler shutdown joins, never ordinary component destruction.
+                // At most the current fixed-size render must finish; queued work is dropped.
+                worker.join();
+            }
+            bool poll(const std::shared_ptr<Ticket>& ticket, SynthCurve& curve, bool& failed) {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (!ticket->completed) return false;
+                failed = ticket->failed;
+                if (!failed) curve = std::move(ticket->result);
+                ticket->completed = false;
+                return true;
+            }
+            bool submit(const std::shared_ptr<Ticket>& ticket, const CurveRequest& request) {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (stopping || ticket->cancelled) return false;
+                if (ticket->running && ticket->active == request) {
+                    // Targets may have returned to the in-flight snapshot.
+                    removePending(ticket);
+                    return true;
+                }
+                if (ticket->queued) {
+                    // Replace without moving its FIFO position: busy clients cannot jump
+                    // the queue or starve other visible nodes/the inspector.
+                    ticket->pending = request;
+                    return true;
+                }
+                if (pendingCount == pending.size()) return false; // Polling clients retry.
+                ticket->pending = request;
+                ticket->queued = true;
+                pending[pendingCount++] = ticket;
+                wake.notify_one();
+                return true;
+            }
+            void discardPending(const std::shared_ptr<Ticket>& ticket) {
+                std::lock_guard<std::mutex> lock(mutex);
+                removePending(ticket);
+            }
+            void cancel(const std::shared_ptr<Ticket>& ticket) {
+                if (!ticket) return;
+                std::lock_guard<std::mutex> lock(mutex);
+                ticket->cancelled = true;
+                removePending(ticket);
+            }
+        private:
+            // All ticket/queue state is guarded by mutex, held only for bookkeeping,
+            // never during rendering or waiting for a render to complete.
+            void removePending(const std::shared_ptr<Ticket>& ticket) {
+                for (size_t i = 0; i < pendingCount; ++i) {
+                    if (pending[i] != ticket) continue;
+                    for (size_t j = i + 1; j < pendingCount; ++j)
+                        pending[j - 1] = std::move(pending[j]);
+                    pending[--pendingCount].reset();
+                    ticket->queued = false;
+                    break;
+                }
+            }
+            void run() {
+                for (;;) {
+                    std::shared_ptr<Ticket> ticket;
+                    CurveRequest request;
+                    {
+                        std::unique_lock<std::mutex> lock(mutex);
+                        wake.wait(lock, [this] { return stopping || pendingCount != 0; });
+                        if (stopping) return;
+                        ticket = pending[0];
+                        request = ticket->pending;
+                        removePending(ticket);
+                        ticket->active = request;
+                        ticket->running = true;
+                    }
+                    SynthCurve result;
+                    bool failed = false;
+                    try {
+                        result = {request, UtilityEffect::synthResponseCurve(request.rate, request.targets, 32768)};
+                    } catch (...) { failed = true; }
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        ticket->running = false;
+                        if (!stopping && !ticket->cancelled) {
+                            ticket->result = std::move(result);
+                            ticket->failed = failed;
+                            ticket->completed = true;
+                        }
+                    }
+                }
+            }
+            std::mutex mutex;
+            std::condition_variable wake;
+            // One active render plus at most one pending snapshot per client, capped
+            // globally at the 16 visible routing nodes + inspector. No overflow queue.
+            std::array<std::shared_ptr<Ticket>, 17> pending{};
+            size_t pendingCount = 0;
+            bool stopping = false;
+            std::thread worker;
+        };
         double responseSampleRate() const {
             const double rate = hasLiveFrame() ? frame.sampleRate : monitorOwner.getSampleRate();
             // Match UtilityEffect's supported-rate fallback so cached bin spacing is correct.
@@ -272,22 +396,20 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             return request;
         }
         void updateSynthCurve() {
-            // Called only on the message thread. Poll rather than enqueue callbacks to this
-            // component. One render in flight, no backlog; the next launch takes latest targets.
-            if (curveTask.valid()) {
-                if (curveTask.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
-                try { synthCurve = curveTask.get(); curveFailed = false; }
-                catch (...) { curveFailed = true; }
-            }
+            // Message-thread polling only; cached curves remain local to this visual.
+            if (curveTicket) curveScheduler->poll(curveTicket, synthCurve, curveFailed);
             const auto request = curveRequest();
-            if (!synthCurve.bins.empty() && synthCurve.request == request) return;
+            if (!synthCurve.bins.empty() && synthCurve.request == request) {
+                if (curveTicket) curveScheduler->discardPending(curveTicket);
+                return;
+            }
             const auto now = std::chrono::steady_clock::now();
             if (now < nextCurveUpdate) return;
             nextCurveUpdate = now + std::chrono::milliseconds(100);
             try {
-                curveTask = std::async(std::launch::async, [request] {
-                    return SynthCurve{request, UtilityEffect::synthResponseCurve(request.rate, request.targets, 32768)};
-                });
+                if (!curveScheduler) curveScheduler = CurveScheduler::shared();
+                if (!curveTicket) curveTicket = std::make_shared<CurveScheduler::Ticket>();
+                curveScheduler->submit(curveTicket, request);
             } catch (...) { curveFailed = true; }
         }
         double synthMagnitude(double hz) const {
@@ -338,9 +460,8 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         SynthCurve synthCurve;
         bool curveFailed = false;
         std::chrono::steady_clock::time_point nextCurveUpdate{};
-        // Destruction joins at most one fixed-size render. The job owns its snapshot,
-        // never this component, the processor, live DSP, or a message-thread callback.
-        std::future<SynthCurve> curveTask;
+        std::shared_ptr<CurveScheduler> curveScheduler;
+        std::shared_ptr<CurveScheduler::Ticket> curveTicket;
         bool enabled = true, ready = false, dragging = false;
         float mix = 100;
         juce::RangedAudioParameter* cutoff = nullptr;

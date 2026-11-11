@@ -1,6 +1,6 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.7.1
+## Current status — 1.8.0
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
@@ -34,43 +34,42 @@ list. When requirements conflict, the latest release record takes precedence.
   coefficients; no reduced quality settings. 14.4 million captured floats matched
   the pre-optimization DSP bit-for-bit across the benchmark scenarios.
 
-### Next UI proposal — expandable routing nodes (not implemented)
+### 1.8.0 — expandable routing delivered
 
-The performance/half-speed-slider update is complete in 1.7.1. This section
-records the next UI workflow, not a claim that it is already implemented.
-Separate remembered compact and expanded layouts are approved by the user.
+UI-only scope: no audio DSP, host parameter IDs/counts or parameter ranges changed.
 
-- [ ] Right inspector has a small hide arrow and an always-reachable unhide button.
-  Hidden is an explicit sticky state: choosing another node must NOT reopen it.
-- [ ] Top toolbar **Expand all nodes** opens in-node controls on all expandable
-  nodes and hides the right inspector. **Collapse all nodes** returns to compact
-  control-free cards and unhides the inspector.
-- [ ] Every expandable node has its own expand/collapse button; mixed states are
-  supported. Expanding a node presents its actual controls/visuals, not duplicates
-  of DSP state. Source/output nodes need a defined compact set of relevant controls.
-- [ ] Keep separate remembered compact and expanded positions keyed by stable node
-  IDs. Collapse restores the compact arrangement; expanding again restores the
-  expanded arrangement, including manual moves. Dragging a node in one layout
-  must not move its counterpart in the other layout.
-- [ ] Initial expansion adjusts positions to prevent overlapping cards without
-  overwriting the compact arrangement. Subsequent expansion reuses the remembered
-  expanded layout rather than repacking away deliberate manual moves.
-- [ ] Keep cables attached, port hit targets usable, pan/zoom predictable, DAW keys
-  passive and parameter gestures/automation/modulation unchanged. UI layout edits
-  must never rebuild or republish the audio topology.
-- Reuse existing control/visual components and avoid background timers/FFT jobs
-  for off-screen or collapsed cards; profile expanded large patches as well.
-  Use a shared bounded response-render budget rather than a worker per expanded
-  filter, and prioritize visible controls while dragging.
-
-Remaining recommendations / decisions:
-- Expansion packing should be deterministic and local, not a new whole-graph
-  rearrangement on every edit. Expansion/collapse should be one layout Undo step.
-- Define whether manually expanding one node hides the inspector; recommended:
-  only **Expand all** changes visibility automatically, individual toggles do not.
-- Make inspector visibility, node expansion states and both position sets persist
-  in the instance layout, separate from audio settings. Explicit **Collapse all**
-  unhides the inspector as requested, even if it was manually hidden before.
+- [x] Sticky inspector hide/show arrow stays reachable; selecting nodes or cables
+  does not reopen a hidden inspector.
+- [x] **Expand all** opens supported cards and hides the inspector; **Collapse all**
+  closes them and shows it, including after a manual hide. Individual **+ / −**
+  toggles leave inspector visibility unchanged and support mixed card states.
+- [x] Reused in-node controls/visuals edit the same underlying values: Lead/Voice
+  controls, FX panels and enable, Chorale Mix/Motion, Mix balance and Output trim.
+- [x] Separate compact/expanded position banks keyed by stable node IDs. Moves in
+  one bank do not affect the other; toggling restores remembered manual positions.
+- [x] Deterministic first-use packing moves only the new card downward past
+  neighbours. Subsequent expansion restores its saved position without repacking.
+- [x] Persist inspector visibility, expansion states and both position banks in
+  instance layout. Bulk expansion/collapse is one layout Undo step; layout-only
+  history does not republish topology or replay parameters.
+- [x] Expanded controls follow pan/zoom; headers, ports and cables retain world-space
+  geometry. Controls remain passive for idle DAW keys and reuse parameter bindings.
+- [x] Virtualize collapsed, hidden and offscreen control bodies rather than keeping
+  their timers/monitors alive. Recreate bodies when they return onscreen.
+- [x] Synth plots share one background curve worker across editors: one active
+  render, at most 17 pending requests, coalesced latest targets per client and
+  queued-work cancellation on unmount. No worker per expanded filter.
+- [x] Cancel gestures before control teardown, including interrupted drags and
+  unfinished numeric entry. Regression tests cover hide, offscreen pan and close.
+- [x] Final Release validation: all 19 focused CTest suites and 57 editor groups pass.
+- [x] Profile expanded large patches: 26 nodes (15 FX, eight voices, Lead, mixer,
+  Output), Device theme, 1600x1000, 100% zoom, 120 serial pan/timer/snapshot frames
+  per pass. Compact median/p95/max: 6.951/8.750/36.264 ms; expanded:
+  12.390/16.972/34.411 ms, at most 12 mounted cards. Pacing sleep excluded;
+  includes mounting and snapshot allocation, background curve work may overlap.
+  Informational UI timings, not native presentation FPS or audio deadline safety.
+- [x] Render 12 expanded views across three themes and 15 existing update views;
+  publish `VocalStack-Expanded-Routing.png`.
 
 ### Implementation boundaries
 
@@ -90,18 +89,26 @@ cache/interpolate FFT bins, and are approximate for nonlinear/moving-delay model
 - [ ] Listen in Bitwig to the five effects and factory patches on real vocals;
   check wet/dry balance, ducking, grit, granular transitions and freeze/unfreeze.
 - [ ] Exercise Bitwig transport, tempo changes, automation and session recall.
-- [x] Profile populated new-effect patches: eight pitched voices, ten serial FX
+- [x] Historical 1.7.1 profiling: eight pitched voices, ten serial FX
   including pitched reverb/swell/formant, four modulators, stereo/137 frames.
   Paired Release medians changed from 548/1143 to 420/861 ms per audio second
   at 48/96 kHz on this machine (~23–25% less CPU). Average 96 kHz throughput is now
   below real time, but maximum observed blocks still missed 137-sample deadlines.
   This is not a universal CPU/glitch-free guarantee; see README for methodology.
-- [ ] Install 1.7.1 only when requested and while plugin binaries are unlocked.
+- [x] Complete 1.8.0 Release/package verification: CLAP/VST3 packages match built
+  artifacts by SHA256; packaged CLAP host smoke passes.
+- [x] Install 1.8.0 as requested: per-user Common CLAP/VST3 binaries replaced while
+  unlocked and SHA256-verified. Bitwig was not terminated.
 
-All 19 focused suites (48 editor groups), the separate legacy `VocalStackDSP`
-suite and packaged CLAP smoke passed for 1.7.1. Fifteen actual editor screenshots
-cover five views in all three themes. Actual Bitwig listening/transport checks
-remain unperformed; no installation was performed.
+For 1.8.0, all 19 focused CTest suites and all 57 editor/state groups pass on the
+final revision. The separate legacy DSP suite was not rerun for this UI-only
+release; DSP sources and host parameter definitions are unchanged.
+
+Historical 1.7.1 validation: all 19 focused suites (48 editor groups), the separate
+legacy `VocalStackDSP` suite and packaged CLAP smoke passed. Fifteen actual editor
+screenshots cover five views in all three themes. Those package/performance records
+are not 1.8.0 results. Actual Bitwig listening/transport checks remain unperformed;
+no installation was performed.
 
 ### Explicitly deferred / outside current scope
 
@@ -137,7 +144,7 @@ They are not pending checklists; later records supersede earlier design choices.
   no track-click jump, with full-range numeric entry/reset and unchanged knobs.
 - 19 focused suites, 48 editor groups and separate legacy DSP passed. Refreshed
   CLAP/VST3 packages; no installation or Bitwig listening/transport test claimed.
-- Recorded expandable-node proposal above; layout work is not implemented here.
+- Recorded the expandable-node proposal, subsequently implemented for 1.8.0.
 
 ### 1.7.0 — character filters, utilities, shimmer and themed models
 

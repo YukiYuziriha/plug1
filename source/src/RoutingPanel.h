@@ -25,6 +25,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         unsigned fxMixUndoMask = 0;
         unsigned fxOnUndoMask = 0;
         bool parameterEdit = false;
+        bool layoutOnly = false;
     };
     class Canvas final : public juce::Component {
     public:
@@ -40,6 +41,118 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
     private:
         RoutingPanel& panel;
     } canvas;
+    // Only the body is a child component: the canvas retains the header, ports
+    // and all world-space geometry, including when this card is virtualized out.
+    class NodeCard final : public juce::Component {
+    public:
+        NodeCard(RoutingPanel& p, const RoutingNode& n) : panel(p), model(n) {
+            const int slot = panel.fxSlot(n);
+            if (isEffect(n.type) && slot >= 0) {
+                enabled.setModulationOwner(panel.owner);
+                enabled.setComponentID(fxParameterId(size_t(slot), "On"));
+                enabled.setButtonText("FX enabled"); enabled.setClickingTogglesState(true);
+                addAndMakeVisible(enabled);
+                enabledLink = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(panel.owner.parameters, fxParameterId(size_t(slot), "On"), enabled);
+            }
+            if (n.type == NodeType::voice || n.type == NodeType::lead) {
+                voice = std::make_unique<VoiceControls>(panel.owner, n.type == NodeType::lead ? -1 : n.voiceSlot);
+                voice->onSelect = [this] { panel.selectVoice(model.type == NodeType::lead ? -1 : model.voiceSlot); };
+                addAndMakeVisible(*voice);
+            } else if (n.type == NodeType::chorale && slot >= 0) {
+                addKnob(fxParameterId(size_t(slot), "Mix"), "Mix", "%");
+                addKnob(fxParameterId(size_t(slot), "Motion"), "Motion", "%");
+            } else if (slot > 0 && isCreativeEffect(n.type)) {
+                creative = std::make_unique<CreativeEffectPanel>(panel.owner, size_t(slot), creativeKind(n.type));
+                panel.bindCardEdits(*creative, slot, false, editing); addAndMakeVisible(*creative);
+            } else if (slot > 0 && isUtilityEffect(n.type)) {
+                utility = std::make_unique<UtilityEffectPanel>(panel.owner, size_t(slot), utilityKind(n.type));
+                panel.bindCardEdits(*utility, slot, true, editing); addAndMakeVisible(*utility);
+            } else if (slot > 0 && isEffect(n.type)) {
+                tone = std::make_unique<ToneEffectPanel>(panel.owner, size_t(slot), n.type); addAndMakeVisible(*tone);
+            } else if (n.type == NodeType::output) {
+                addKnob("outputGain", "Output trim", "dB");
+            } else if (n.type == NodeType::mix) {
+                const auto id = n.mainControls ? juce::String("double") : localMixParameterId(n.id);
+                if (id.isNotEmpty()) addKnob(id, n.mainControls ? "Lead / Stack" : "Dry / Wet", "%");
+                else {
+                    addAndMakeVisible(localMix);
+                    localMix.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+                    localMix.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 90, 22);
+                    localMix.setRange(0, 100, .1); localMix.setScrollWheelEnabled(false);
+                    localMix.setValue(n.mix * 100, juce::dontSendNotification);
+                    localMix.setTooltip("Graph-local Dry / Wet (%); not a host modulation target");
+                    localMix.onDragStart = [this] { panel.remember(); panel.inspectorDragging = true; };
+                    localMix.onDragEnd = [this] { panel.inspectorDragging = false; };
+                    localMix.onValueChange = [this] {
+                        if (!panel.inspectorDragging) panel.remember();
+                        if (auto* current = panel.node(model.id)) { current->mix = float(localMix.getValue() / 100); panel.publish(); }
+                    };
+                }
+            }
+            detail::passiveControl(*this);
+        }
+        ~NodeCard() override {
+            // Attachments and panel edit callbacks must still be alive here.
+            // SliderParameterAttachment's destructor does not close a gesture.
+            RoutingPanel::cancelControlGestures(*this);
+            if (editing) {
+                if (creative && creative->onEndEdit) creative->onEndEdit();
+                if (utility && utility->onEndEdit) utility->onEndEdit();
+            }
+        }
+        void resized() override {
+            auto body = getLocalBounds();
+            if (enabled.getParentComponent()) { enabled.setBounds(body.removeFromTop(28).withWidth(150)); body.removeFromTop(4); }
+            if (voice) voice->setBounds(body);
+            if (tone) tone->setBounds(body);
+            if (creative) creative->setBounds(body);
+            if (utility) utility->setBounds(body);
+            const int width = juce::jmin(140, body.getWidth() / juce::jmax(1, int(knobs.size())));
+            for (size_t i = 0; i < knobs.size(); ++i) knobs[i]->setBounds(body.getX() + int(i) * width, body.getY(), width, juce::jmin(110, body.getHeight()));
+            localMix.setBounds(body.withWidth(140).withHeight(110));
+        }
+        void setNeon(bool neon) {
+            if (voice) voice->setNeon(neon);
+            if (tone) tone->setNeon(neon);
+            if (creative) creative->setNeon(neon);
+            if (utility) utility->setNeon(neon);
+            for (auto& knob : knobs) knob->setNeon(neon);
+            const auto p = themePalette(*this, neon);
+            enabled.setColour(juce::TextButton::buttonColourId, p.inset);
+            enabled.setColour(juce::TextButton::buttonOnColourId, p.accent);
+            enabled.setColour(juce::TextButton::textColourOffId, p.text);
+            enabled.setColour(juce::TextButton::textColourOnId, p.background);
+            modulationui::styleRotary(localMix, neon);
+        }
+        void reveal(const juce::String& id) {
+            if (tone) tone->revealParameter(id);
+            if (creative) creative->revealParameter(id);
+            if (utility) utility->revealParameter(id);
+        }
+        void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override {
+            if (wheel.deltaY != 0) panel.zoomAt(e.getEventRelativeTo(&panel.canvas).position, wheel.deltaY > 0 ? 1.12f : 1 / 1.12f);
+        }
+        void refresh(const RoutingNode& n) {
+            if (localMix.getParentComponent() && !localMix.isMouseButtonDown(true))
+                localMix.setValue(n.mix * 100, juce::dontSendNotification);
+        }
+        bool matches(const RoutingNode& n) const { return model.type == n.type && model.voiceSlot == n.voiceSlot && model.mainControls == n.mainControls; }
+    private:
+        void addKnob(const juce::String& id, const juce::String& label, const char* unit) {
+            knobs.push_back(std::make_unique<ParameterKnob>(panel.owner, id, label, unit)); addAndMakeVisible(*knobs.back());
+        }
+        RoutingPanel& panel;
+        RoutingNode model;
+        bool editing = false;
+        modulationui::Button enabled;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enabledLink;
+        std::unique_ptr<VoiceControls> voice;
+        std::unique_ptr<ToneEffectPanel> tone;
+        std::unique_ptr<CreativeEffectPanel> creative;
+        std::unique_ptr<UtilityEffectPanel> utility;
+        std::vector<std::unique_ptr<ParameterKnob>> knobs;
+        juce::Slider localMix;
+    };
     class InspectorDivider final : public juce::Component {
     public:
         explicit InspectorDivider(RoutingPanel& p) : panel(p) {
@@ -169,12 +282,20 @@ public:
             const auto* selected = node(selectedNode);
             if (!selected) return;
             const auto name = inspectorTitle.getText().trim().substring(0, 48);
-            remember();
+            rememberLayout();
             if (name.isEmpty()) names.erase(selectedNode); else names[selectedNode] = name;
             inspectorTitle.setText(title(*selected), juce::dontSendNotification);
             saveLayout(); updateButtons(); canvas.repaint();
         };
         for (auto* b : {&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn}) addAndMakeVisible(*b);
+        for (auto* b : {&expandAll, &collapseAll, &inspectorToggle}) addAndMakeVisible(*b);
+        expandAll.setButtonText("Expand all"); collapseAll.setButtonText("Collapse all");
+        expandAll.onClick = [this] { setAllExpanded(true); };
+        collapseAll.onClick = [this] { setAllExpanded(false); };
+        inspectorToggle.onClick = [this] {
+            rememberLayout(); inspectorVisible = !inspectorVisible;
+            rebuildInspector(); resized(); saveLayout(); canvas.repaint();
+        };
         add.setButtonText("+ Node"); undo.setButtonText("Undo"); redo.setButtonText("Redo");
         remove.setButtonText("Delete node"); bypass.setButtonText("Bypass FX");
         fit.setButtonText("Fit"); zoomOut.setButtonText("-"); zoomIn.setButtonText("+");
@@ -210,7 +331,19 @@ public:
         setSize(1280, 800);
         startTimerHz(15);
     }
-    ~RoutingPanel() override { toneViewport.setViewedComponent(nullptr, false); modulatorViewport.setViewedComponent(nullptr, false); nodeValue.setLookAndFeel(nullptr); }
+    ~RoutingPanel() override {
+        stopTimer(); nodeCards.clear();
+        cancelControlGestures(inspector);
+        if (inspectorDragging) {
+            if (creativePanel && creativePanel->onEndEdit) creativePanel->onEndEdit();
+            if (utilityPanel && utilityPanel->onEndEdit) utilityPanel->onEndEdit();
+            inspectorDragging = false;
+        }
+        toneViewport.setViewedComponent(nullptr, false);
+        modulatorViewport.setViewedComponent(nullptr, false); nodeValue.setLookAndFeel(nullptr);
+    }
+    void visibilityChanged() override { syncNodeCards(); }
+    void parentHierarchyChanged() override { syncNodeCards(); }
     // Call only after the embedded canvas has its final bounds.
     void fitIfUnpositioned() {
         const auto savedLayout = owner.getRoutingLayout();
@@ -224,7 +357,7 @@ public:
         inspectorTitle.setColour(juce::Label::textColourId, palette.text);
         inspectorInfo.setColour(juce::Label::textColourId, palette.muted);
         status.setColour(juce::Label::textColourId, error.isEmpty() ? palette.secondary : palette.accent);
-        for (auto* b : std::initializer_list<juce::TextButton*>{&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn, &disconnect, &addModulator, &assignmentBanner}) {
+        for (auto* b : std::initializer_list<juce::TextButton*>{&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn, &disconnect, &addModulator, &assignmentBanner, &expandAll, &collapseAll, &inspectorToggle}) {
             b->setColour(juce::TextButton::buttonColourId, palette.panel);
             b->setColour(juce::TextButton::buttonOnColourId, palette.accent);
             b->setColour(juce::TextButton::textColourOffId, palette.text);
@@ -244,13 +377,14 @@ public:
                 if (mixControl) mixControl->setNeon(neon);
                 modulationPanel.setNeon(neon);
         modulationui::styleRotary(nodeValue, neon);
+        for (auto& entry : nodeCards) entry.second->setNeon(neon);
         repaint(); canvas.repaint();
     }
     void paint(juce::Graphics& g) override {
         const auto palette = themePalette(*this, neon);
         g.fillAll(palette.background);
         g.setColour(palette.border);
-        g.drawVerticalLine(inspectorDivider.getBounds().getCentreX(), 46.0f, float(inspector.getBottom()));
+        if (inspectorVisible) g.drawVerticalLine(inspectorDivider.getBounds().getCentreX(), 46.0f, float(inspector.getBottom()));
         if (modulationDivider.isVisible())
             g.drawHorizontalLine(modulationDivider.getBounds().getCentreY(), float(canvas.getX()), float(canvas.getRight()));
         g.setColour(palette.muted);
@@ -263,14 +397,21 @@ public:
             const int width = b == &zoomIn || b == &zoomOut ? 30 : b == &remove ? 102 : b == &bypass ? 90 : 66;
             b->setBounds(toolbar.removeFromLeft(width)); toolbar.removeFromLeft(6);
         }
-        const int inspectorWidth = constrainedInspectorWidth(desiredInspectorWidth);
+        expandAll.setBounds(toolbar.removeFromLeft(86)); toolbar.removeFromLeft(6);
+        collapseAll.setBounds(toolbar.removeFromLeft(94));
+        inspectorToggle.setBounds(getWidth() - 44, 12, 32, 28);
+        inspectorToggle.setButtonText(inspectorVisible ? ">" : "<");
+        inspectorToggle.setTooltip(inspectorVisible ? "Hide inspector (sticky)" : "Show inspector");
+        inspector.setVisible(inspectorVisible); inspectorDivider.setVisible(inspectorVisible);
+        const int inspectorWidth = inspectorVisible ? constrainedInspectorWidth(desiredInspectorWidth) : 0;
         const int railWidth = 132;
         const int bottom = getHeight() - 40;
         const int modulationHeight = constrainedModulationHeight(desiredModulationHeight);
         const int stripTop = selectedModulator ? bottom - modulationHeight : bottom;
         const int x = getWidth() - inspectorWidth - 12;
         canvas.setBounds(railWidth + 24, 70, juce::jmax(100, x - railWidth - 44), juce::jmax(0, stripTop - 78));
-        assignmentBanner.setBounds(x, 44, inspectorWidth, 27);
+        assignmentBanner.setBounds(inspectorVisible ? x : juce::jmax(canvas.getX(), getWidth() - 360), 44,
+                                   inspectorVisible ? inspectorWidth : juce::jmin(348, canvas.getWidth()), 27);
         inspector.setBounds(x, 76, inspectorWidth, juce::jmax(0, bottom - 84));
         inspectorDivider.setBounds(x - 13, 44, 10, juce::jmax(0, bottom - 52));
         addModulator.setBounds(12, 72, railWidth, 28);
@@ -282,7 +423,7 @@ public:
         modulationDivider.setBounds(canvas.getX(), stripTop - 8, canvas.getWidth(), 8);
         modulationPanel.setBounds(canvas.getX(), stripTop, canvas.getWidth(), modulationHeight);
         status.setBounds(8, getHeight() - 33, getWidth() - 16, 28);
-        layoutInspector();
+        layoutInspector(); syncNodeCards();
     }
 public:
     // Editor bridge: -1 = Lead, 0..7 = generated voice. Does not end Assign.
@@ -395,6 +536,16 @@ private:
                 if (fx || legacyFx || mix || output) { selectedNode = n.id; selectedLink = -1; rebuildInspector(); break; }
             }
         }
+        if (!inspectorVisible) if (const auto* n = node(selectedNode); n && isExpanded(*n)) {
+            if (!canvas.getLocalBounds().toFloat().contains(cardScreenBounds(*n))) {
+                const auto b = nodeBounds(*n);
+                const auto size = bodySize(*n);
+                const auto centre = b.getTopLeft() + juce::Point<float>(8 + float(size.x) * .5f, bodyTop(*n) + float(size.y) * .5f);
+                pan = canvas.getLocalBounds().getCentre().toFloat() - centre * zoom;
+            }
+            syncNodeCards();
+            if (const auto it = nodeCards.find(n->id); it != nodeCards.end()) it->second->reveal(id);
+        }
         if (tonePanel) tonePanel->revealParameter(id);
         if (creativePanel) creativePanel->revealParameter(id);
         if (utilityPanel) utilityPanel->revealParameter(id);
@@ -403,7 +554,7 @@ private:
             for (auto* child : c.getChildren()) if (auto* match = find(*child)) return match;
             return nullptr;
         };
-        if (auto* target = find(inspector)) {
+        if (auto* target = find(inspectorVisible ? inspector : static_cast<juce::Component&>(canvas))) {
             if (auto* content = toneViewport.getViewedComponent(); content && content->isParentOf(target)) {
                 const auto bounds = content->getLocalArea(target, target->getLocalBounds());
                 toneViewport.setViewPosition(0, juce::jmax(0, bounds.getY() - 48));
@@ -412,7 +563,7 @@ private:
             juce::AttributedString text; text.append("Target: " + id, juce::Font(juce::FontOptions(12.0f)), juce::Colours::white);
             revealBubble.showAt(target, text, 1600, true, false);
         } else if (onRevealParameter) onRevealParameter(id);
-        saveLayout(); canvas.repaint();
+        saveLayout(); syncNodeCards(); canvas.repaint();
     }
     static juce::String signature(const Graph& g) {
         juce::String s;
@@ -504,7 +655,7 @@ private:
         const auto* mix = node(11); const auto* fx = node(12); const auto* out = node(13);
         if (!mix || mix->type != NodeType::mix || !mix->mainControls
             || !fx || fx->type != NodeType::chorale || !fx->mainControls
-            || effectEnabled(*fx) || !out || out->type != NodeType::output) return {-1, -1};
+            || effectEnabled(*fx) || isExpanded(*fx) || !out || out->type != NodeType::output) return {-1, -1};
         int incoming = -1, outgoing = -1, touching = 0;
         for (size_t i = 0; i < graph.links.size(); ++i) {
             const auto& l = graph.links[i];
@@ -519,6 +670,7 @@ private:
         if (n.type == NodeType::sum) return false;
         if (n.type == NodeType::voice) return voicePresent(n.voiceSlot);
         if (n.id == 12 && n.type == NodeType::chorale && n.mainControls && !effectEnabled(n)) {
+            if (isExpanded(n)) return true;
             if (foldedChain().first >= 0) return false;
             return std::any_of(graph.links.begin(), graph.links.end(), [](const auto& l) { return l.source == 12 || l.destination == 12; });
         }
@@ -570,10 +722,161 @@ private:
     int fxSlot(const RoutingNode& n) const {
         return isEffect(n.type) ? routingFxSlot(n.id) : -1;
     }
+    static void cancelControlGestures(juce::Component& component) {
+        // Post-order: hiding a slider's TextEditor may delete that child.
+        for (auto* child : component.getChildren()) cancelControlGestures(*child);
+        const bool slider = dynamic_cast<juce::Slider*>(&component) != nullptr;
+        const bool handles = dynamic_cast<toneui::EqGraph*>(&component) != nullptr
+            || component.getComponentID() == "utilityVisual";
+        if (!slider && !handles) return;
+        if (auto* control = dynamic_cast<juce::Slider*>(&component)) control->hideTextBox(true);
+        const auto now = juce::Time::getCurrentTime();
+        // No click, no modifiers, outside every plot: finish captures without
+        // creating EQ bands, clicking toggles, or changing the current value.
+        const juce::MouseEvent release{juce::Desktop::getInstance().getMainMouseSource(),
+            {-1, -1}, juce::ModifierKeys{}, 1, 0, 0, 0, 0, &component, &component,
+            now, {-1, -1}, now, 0, true};
+        component.mouseUp(release);
+    }
+    template <typename Panel>
+    void bindCardEdits(Panel& panel, int slot, bool utility, bool& editing) {
+        panel.onBeginEdit = [this, slot, utility, &editing](const juce::String& id) {
+            if (!editing) remember();
+            editing = true;
+            auto& saved = undoStates.back(); saved.parameterEdit = true;
+            if (id == fxParameterId(size_t(slot), "Mix")) saved.fxMixUndoMask |= 1u << unsigned(slot);
+            else if (utility) {
+                for (size_t field = 0; field < utilityParameterCount; ++field)
+                    if (id == utilityParameterId(size_t(slot), field)) saved.utilityUndoMasks[size_t(slot - 1)] |= std::uint64_t(1) << field;
+            } else {
+                for (size_t field = 0; field < creativeParameterCount; ++field)
+                    if (id == parameterIds[creativeParameterIndex(size_t(slot), field)]) saved.creativeUndoMasks[size_t(slot - 1)] |= std::uint64_t(1) << field;
+            }
+            inspectorDragging = true; updateButtons();
+        };
+        panel.onValueChanged = [this] { graph = owner.getRoutingGraph(); lastSignature = signature(graph); };
+        panel.onEndEdit = [this, &editing] {
+            if (!editing) return;
+            editing = false;
+            inspectorDragging = false; graph = owner.getRoutingGraph(); lastSignature = signature(graph); updateButtons();
+        };
+    }
+    bool expandable(const RoutingNode& n) const {
+        return n.type == NodeType::lead || n.type == NodeType::voice || n.type == NodeType::mix
+            || n.type == NodeType::output || (isEffect(n.type) && fxSlot(n) >= 0);
+    }
+    bool isExpanded(const RoutingNode& n) const {
+        const auto it = expanded.find(n.id);
+        return expandable(n) && it != expanded.end() && it->second;
+    }
+    float bodyTop(const RoutingNode& n) const {
+        const int rows = juce::jmax(inputs(n), outputPins(n) + (hasStoredPort(n) ? 1 : 0));
+        return float(juce::jmax(64, 40 + rows * 22) + 6);
+    }
+    juce::Point<int> bodySize(const RoutingNode& n) const {
+        if (n.type == NodeType::voice || n.type == NodeType::lead) return {400, 258};
+        if (isCreativeEffect(n.type)) return {500, 470};
+        if (isUtilityEffect(n.type)) {
+            const auto kind = utilityKind(n.type);
+            int rows = 1; // Dry / Wet plus this effect's actual parameter rows.
+            for (const auto& parameter : utilityParameters) if (parameter.kind == kind) ++rows;
+            const int visual = kind == UtilityKind::xpFilter || kind == UtilityKind::synthFilter ? 238 : kind == UtilityKind::gate ? 110 : 72;
+            return {500, juce::jmin(470, 84 + visual + rows * 48 + 32)};
+        }
+        if (isEffect(n.type) && n.type != NodeType::chorale) return {400, 430};
+        return n.type == NodeType::chorale ? juce::Point<int>(280, 146) : juce::Point<int>(190, 114);
+    }
+    juce::Rectangle<float> expansionButton(const RoutingNode& n) const {
+        const auto b = nodeBounds(n);
+        return {b.getRight() - 26, b.getY() + 3, 22, 22};
+    }
+    void rememberLayout() { remember(); undoStates.back().layoutOnly = true; }
+    void changeExpansion(const RoutingNode& n, bool value) {
+        if (!expandable(n) || isExpanded(n) == value) return;
+        (isExpanded(n) ? expandedPositions : compactPositions)[n.id] = positions[n.id];
+        expanded[n.id] = value;
+        auto& target = value ? expandedPositions : compactPositions;
+        if (target.count(n.id) == 0) {
+            // First use only: keep all existing cards fixed, move this new body
+            // down past intersecting neighbours. Stable-ID order makes bulk
+            // expansion deterministic, without a global graph rearrangement.
+            auto candidate = nodeBounds(n);
+            bool collision = true;
+            while (collision) {
+                collision = false;
+                float nextY = candidate.getY();
+                for (const auto& other : graph.nodes) if (other.id != n.id && other.type != NodeType::sum) {
+                    const auto obstacle = nodeBounds(other).expanded(12.0f);
+                    if (candidate.intersects(obstacle)) { nextY = juce::jmax(nextY, obstacle.getBottom()); collision = true; }
+                }
+                candidate.setY(nextY);
+            }
+            target[n.id] = candidate.getTopLeft();
+        }
+        positions[n.id] = target[n.id];
+    }
+    void toggleExpanded(const RoutingNode& n) {
+        rememberLayout(); changeExpansion(n, !isExpanded(n));
+        saveLayout(); syncNodeCards(); updateButtons(); canvas.repaint();
+    }
+    void setAllExpanded(bool value) {
+        bool changed = inspectorVisible != !value;
+        for (const auto& n : graph.nodes) changed |= expandable(n) && isExpanded(n) != value;
+        if (!changed) return;
+        rememberLayout();
+        std::vector<std::uint32_t> ids;
+        for (const auto& n : graph.nodes) if (expandable(n)) ids.push_back(n.id);
+        std::sort(ids.begin(), ids.end());
+        for (auto id : ids) changeExpansion(*node(id), value);
+        inspectorVisible = !value;
+        rebuildInspector(); resized(); saveLayout(); updateButtons(); canvas.repaint();
+    }
+    juce::Rectangle<float> cardScreenBounds(const RoutingNode& n) const {
+        const auto b = nodeBounds(n);
+        const auto size = bodySize(n);
+        const auto top = b.getTopLeft() + juce::Point<float>(8, bodyTop(n));
+        return {toScreen(top), toScreen(top + juce::Point<float>(float(size.x), float(size.y)))};
+    }
+    void syncNodeCards() {
+        // Geometry is independent of child lifetime. No dormant timer/monitor or
+        // response job is retained for a collapsed, hidden or offscreen body.
+        const auto view = canvas.getLocalBounds().toFloat();
+        for (auto it = nodeCards.begin(); it != nodeCards.end();) {
+            const auto* n = node(it->first);
+            bool keep = n && isExpanded(*n) && nodeVisible(*n) && isShowing() && it->second->matches(*n);
+            if (keep) keep = view.intersects(cardScreenBounds(*n));
+            // NodeCard closes captured host gestures and its edit scope before
+            // destroying attachments, including hides without a mouseUp event.
+            if (!keep) it = nodeCards.erase(it); else ++it;
+        }
+        if (!isShowing()) return;
+        for (const auto& n : graph.nodes) {
+            if (!isExpanded(n) || !nodeVisible(n)) continue;
+            const auto b = nodeBounds(n);
+            if (!view.intersects(cardScreenBounds(n))) continue;
+            auto& card = nodeCards[n.id];
+            if (!card) {
+                card = std::make_unique<NodeCard>(*this, n); canvas.addAndMakeVisible(*card); card->setNeon(neon);
+            }
+            card->refresh(n);
+            const auto size = bodySize(n);
+            card->setBounds(0, 0, size.x, size.y);
+            const auto screen = toScreen(b.getTopLeft() + juce::Point<float>(8, bodyTop(n)));
+            card->setTransform(juce::AffineTransform::scale(zoom).translated(screen.x, screen.y));
+            // ComboBox::parentHierarchyChanged recreates its internal Label.
+            // Apply this after mounting/layout, not only in the card constructor;
+            // repeat for retained cards after ancestor/theme hierarchy changes.
+            detail::passiveControl(*card);
+        }
+    }
     juce::Rectangle<float> nodeBounds(const RoutingNode& n) const {
         const auto it = positions.find(n.id);
         const auto p = it == positions.end() ? juce::Point<float>() : it->second;
         const int rows = juce::jmax(inputs(n), outputPins(n) + (hasStoredPort(n) ? 1 : 0));
+        if (isExpanded(n)) {
+            const auto size = bodySize(n);
+            return {p.x, p.y, float(size.x + 16), bodyTop(n) + float(size.y) + 8};
+        }
         return {p.x, p.y, 190.0f, float(juce::jmax(64, 40 + rows * 22))};
     }
     juce::Point<float> pinPoint(const RoutingNode& n, int pin, bool output) const {
@@ -641,6 +944,12 @@ private:
             g.setFont(juce::Font(juce::FontOptions(juce::jmax(9.0f, 11.5f * zoom))));
             g.setColour(palette.text);
             auto heading = screen.toNearestInt().reduced(8, 0).withHeight(juce::roundToInt(28 * zoom));
+            if (expandable(n)) {
+                const auto button = expansionButton(n);
+                const auto r = juce::Rectangle<float>(toScreen(button.getTopLeft()), toScreen(button.getBottomRight()));
+                g.drawText(isExpanded(n) ? "-" : "+", r, juce::Justification::centred);
+                heading = heading.withTrimmedRight(juce::roundToInt(26 * zoom));
+            }
             g.drawText(title(n), isEffect(n.type) && !effectEnabled(n) ? heading.withTrimmedRight(65) : heading,
                        juce::Justification::centredLeft);
             for (int pin = 0; pin < inputs(n); ++pin) {
@@ -707,10 +1016,13 @@ private:
                     rebuildInspector(); canvas.repaint(); return;
                 }
             }
+            if (!e.mods.isPopupMenu() && expandable(*it) && expansionButton(*it).contains(world)) {
+                toggleExpanded(*it); return;
+            }
             if (nodeBounds(*it).contains(world)) {
                 selectedNode = it->id; selectedLink = -1;
                 if (!e.mods.isPopupMenu()) {
-                    draggingNode = it->id; startNode = positions[it->id]; dragBefore = state();
+                    draggingNode = it->id; startNode = positions[it->id]; dragBefore = state(); dragBefore.layoutOnly = true;
                 }
                 rebuildInspector(); canvas.repaint();
                 if (e.mods.isPopupMenu()) showNodeMenu();
@@ -735,7 +1047,7 @@ private:
         pointer = e.position;
         if (draggingNode) positions[draggingNode] = startNode + (e.position - dragStart) / zoom;
         else if (panning) pan = startPan + e.position - dragStart;
-        canvas.repaint();
+        syncNodeCards(); canvas.repaint();
     }
     void canvasUp(const juce::MouseEvent& e) {
         const bool cableEdit = connecting != 0 || rewiringLink >= 0;
@@ -811,7 +1123,7 @@ private:
     void zoomAt(juce::Point<float> point, float factor) {
         const auto world = toWorld(point);
         zoom = juce::jlimit(0.35f, 1.8f, zoom * factor);
-        pan = point - world * zoom; saveLayout(); canvas.repaint();
+        pan = point - world * zoom; saveLayout(); syncNodeCards(); canvas.repaint();
     }
     void fitGraph() {
         juce::Rectangle<float> bounds;
@@ -819,12 +1131,13 @@ private:
         if (bounds.isEmpty()) return;
         zoom = juce::jlimit(0.35f, 1.5f, juce::jmin(float(canvas.getWidth() - 40) / bounds.getWidth(), float(canvas.getHeight() - 40) / bounds.getHeight()));
         pan = canvas.getLocalBounds().getCentre().toFloat() - bounds.getCentre() * zoom;
-        saveLayout(); canvas.repaint();
+        saveLayout(); syncNodeCards(); canvas.repaint();
     }
     juce::ValueTree layout() const {
         auto tree = owner.getRoutingLayout().createCopy();
         if (!tree.isValid()) tree = juce::ValueTree("RoutingLayout");
         for (int i = tree.getNumChildren(); --i >= 0;) if (tree.getChild(i).hasType("NODE")) tree.removeChild(i, nullptr);
+        tree.setProperty("inspectorVisible", inspectorVisible, nullptr);
         tree.setProperty("inspectorWidth", desiredInspectorWidth, nullptr);
         tree.setProperty("modulationHeight", desiredModulationHeight, nullptr);
         tree.setProperty("selectedNode", int(selectedNode), nullptr);
@@ -835,6 +1148,18 @@ private:
         for (const auto& p : positions) {
             juce::ValueTree child("NODE"); child.setProperty("id", int(p.first), nullptr);
             child.setProperty("x", p.second.x, nullptr); child.setProperty("y", p.second.y, nullptr);
+            const auto* n = node(p.first);
+            const bool open = n && isExpanded(*n);
+            child.setProperty("expanded", open, nullptr);
+            const auto writePosition = [&](const auto& saved, const char* x, const char* y, bool active) {
+                const auto it = saved.find(p.first);
+                if (active || it != saved.end()) {
+                    const auto point = active ? p.second : it->second;
+                    child.setProperty(x, point.x, nullptr); child.setProperty(y, point.y, nullptr);
+                }
+            };
+            writePosition(compactPositions, "compactX", "compactY", !open);
+            writePosition(expandedPositions, "expandedX", "expandedY", open);
                         if (const auto alias = names.find(p.first); alias != names.end()) child.setProperty("name", alias->second, nullptr);
                         tree.addChild(child, -1, nullptr);
         }
@@ -846,7 +1171,8 @@ private:
             desiredInspectorWidth = juce::jlimit(320, 480, int(tree.getProperty("inspectorWidth", 320)));
             desiredModulationHeight = juce::jlimit(160, 480, int(tree.getProperty("modulationHeight", ModulationPanel::preferredHeight)));
         }
-        positions.clear(); names.clear();
+        positions.clear(); compactPositions.clear(); expandedPositions.clear(); expanded.clear(); names.clear();
+        inspectorVisible = bool(tree.getProperty("inspectorVisible", true));
         selectedNode = uint32_t(int(tree.getProperty("selectedNode", 0)));
         selectedModulator = uint32_t(int(tree.getProperty("selectedModulator", 0)));
         const int voice = int(tree.getProperty("selectedVoiceSlot", -2));
@@ -863,10 +1189,22 @@ private:
         if (!std::isfinite(zoom)) zoom = 0.72f;
         if (!std::isfinite(pan.x) || !std::isfinite(pan.y)) pan = {20, 18};
         for (const auto& c : tree) {
+            if (!c.hasType("NODE")) continue;
             const int id = int(c.getProperty("id"));
             const float x = float(c.getProperty("x")), y = float(c.getProperty("y"));
             if (id > 0 && std::isfinite(x) && std::isfinite(y)) {
-                positions[std::uint32_t(id)] = {x, y};
+                const auto key = std::uint32_t(id);
+                expanded[key] = bool(c.getProperty("expanded", false));
+                const auto readPosition = [&](auto& saved, const char* px, const char* py) {
+                    const float sx = float(c.getProperty(px)), sy = float(c.getProperty(py));
+                    if (c.hasProperty(px) && c.hasProperty(py) && std::isfinite(sx) && std::isfinite(sy)) saved[key] = {sx, sy};
+                };
+                readPosition(compactPositions, "compactX", "compactY");
+                readPosition(expandedPositions, "expandedX", "expandedY");
+                auto& active = expanded[key] ? expandedPositions : compactPositions;
+                if (active.count(key) == 0) active[key] = {x, y};
+                if (compactPositions.count(key) == 0) compactPositions[key] = {x, y};
+                positions[key] = active[key];
                 const auto alias = c.getProperty("name").toString().trim().substring(0, 48);
                 if (alias.isNotEmpty()) names[std::uint32_t(id)] = alias;
             }
@@ -899,7 +1237,7 @@ private:
             case NodeType::output: p = {930, 30}; break;
             }
             if (n.id >= 100) p = {270.0f + float(extra % 3) * 200, 460.0f + float(extra / 3) * 100};
-            positions[n.id] = p; ++extra;
+            positions[n.id] = p; compactPositions[n.id] = p; ++extra;
         }
     }
     void saveLayout() {
@@ -950,7 +1288,14 @@ private:
         current.creativeUndoMasks = s.creativeUndoMasks;
         current.utilityUndoMasks = s.utilityUndoMasks;
         current.parameterEdit = s.parameterEdit;
+        current.layoutOnly = s.layoutOnly;
         to.push_back(current);
+        if (s.layoutOnly) {
+            // A layout snapshot must not publish, replay parameters or replace
+            // the live graph (which may have advanced through host automation).
+            loadLayout(s.layout, false); ensurePositions(); saveLayout();
+            rebuildInspector(); syncNodeCards(); updateButtons(); canvas.repaint(); return;
+        }
         if (!s.parameterEdit) {
             graph = s.graph; loadLayout(s.layout, false); selectedNode = 0; selectedLink = -1;
             if (!publish(false)) { from.push_back(s); to.pop_back(); rebuildInspector(); return; }
@@ -1029,7 +1374,7 @@ private:
         }
         lastSignature = signature(graph);
         lastPortSignature = portSignature();
-        saveLayout(); showStatus(); canvas.repaint();
+        saveLayout(); showStatus(); syncNodeCards(); canvas.repaint();
         return accepted;
     }
     void updateButtons() {
@@ -1047,7 +1392,8 @@ private:
         remember(); const auto id = selectedNode;
         graph.links.erase(std::remove_if(graph.links.begin(), graph.links.end(), [id](const auto& l) { return l.source == id || l.destination == id; }), graph.links.end());
         graph.nodes.erase(std::remove_if(graph.nodes.begin(), graph.nodes.end(), [id](const auto& item) { return item.id == id; }), graph.nodes.end());
-        positions.erase(id); names.erase(id); selectedNode = 0; selectedLink = -1; publish(); rebuildInspector();
+        positions.erase(id); compactPositions.erase(id); expandedPositions.erase(id); expanded.erase(id);
+        names.erase(id); selectedNode = 0; selectedLink = -1; publish(); rebuildInspector();
     }
     void setParameter(const juce::String& id, float value) {
         if (auto* p = owner.parameters.getParameter(id)) {
@@ -1159,7 +1505,8 @@ private:
         if (node(n.id)) return;
         if (isUtilityEffect(n.type)) n.mix = 1.0f;
         remember();
-        positions[n.id] = insertion;
+        positions[n.id] = insertion; compactPositions[n.id] = insertion;
+        expandedPositions.erase(n.id); expanded.erase(n.id);
         graph.nodes.push_back(n); selectedNode = n.id; selectedLink = -1;
         if (publish() && isEffect(n.type) && n.id >= 100 && n.id <= 114) {
             // Reset a newly allocated/reused machine only after its graph is accepted.
@@ -1201,6 +1548,10 @@ private:
                 owner.setRoutingLayout(saved); lastLayoutSignature = saved.toXmlString();
                 if (onSelectVoice) onSelectVoice(slot);
             }
+        }
+        if (!inspectorVisible) {
+            // Hidden really means dormant; selecting a node cannot reopen it.
+            updateButtons(); return;
         }
         inspectorTitle.setText(n ? title(*n) : selectedLink >= 0 ? "AUDIO CONNECTION" : "ROUTING INSPECTOR", juce::dontSendNotification);
         juce::String info = "Select a machine to edit its controls.\n\nInputs accept multiple voices with automatic merge compensation. Each output (each Multiband band) has one outgoing cable. Dragging it to another input replaces its existing links; dropping on empty space disconnects them. Saved fanout remains until that output is edited. A click without dragging leaves wiring unchanged.\n\nDrag an occupied input end to reconnect; drop it on empty space to disconnect that cable. Ctrl/Command-drag an output to move a cable's source. Wheel zooms at the cursor; Alt/middle-drag pans.\n\nAbsent voices and the untouched bypassed main Chorale are hidden without changing routing. Muted voices stay visible. Unconnected inputs receive silence; rejected edits retain accepted routing.";
@@ -1425,6 +1776,8 @@ private:
                 rebuildInspector();
             updateButtons(); canvas.repaint();
         }
+        syncNodeCards();
+        modulationui::refreshWithSelection(canvas, owner, snapshot, owner.getModulationState(), owner.modulationAssignmentId());
         if (draggingNode || connecting || rewiringLink >= 0 || inspectorDragging) return;
         auto latest = owner.getRoutingGraph();
         const auto next = signature(latest);
@@ -1442,13 +1795,20 @@ private:
             fxOn.setToggleState(on ? on->load() > 0.5f : n->enabled, juce::dontSendNotification);
         }
         validateSelection();
+        syncNodeCards();
+        const int cardTheme = int(componentTheme(*this, neon));
+        if (cardTheme != lastCardTheme) { lastCardTheme = cardTheme; setNeon(neon); }
         updateButtons();
         // Port counts and bypass come from host parameters, not serialized nodes.
         canvas.repaint();
     }
     Processor& owner;
     Graph graph;
-    std::map<std::uint32_t, juce::Point<float>> positions;
+    std::map<std::uint32_t, juce::Point<float>> positions, compactPositions, expandedPositions;
+    std::map<std::uint32_t, bool> expanded;
+    std::map<std::uint32_t, std::unique_ptr<NodeCard>> nodeCards;
+    bool inspectorVisible = true;
+    int lastCardTheme = -1;
     std::map<std::uint32_t, juce::String> names;
     float zoom = 0.72f;
     juce::Point<float> pan{20, 18}, pointer, dragStart, startPan, startNode;
@@ -1459,7 +1819,7 @@ private:
     juce::String error, lastSignature, lastLayoutSignature, lastPortSignature;
     std::vector<EditState> undoStates, redoStates;
     EditState dragBefore;
-    juce::TextButton add, undo, redo, remove, bypass, fit, zoomOut, zoomIn, disconnect;
+    juce::TextButton add, undo, redo, remove, bypass, fit, zoomOut, zoomIn, disconnect, expandAll, collapseAll, inspectorToggle;
         modulationui::Button fxOn;
     juce::Component inspector;
     InspectorDivider inspectorDivider;
