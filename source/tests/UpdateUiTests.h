@@ -137,8 +137,10 @@ inline void utilityInspectors() {
                 ui::require(slider.isDoubleClickReturnEnabled() && slider.isTextBoxEditable(), "Utility reset/numeric entry: " + id);
                 ui::near(slider.getMinimum(), d.min, "Utility UI minimum"); ui::near(slider.getMaximum(), d.max, "Utility UI maximum");
                 const auto before = ui::read(*owner, id);
-                const float y = float(slider.getHeight()) * .5f;
-                ui::drag(slider, {12.f, y}, {float(slider.getWidth()) * .55f, y});
+                const auto track = slider.getLookAndFeel().getSliderLayout(slider).sliderBounds.toFloat();
+                const auto start = track.getCentre();
+                const float direction = slider.valueToProportionOfLength(before) > .5 ? -1.f : 1.f;
+                ui::drag(slider, start, start.translated(direction * track.getWidth() * .3f, 0));
                 ui::require(ui::read(*owner, id) != before, "Utility slider drag did not edit parameter: " + id);
                 ui::near(ui::read(*owner, id), slider.getValue(), "Utility slider write: " + id);
                 write(*owner, id, parameter.convertFrom0to1(.63f));
@@ -150,7 +152,8 @@ inline void utilityInspectors() {
         constexpr std::array<int, 5> counts{1, 5, 6, 4, 5};
         ui::require(controls == counts[kind], "Utility inspector coverage count changed");
         auto& mix = ui::slider(*panel, "fx1Mix");
-        ui::drag(mix, {12.f, float(mix.getHeight()) * .5f}, {float(mix.getWidth()) * .55f, float(mix.getHeight()) * .5f});
+        const auto mixTrack = mix.getLookAndFeel().getSliderLayout(mix).sliderBounds.toFloat();
+        ui::drag(mix, mixTrack.getCentre(), mixTrack.getCentre().translated(-mixTrack.getWidth() * .3f, 0));
         ui::near(ui::read(*owner, "fx1Mix"), mix.getValue(), "Utility dry/wet binding");
         ui::require(owner->getRoutingGraph().nodes.size() == wiring, "Utility edit changed routing");
         gestures.balanced("Utility inspector"); ui::passive(*editor);
@@ -158,6 +161,37 @@ inline void utilityInspectors() {
         auto restored = std::make_unique<Processor>(); ui::require(restored->pasteSettings(state), "Utility inspector state recall");
         for (size_t field = 0; field < utilityParameterCount; ++field)
             ui::near(ui::read(*restored, utilityParameterId(1, field)), ui::read(*owner, utilityParameterId(1, field)), "Utility inspector edits lost on recall");
+    }
+}
+
+inline void halfSpeedSliders() {
+    auto owner = std::make_unique<Processor>();
+    for (int theme = 0; theme < 3; ++theme) for (int width : {110, 190, 340}) for (double skew : {1., 2.}) {
+        ParameterKnob::Style style;
+        ModulationSlider slider;
+        slider.setLookAndFeel(&style); slider.bindModulation(*owner, "fx1Mix"); inheritTheme(slider, theme);
+        slider.setSliderStyle(juce::Slider::LinearHorizontal);
+        slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 58, 21);
+        slider.setRange(0, 1); slider.setSkewFactor(skew); slider.setSize(width, 36);
+        slider.setValue(slider.proportionOfLengthToValue(.5), juce::dontSendNotification);
+        const auto track = style.getSliderLayout(slider).sliderBounds.toFloat();
+        const auto start = juce::Point<float>(track.getX() + track.getWidth() * .7f, track.getCentreY());
+        const auto end = start.translated(track.getWidth() * .2f, 0);
+        const int sensitivity = slider.getMouseDragSensitivity();
+        const bool snaps = slider.getSliderSnapsToMousePosition();
+        slider.mouseDown(ui::mouse(slider, start, start));
+        ui::near(slider.valueToProportionOfLength(slider.getValue()), .5, "Horizontal slider jumped on initial click");
+        slider.mouseDrag(ui::mouse(slider, end, start, true));
+        ui::near(slider.valueToProportionOfLength(slider.getValue()), .6, "Horizontal slider must move at half cursor speed");
+        slider.mouseUp(ui::mouse(slider, end, start, true, 0));
+        ui::require(slider.getMouseDragSensitivity() == sensitivity && slider.getSliderSnapsToMousePosition() == snaps,
+            "Horizontal drag changed subsequent rotary configuration");
+        ui::drag(slider, end, start);
+        ui::near(slider.valueToProportionOfLength(slider.getValue()), .5, "Reverse relative drag changed sensitivity");
+        slider.setDoubleClickReturnValue(true, .25);
+        ui::doubleClick(slider, start);
+        ui::near(slider.getValue(), .25, "Half-speed drag broke double-click reset");
+        ui::passive(slider); slider.setLookAndFeel(nullptr);
     }
 }
 

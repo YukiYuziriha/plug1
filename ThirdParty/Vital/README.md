@@ -86,7 +86,12 @@ no proprietary Bitwig source or assertion of Bitwig fidelity.
    and float coefficient calculations are retained where numerically important.
 2. Exact evaluation of the upstream coefficient-generating functions replaces
    the 2048-entry interpolated LUT, avoiding global initialization and framework
-   dependencies. This is not bit-exact LUT/SIMD reproduction. Standard-library
+   dependencies. As of Vocal Stack 1.7.1, unchanged coefficient frames are cached;
+   formant cutoff sweeps reuse unchanged vowel/Q/gain results while cutoff
+   coefficients still update every sample. The comb smoothing coefficient is
+   prepared once. These caches retain the original calculations, not a new LUT or
+   reduced control rate; tests compare cached/uncached output sample-for-sample.
+   This is not bit-exact LUT/SIMD reproduction. Standard-library
    MIDI/pitch math replaces SIMD lane mapping; the upstream polynomial drive
    conversion and all audible model saturation functions are retained.
 3. Only the styles listed above are exposed; this is not every Vital filter

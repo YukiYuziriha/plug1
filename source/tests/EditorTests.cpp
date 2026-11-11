@@ -732,7 +732,7 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 47> tests{{
+    const std::array<Test, 48> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -759,6 +759,7 @@ int main(int argc, char** argv) {
         }},
         {"Three-theme state, legacy migration and preset isolation", vocalstack::updateUiTests::themeState},
         {"All utility inspectors in all three themes", vocalstack::updateUiTests::utilityInspectors},
+        {"Half-speed relative sliders across sizes, skew and themes", vocalstack::updateUiTests::halfSpeedSliders},
         {"Coherent creative visual models in all three themes", vocalstack::updateUiTests::creativeVisuals},
         {"Voice 1 FX alters only Voice 1 with automatic merging", perVoiceFxSignalPath},
         {"Routing mouse edits, history, focus and both skins", routingUiRegression},

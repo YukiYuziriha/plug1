@@ -125,12 +125,16 @@ struct Frame {
     Parameters p;
     double sr=48000,g=0,r=0,drive=1,post=1,normalizer=1,feed=1,period=2,fb=0,scale=1,combG1=0,combG2=0;
     std::array<DigitalSettings,4> digital{};
+    std::array<double,4> formantHz{};
 };
-inline Frame makeFrame(double sr,Parameters p) noexcept {
+inline Frame makeFrame(double sr,Parameters p,const Frame* previous=nullptr) noexcept {
     Frame f; f.sr=sr;
     p.mode=std::clamp(p.mode,0,modeCount-1); p.cutoff=std::clamp(p.cutoff,20.,sr*.45);
     p.resonance=std::clamp(p.resonance,0.,100.); p.driveDb=std::clamp(p.driveDb,0.,24.);
     p.feedback=std::clamp(p.feedback,-95.,95.); f.p=p;
+    if(previous && previous->sr==sr && previous->p.mode==p.mode
+       && previous->p.cutoff==p.cutoff && previous->p.resonance==p.resonance
+       && previous->p.driveDb==p.driveDb && previous->p.feedback==p.feedback) return *previous;
     const double rp=p.resonance*.01,amp=driveGain(p.driveDb),dp=p.driveDb*(1.f/36.f);
     f.g=coefficient(p.cutoff/sr);
     if(p.mode<4 || p.mode==10) {
@@ -161,9 +165,20 @@ inline Frame makeFrame(double sr,Parameters p) noexcept {
     } else if(p.mode==6) {
         const double x=(p.feedback+95)/190;
         for(std::size_t i=0;i<4;++i) {
+            // A cutoff/drive move does not alter the vowel table, Q or post gains.
+            // Reuse their exact results; cutoff coefficients still update every sample.
+            if(previous && previous->sr==sr && previous->p.mode==6
+               && previous->p.feedback==p.feedback && previous->p.resonance==p.resonance) {
+                f.formantHz[i]=previous->formantHz[i];
+                f.digital[i]=previous->digital[i];
+                const double hz=std::clamp(f.formantHz[i]*p.cutoff/1000,1.,sr*.45);
+                f.digital[i].g=std::tan(3.14159265358979323846f*std::min(.499f,static_cast<float>(hz/sr)));
+                continue;
+            }
             std::array<double,3> v{};
             for(std::size_t j=0;j<3;++j) v[j]=.5*((1-x)*(vowels[0][i][j]+vowels[2][i][j])+x*(vowels[1][i][j]+vowels[3][i][j]));
-            const double hz=std::clamp(midiHz(v[2])*p.cutoff/1000,1.,sr*.45);
+            f.formantHz[i]=midiHz(v[2]);
+            const double hz=std::clamp(f.formantHz[i]*p.cutoff/1000,1.,sr*.45);
             // FormantManager uses bounds 4..30, pass_blend=1, unit drive.
             f.digital[i]=digitalSettings(sr,hz,v[1]*rp,1,v[0],2,4,30);
         }
@@ -248,12 +263,16 @@ struct Channel {
 };
 class Filter {
 public:
-    void prepare(double sr) { sr_=sr; for(auto& c:channels_)c.prepare(sr); reset(); }
-    void reset() noexcept {for(auto& c:channels_)c.reset();period_=0;}
+    void prepare(double sr) {
+        sr_=sr; periodStep_=1-std::exp(-1/(.03*sr_));
+        for(auto& c:channels_)c.prepare(sr); reset();
+    }
+    void reset() noexcept {for(auto& c:channels_)c.reset();period_=0;frameReady_=false;}
     std::array<double,2> process(double left,double right,Parameters p) noexcept {
-        Frame f=makeFrame(sr_,p);
+        frame_=makeFrame(sr_,p,frameReady_?&frame_:nullptr); frameReady_=true;
+        Frame f=frame_;
         if(period_==0)period_=f.period;
-        else period_+=(1-std::exp(-1/(.03*sr_)))*(f.period-period_);
+        else period_+=periodStep_*(f.period-period_);
         f.period=period_;
         std::array<double,2> out{{channels_[0].tick(left,f),channels_[1].tick(right,f)}};
         // Exceptional overflow recovery only. No normal-signal output limiter.
@@ -261,7 +280,9 @@ public:
         return out;
     }
 private:
-    double sr_=48000,period_=0;
+    double sr_=48000,period_=0,periodStep_=0;
+    Frame frame_{};
+    bool frameReady_=false;
     std::array<Channel,2> channels_;
 };
 }} // namespace vocalstack::vital_filter

@@ -300,9 +300,18 @@ public:
         --tailSamplesUntilUpdate;
         if (fxMonitor) fxMonitor->beginSample();
         updateRegions(controls);
+        return active->hasCrossover ? processPlan(sources, controls, active->values)
+                                    : processPlan(sources, controls, active->compactValues);
+    }
+
+private:
+    template <class Values>
+    StereoSample processPlan(const RoutingSources& sources, const RoutingControls& controls, Values& values) noexcept {
+        using Value = typename Values::value_type::value_type;
+        constexpr size_t lineageStride = std::tuple_size<decltype(Value{}.lineage)>::value / 9;
         for (int i = 0; i < active->count; ++i) {
             auto& step = active->steps[i];
-            auto& ports = active->values[i];
+            auto& ports = values[i];
             // Non-crossover plans never write ports 1/2; they stay zero from
             // plan construction. Avoid clearing three full provenance buffers.
             if (step.node.type == NodeType::crossover) ports = {};
@@ -318,12 +327,12 @@ public:
                 for (int wire = 0; wire < step.inputCount; ++wire)
                     if (step.inputPins[wire] == pin) { ++contributors; single = wire; }
                 if (contributors == 1)
-                    return active->values[step.inputs[single]][step.sourcePins[single]];
+                    return values[step.inputs[single]][step.sourcePins[single]];
                 if (contributors == 0) return {};
                 Value merged{};
                 for (int wire = 0; wire < step.inputCount; ++wire) {
                     if (step.inputPins[wire] != pin) continue;
-                    const auto& incoming = active->values[step.inputs[wire]][step.sourcePins[wire]];
+                    const auto& incoming = values[step.inputs[wire]][step.sourcePins[wire]];
                     for (size_t s = 0; s < merged.lineage.size(); ++s) merged.lineage[s] += incoming.lineage[s];
                 }
                 const float budget = n.type == NodeType::mix && n.mainControls && pin == 1 ? 2.0f : 1.0f;
@@ -331,18 +340,18 @@ public:
                 for (int region = 0; region < active->regions; ++region) {
                     float power = 0;
                     for (int s = 0; s < 9; ++s) {
-                        const float x = merged.lineage[s * regionCount + region]; power += x*x;
+                        const float x = merged.lineage[s * lineageStride + region]; power += x*x;
                     }
                     scales[region] = contributors > 1 ? std::sqrt(budget / std::max(budget, power)) : 1;
                 }
                 merged = {};
                 for (int wire = 0; wire < step.inputCount; ++wire) {
                     if (step.inputPins[wire] != pin) continue;
-                    const auto& incoming = active->values[step.inputs[wire]][step.sourcePins[wire]];
+                    const auto& incoming = values[step.inputs[wire]][step.sourcePins[wire]];
                     float scale = 1;
                     for (int region = 0; region < active->regions; ++region)
                         for (int s = 0; s < 9; ++s)
-                            if (incoming.lineage[s * regionCount + region] != 0)
+                            if (incoming.lineage[s * lineageStride + region] != 0)
                                 scale = std::min(scale, scales[region]);
                     merged.audio.left += incoming.audio.left * scale;
                     merged.audio.right += incoming.audio.right * scale;
@@ -358,7 +367,7 @@ public:
             case NodeType::voice:
                 value.audio = sources.voices[n.voiceSlot];
                 for (int r = 0; r < active->regions; ++r)
-                    value.lineage[(n.voiceSlot + 1) * regionCount + r] = std::sqrt(unit(sources.activity[n.voiceSlot], 0));
+                    value.lineage[(n.voiceSlot + 1) * lineageStride + r] = std::sqrt(unit(sources.activity[n.voiceSlot], 0));
                 break;
             case NodeType::sum: {
                 for (int pin = 0; pin < maxInputs; ++pin) {
@@ -369,7 +378,7 @@ public:
                 float power = 0;
                 for (int r = 0; r < active->regions; ++r) {
                     float p = 0;
-                    for (int s = 0; s < 9; ++s) { const auto x = value.lineage[s * regionCount + r]; p += x*x; }
+                    for (int s = 0; s < 9; ++s) { const auto x = value.lineage[s * lineageStride + r]; p += x*x; }
                     power = std::max(power, p);
                 }
                 const float scale = std::sqrt(n.referencePower / std::max(n.referencePower, power));
@@ -442,7 +451,7 @@ public:
                         const double f = active->boundaries[r];
                         const int band = f < lo ? 0 : fx.bandCount == 2 ? 1 : f < hi ? 1 : 2;
                         if (band == port) for (int s = 0; s < 9; ++s)
-                            ports[port].lineage[s * regionCount + r] = in.lineage[s * regionCount + r];
+                            ports[port].lineage[s * lineageStride + r] = in.lineage[s * lineageStride + r];
                     }
                 }
                 break;
@@ -498,7 +507,7 @@ public:
                     monitorOutput.left, monitorOutput.right, monitorBands, bands);
             }
         }
-        auto out = active->values[active->output][0].audio;
+        auto out = values[active->output][0].audio;
         // A short output-offset ramp removes the splice discontinuity without
         // rendering the old graph (which would double-clock shared machines).
         // This is de-clicking, not an old/new spectral crossfade.
@@ -516,7 +525,9 @@ private:
     // At most two boundaries per crossover. Complementary bands partition the
     // source's lineage; duplicated same-band paths overlap and are compensated.
     static constexpr int regionCount = maxEffects * 2 + 1;
-    struct Value { StereoSample audio; std::array<float, 9 * regionCount> lineage{}; };
+    template <int Regions>
+    struct RoutedValue { StereoSample audio; std::array<float, 9 * Regions> lineage{}; };
+    using Value = RoutedValue<regionCount>;
     struct Machine {
         explicit Machine(NodeType t) : type(t) {}
         void prepare(double sr) {
@@ -569,6 +580,9 @@ private:
     struct Plan {
         std::array<Step, maxNodes> steps;
         std::array<std::array<Value, 3>, maxNodes> values{};
+        // Full-band graphs need nine source weights, not all 33 frequency regions.
+        // Keep the established multiband path unchanged when a splitter is present.
+        std::array<std::array<RoutedValue<1>, 3>, maxNodes> compactValues{};
         std::array<double, regionCount> boundaries{};
         int regions = 1, count = 0, output = 0;
         std::array<double, maxNodes> pathTails{};

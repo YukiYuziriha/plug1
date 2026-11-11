@@ -1,9 +1,13 @@
-# Vocal Stack 1.7.0
+# Vocal Stack 1.7.1
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-1.7.0 adds **Gain, Stereo Utility, Gate/Expander, XP Filter and Synth Filter**,
+1.7.1 reduces routing/DSP overhead without lowering quality settings and makes
+horizontal sliders use half-speed relative dragging. Paired heavy-patch benchmarks
+show approximately 23–25% less CPU on this development machine; details below.
+
+1.7.0 added **Gain, Stereo Utility, Gate/Expander, XP Filter and Synth Filter**,
 reverb **pitched feedback / shimmer and wet swell**, themed effect visualizations,
 and a third **Spectral** skin alongside the flattened Neon skin. Synth Filter uses
 actual GPL-covered, upstream-derived filter equations—not category stand-ins.
@@ -96,6 +100,11 @@ Stack cards use four rows of two horizontal sliders in narrower, unchanged-heigh
 cards. Selecting a Lead/Voice node opens the same parameters as larger two-row
 rotary controls on the right. Selection follows between views. Numeric entry, double-click
 reset, and modifier fine adjustment remain available without stealing idle DAW keys.
+Horizontal sliders use relative dragging at half cursor speed: moving across one
+track width changes half the displayed range (in slider/skew space), independent of
+track width. Initial track clicks no longer jump the value. Repeated drags can reach
+the full range; numeric entry and double-click reset are unchanged. Rotary knobs
+and modulation-depth assignment gestures retain their previous sensitivity.
 
 ### Mix and Leveler
 
@@ -573,7 +582,7 @@ ctest --test-dir build -C Release -E '^VocalStackDSP$' --output-on-failure
 
 The 19 focused suites cover routing/voices, tone/creative/utility DSP and tails,
 automation/modulation, pitch/formant, CLAP hosting and editor/preset/state behavior.
-The long legacy `VocalStackDSP` suite is separate; it also passed for 1.7.0. `-DVOCALSTACK_TEST_BASELINE=ON` enables the optional pinned-history comparison;
+The long legacy `VocalStackDSP` suite is separate; it also passed for 1.7.1. `-DVOCALSTACK_TEST_BASELINE=ON` enables the optional pinned-history comparison;
 it requires Python and the pinned pre-routing revision in local Git history.
 Plugins appear under `build/VocalStack_artefacts/Release/`. To build just portable
 DSP tests, configure with `-DVOCALSTACK_BUILD_PLUGIN=OFF`.
@@ -623,9 +632,9 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
-**1.7.0:** Release CLAP/VST3 builds and all **19 focused CTest suites passed**,
-including **47 editor/state groups plus creative/utility integration cases**.
-The separate legacy DSP suite also passed (160.5 s). Fifteen real-editor captures
+**1.7.1:** Release CLAP/VST3 builds and all **19 focused CTest suites passed**,
+including **48 editor/state groups plus creative/utility integration cases**.
+The separate legacy DSP suite also passed (81.0 s). Fifteen real-editor captures
 cover Stack, XP, Synth, Reverb and Waveshaper across all three themes. Coverage
 includes upstream-class reference comparisons, sample rates, automation, state,
 finite output, zero process allocations, freeze/tails, graph gestures and presets.
@@ -633,20 +642,63 @@ Tracked CLAP/VST3 packages are SHA256-matched to Release artifacts, with package
 CLAP smoke validation. No installation or actual Bitwig listening/transport check
 was performed.
 
-Informational Release stress measurements on this development machine (stereo,
-137-sample blocks, two audio seconds): eight pitched voices plus ten serial FX
-including pitched reverb/swell and a formant filter, four modulators, took about
-**555 ms/audio second at 48 kHz** and **1138 ms at 96 kHz**. Observed maximum block
-times were 3.09/4.71 ms; these are wall-clock observations, not deadline guarantees.
-The extreme 96 kHz patch exceeded real time. Reduce voices/effects or use 48 kHz;
-large buffers help scheduling but cannot fix sustained CPU overload. The older
-15×4x-wavefolder stress patch also exceeded real time (1430 ms/audio second).
-Ordinary stereo DSP measured 15.6% of real time in the separate legacy run.
-No claim of universally safe real-time performance is made.
+### Performance update: 1.7.0 → 1.7.1
+
+- Full-band routing carries nine source weights instead of the maximum 297-band
+  provenance entries per node. Graphs with a crossover retain the established
+  multiband compensation path; no fan-in normalization or audio quality changes.
+- Harmony FFT caches the original float twiddle recurrence and bit-reversal map
+  during prepare rather than rebuilding them on every transform. FFT/window/hop
+  sizes, arithmetic path, phase processing and latency are unchanged.
+- Synth filters cache unchanged coefficient frames; formant cutoff sweeps reuse
+  unchanged vowel frequencies, Q and gains. Cutoff coefficients still update each
+  sample. The comb smoothing coefficient moves to prepare. No LUT approximation,
+  reduced control rate, oversampling change or grain/tail reduction was introduced.
+
+Paired Release measurements on this development machine, median of three runs
+per version, alternating run order with no concurrent builds/test jobs:
+
+| Benchmark | 1.7.0 ms/audio second | 1.7.1 ms/audio second |
+| --- | ---: | ---: |
+| Full patch: 8 pitched voices + 10 serial FX + 4 modulators, 48 kHz | 548.4 | 419.9 |
+| Same full patch, 96 kHz | 1142.9 | 860.9 |
+| Routing alone: default graph, 48 kHz | 98.6 | 15.2 |
+| Routing alone: 10 FX, 48 kHz | 206.5 | 89.6 |
+| One automated formant filter, 48 kHz | 13.9 | 10.8 |
+| One automated harmony shifter, 96 kHz | 64.3 | 59.7 |
+
+The full patch uses stereo/137-sample blocks, two audio seconds, pitched reverb,
+wet swell and formant filtering. It uses approximately **23–25% less CPU** in these
+runs. The 96 kHz patch is below real time on average, but observed maximum blocks
+still reached 4.19 ms versus a 1.43 ms block budget: **not a glitch-free guarantee**.
+The extreme 15×4x-wavefolder patch still exceeds real time (~1301 ms/audio second).
+Ordinary stereo DSP measured 8.1% of real time in the separate legacy run.
+
+A separate capture compared **14,400,000 float samples bit-for-bit** with the
+pre-optimization DSP from commit `b3b230a`, covering 48/96 kHz, static/automated
+controls, all 13 synth modes, utilities, creative effects, harmony and routing.
+Both captures had SHA256
+`927cf35e56860ee2e4331a7ba5b98b50b9e29f4497d56f672bb760305967842f`.
+This is evidence for the tested cases, not a claim of exhaustive input coverage.
+An additional test compares cached/uncached filter frames sample-for-sample during
+independent cutoff, resonance, drive, morph, mode and reset changes.
+
+Reproduce isolated module measurements separately from CTest:
+
+```powershell
+cmake --build build --config Release --target vocalstack_effects_benchmark
+.\build\Release\vocalstack_effects_benchmark.exe
+```
+
+With Ninja, the executable is directly in `build/`. Pass an output filename to
+capture untimed float32 stereo samples after each scenario. Module timings use the
+best of three one-second passes; the table uses medians across three paired runs.
+The processor stress timings are printed by `VocalStackModulationProcessorTests`.
+Measurements are machine-dependent and are not hard real-time guarantees.
 
 ### Historical verification
 
-The records below describe earlier releases, not v1.7.0 installation or packaging.
+The records below describe earlier releases, not v1.7.1 installation or packaging.
 
 **1.5.2:** Release CLAP/VST3 builds and all **16 focused CTest suites passed**,
 including **40 editor/state groups**. New checks cover the compact LFO grid,

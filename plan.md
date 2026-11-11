@@ -1,6 +1,6 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.7.0
+## Current status — 1.7.1
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
@@ -26,8 +26,50 @@ list. When requirements conflict, the latest release record takes precedence.
   stand-ins or a claim of bit-exact full-synth parity. GPL attribution retained.
 - [x] Themed reverb/delay/granular/compressor/crusher models and waveshaper graphics.
 - [x] Flattened Neon surfaces (knobs retained), third charcoal/lavender Spectral theme.
-- [x] Release CLAP/VST3 packages, 19 focused suites, 47 editor groups, legacy DSP
-  suite, actual three-theme screenshots and CPU stress measurements for 1.7.0.
+- [x] Release CLAP/VST3 packages, 19 focused suites, 48 editor groups, legacy DSP
+  suite, actual three-theme screenshots and paired CPU measurements for 1.7.1.
+- [x] Half-speed relative horizontal sliders, no initial jump; unchanged rotary
+  sensitivity, numeric entry, reset and modulation-depth assignment gestures.
+- [x] Compact full-band routing provenance, cached FFT tables and exact filter
+  coefficients; no reduced quality settings. 14.4 million captured floats matched
+  the pre-optimization DSP bit-for-bit across the benchmark scenarios.
+
+### Next UI proposal — expandable routing nodes (not implemented)
+
+Finish and validate the performance/half-speed-slider update first. Then review
+this user-proposed workflow separately; this list records requested behavior,
+not a claim that the UI is already delivered.
+
+- [ ] Right inspector has a small hide arrow and an always-reachable unhide button.
+  Hidden is an explicit sticky state: choosing another node must NOT reopen it.
+- [ ] Top toolbar **Expand all nodes** opens in-node controls on all expandable
+  nodes and hides the right inspector. **Collapse all nodes** returns to compact
+  control-free cards and unhides the inspector.
+- [ ] Every expandable node has its own expand/collapse button; mixed states are
+  supported. Expanding a node presents its actual controls/visuals, not duplicates
+  of DSP state. Source/output nodes need a defined compact set of relevant controls.
+- [ ] Expansion adjusts node positions to prevent overlapping cards. Preserve the
+  existing compact arrangement so collapse restores it, except for nodes explicitly
+  moved while expanded (exact mapping needs agreement before implementation).
+- [ ] Keep cables attached, port hit targets usable, pan/zoom predictable, DAW keys
+  passive and parameter gestures/automation/modulation unchanged. UI layout edits
+  must never rebuild or republish the audio topology.
+- Reuse existing control/visual components and avoid background timers/FFT jobs
+  for off-screen or collapsed cards; profile expanded large patches as well.
+  Use a shared bounded response-render budget rather than a worker per expanded
+  filter, and prioritize visible controls while dragging.
+
+Recommended additions / decisions to review after optimization:
+
+- Keep independent compact/expanded positions keyed by stable node IDs; move each
+  deliberately, rather than projecting a large-card drag into compact coordinates.
+- Expansion packing should be deterministic and local, not a new whole-graph
+  rearrangement on every edit. Expansion/collapse should be one layout Undo step.
+- Define whether manually expanding one node hides the inspector; recommended:
+  only **Expand all** changes visibility automatically, individual toggles do not.
+- Make inspector visibility, node expansion states and both position sets persist
+  in the instance layout, separate from audio settings. Explicit **Collapse all**
+  unhides the inspector as requested, even if it was manually hidden before.
 
 ### Implementation boundaries
 
@@ -49,13 +91,14 @@ cache/interpolate FFT bins, and are approximate for nonlinear/moving-delay model
 - [ ] Exercise Bitwig transport, tempo changes, automation and session recall.
 - [x] Profile populated new-effect patches: eight pitched voices, ten serial FX
   including pitched reverb/swell/formant, four modulators, stereo/137 frames.
-  Release measured approximately 555/1138 ms per audio second at 48/96 kHz on this
-  machine; maximum observed blocks 3.09/4.71 ms. The extreme 96 kHz patch exceeds
-  real time. This is a documented capacity limit, not a universal CPU guarantee.
-- [ ] Install 1.7.0 only when requested and while plugin binaries are unlocked.
+  Paired Release medians changed from 548/1143 to 420/861 ms per audio second
+  at 48/96 kHz on this machine (~23–25% less CPU). Average 96 kHz throughput is now
+  below real time, but maximum observed blocks still missed 137-sample deadlines.
+  This is not a universal CPU/glitch-free guarantee; see README for methodology.
+- [ ] Install 1.7.1 only when requested and while plugin binaries are unlocked.
 
-All 19 focused suites (47 editor groups), the separate legacy `VocalStackDSP`
-suite and packaged CLAP smoke passed for 1.7.0. Fifteen actual editor screenshots
+All 19 focused suites (48 editor groups), the separate legacy `VocalStackDSP`
+suite and packaged CLAP smoke passed for 1.7.1. Fifteen actual editor screenshots
 cover five views in all three themes. Actual Bitwig listening/transport checks
 remain unperformed; no installation was performed.
 
@@ -78,6 +121,22 @@ remain unperformed; no installation was performed.
 
 These records retain the implementation and validation details of each release.
 They are not pending checklists; later records supersede earlier design choices.
+
+### 1.7.1 — performance and precise slider dragging
+
+- Optimized full-band routing provenance while retaining the existing multiband
+  compensation path. Cached harmony FFT tables and unchanged filter coefficients.
+- No FFT-size, hop-size, oversampling, control-rate or grain/tail quality reduction.
+  14.4 million captured float samples matched pre-optimization output bit-for-bit;
+  cache/uncached automation equivalence and realtime safety tests passed.
+- Heavy full-patch paired Release medians: 548→420 ms/audio second at 48 kHz,
+  1143→861 at 96 kHz. Average throughput improved ~23–25%; small-block deadlines
+  remain a concern. Extreme 15×4x waveshaper stress remains over real time.
+- Horizontal sliders drag at half cursor speed relative to the initial value;
+  no track-click jump, with full-range numeric entry/reset and unchanged knobs.
+- 19 focused suites, 48 editor groups and separate legacy DSP passed. Refreshed
+  CLAP/VST3 packages; no installation or Bitwig listening/transport test claimed.
+- Recorded expandable-node proposal above; layout work is not implemented here.
 
 ### 1.7.0 — character filters, utilities, shimmer and themed models
 

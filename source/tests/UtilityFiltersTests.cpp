@@ -265,6 +265,34 @@ void upstreamComparison() {
     std::cout<<"Vital upstream class comparisons: "<<comparisons<<", worst relative RMS="<<worstRelative
              <<", worst absolute error="<<worstAbsolute<<'\n';
 }
+void cachedFrames() {
+    for (double sr : {8000., 48000., 192000.}) {
+        vital_filter::Filter optimized; optimized.prepare(sr);
+        std::array<vital_filter::Channel, 2> reference;
+        for (auto& channel : reference) channel.prepare(sr);
+        double period = 0;
+        for (int i = 0; i < 24000; ++i) {
+            const int mode = (i / 300) % vital_filter::modeCount;
+            const double cutoff = (i % 7 == 0) ? 1200. : 1200. + (i % 131) * .25;
+            const double resonance = (i / 151) % 4 * 15.;
+            const double drive = (i / 173) % 3 * 6.;
+            const double feedback = -70 + (i / 191) % 20;
+            const vital_filter::Parameters p{mode, cutoff, resonance, drive, feedback};
+            auto frame = vital_filter::makeFrame(sr, p);
+            if (period == 0) period = frame.period;
+            else period += (1 - std::exp(-1 / (.03 * sr))) * (frame.period - period);
+            frame.period = period;
+            const double left = .07 * std::sin(i * .173), right = .13 * std::cos(i * .113);
+            const auto actual = optimized.process(left, right, p);
+            check(actual[0] == reference[0].tick(left, frame) && actual[1] == reference[1].tick(right, frame),
+                "Coefficient cache changed sample output during independent parameter automation");
+            if (i % 4093 == 0) {
+                optimized.reset(); for (auto& channel : reference) channel.reset(); period = 0;
+            }
+        }
+    }
+}
+
 void safetyAndRealtime() {
     const float nan=std::numeric_limits<float>::quiet_NaN();
     for (double sr : {8000.,44100.,48000.,96000.,192000.,384000.,0.,std::numeric_limits<double>::infinity()}) {
@@ -315,7 +343,7 @@ void safetyAndRealtime() {
 } // namespace
 int main() {
     try {
-        descriptors(); gainStereo(); gate(); upstreamComparison(); responses(); safetyAndRealtime();
+        descriptors(); gainStereo(); gate(); upstreamComparison(); responses(); cachedFrames(); safetyAndRealtime();
         std::cout << "UtilityFilters: all tests passed (including response DFT and zero audio allocations/frees)\n";
         return 0;
     } catch (const std::exception& e) {

@@ -33,6 +33,23 @@ public:
         mappedFrequency.resize(size / 2 + 1); window.resize(size);
         for (int i = 0; i < size; ++i) window[i] = 0.5f - 0.5f * std::cos(tau * i / size);
         envelopeRadius = std::max(2, int(std::min(double(size / 2), 350.0 * size / sampleRate)));
+        bitReversal.resize(size);
+        for (int i = 1, j = 0; i < size; ++i) {
+            int bit = size >> 1;
+            for (; j & bit; bit >>= 1) j ^= bit;
+            j ^= bit; bitReversal[i] = j;
+        }
+        for (int inverse = 0; inverse < 2; ++inverse) {
+            auto& rotations = fftRotations[size_t(inverse)]; rotations.resize(size - 1);
+            for (int length = 2; length <= size; length *= 2) {
+                const auto step = std::polar(1.0f, (inverse ? tau : -tau) / length);
+                std::complex<float> rotation{1, 0};
+                for (int j = 0; j < length / 2; ++j) {
+                    rotations[size_t(length / 2 - 1 + j)] = rotation;
+                    rotation *= step;
+                }
+            }
+        }
         reset();
     }
     void reset() noexcept {
@@ -78,20 +95,16 @@ public:
 private:
     static constexpr float tau = 6.2831853071795864769f;
     void fft(std::vector<std::complex<float>>& x, bool inverse) noexcept {
-        for (int i = 1, j = 0; i < size; ++i) {
-            int bit = size >> 1;
-            for (; j & bit; bit >>= 1) j ^= bit;
-            j ^= bit;
-            if (i < j) std::swap(x[i], x[j]);
-        }
+        for (int i = 1; i < size; ++i)
+            if (i < bitReversal[i]) std::swap(x[i], x[bitReversal[i]]);
+        // Cache the original float recurrence, not a different FFT approximation.
+        const auto& rotations = fftRotations[size_t(inverse)];
         for (int length = 2; length <= size; length *= 2) {
-            const auto step = std::polar(1.0f, (inverse ? tau : -tau) / length);
             for (int start = 0; start < size; start += length) {
-                std::complex<float> rotation{1, 0};
                 for (int j = 0; j < length / 2; ++j) {
-                    const auto a = x[start + j], b = x[start + j + length / 2] * rotation;
+                    const auto a = x[start + j];
+                    const auto b = x[start + j + length / 2] * rotations[size_t(length / 2 - 1 + j)];
                     x[start + j] = a + b; x[start + j + length / 2] = a - b;
-                    rotation *= step;
                 }
             }
         }
@@ -177,5 +190,7 @@ private:
     std::vector<float> input, overlap, delay, lowDelay, window, previousPhase, phase;
     std::vector<float> magnitude, frequency, envelope, mappedMagnitude, mappedFrequency;
     std::vector<std::complex<float>> spectrum, output;
+    std::vector<int> bitReversal;
+    std::array<std::vector<std::complex<float>>, 2> fftRotations;
 };
 } // namespace vocalstack

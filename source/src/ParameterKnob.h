@@ -67,6 +67,14 @@ public:
                 if (a.modulatorId == dragAssignment && a.targetParameterId == id) { dragDepth = a.depth; break; }
             return;
         }
+        if (getSliderStyle() == juce::Slider::LinearHorizontal && !e.mods.isPopupMenu()) {
+            previousDragSensitivity = getMouseDragSensitivity();
+            previousSnapToMouse = getSliderSnapsToMousePosition();
+            const int trackWidth = getLookAndFeel().getSliderLayout(*this).sliderBounds.getWidth();
+            // Relative travel stays half-speed even on narrow cards or resized inspectors.
+            setSliderSnapsToMousePosition(false);
+            setMouseDragSensitivity(juce::jmax(2, trackWidth * 2));
+        }
         juce::Slider::mouseDown(e);
     }
     void mouseDrag(const juce::MouseEvent& e) override {
@@ -83,6 +91,11 @@ public:
     void mouseUp(const juce::MouseEvent& e) override {
         if (dragAssignment != 0) { dragAssignment = 0; return; }
         juce::Slider::mouseUp(e);
+        if (previousDragSensitivity > 0) {
+            setMouseDragSensitivity(previousDragSensitivity);
+            setSliderSnapsToMousePosition(previousSnapToMouse);
+            previousDragSensitivity = 0;
+        }
     }
     void mouseDoubleClick(const juce::MouseEvent& e) override {
         if (!owner || owner->modulationAssignmentId() == 0) juce::Slider::mouseDoubleClick(e);
@@ -149,6 +162,8 @@ private:
     uint32_t assignment = 0, dragAssignment = 0;
     float depth = 0, dragDepth = 0, effective = 0;
     bool bipolar = true, hasEffective = false;
+    int previousDragSensitivity = 0;
+    bool previousSnapToMouse = true;
 };
 
 class ParameterKnob final : public juce::Component {
