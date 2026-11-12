@@ -3,7 +3,8 @@
 ## Status and evidence boundary
 
 **Release build, focused tests, package refresh, packaged CLAP smoke and both
-per-user installations are complete; commit/push remain pending.** After the final
+per-user installations are complete; release commit `5468939` is pushed to
+`origin/main`.** After the final
 rack-owned `PanelStyle` fix, the coordinator reports a successful full Release
 build and all **34 focused CTests passed in 176.42 s**, including **67 editor groups
 and rack UI**. Independent static review found no blockers. Image review confirmed
@@ -76,6 +77,6 @@ VST3 reported Installed and SHA256 verified**.
 - [x] Refresh tracked Release CLAP/VST3 packages and record SHA256 identities.
 - [x] Run packaged CLAP smoke.
 - [x] Install both per-user formats and verify SHA256.
-- [ ] Commit and push the validated release with current packages.
+- [x] Commit and push the validated release with current packages: `5468939`.
 - [ ] Actual Bitwig visual/listening, transport, automation/session recall and
   native FPS checks; automated passes are not host approval.

@@ -3,8 +3,7 @@
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.3 is built, validated, packaged and installed** (coordinator-reported);
-**commit/push remain pending**. Main Bus FX use real Routing-node tabs with one
+**1.9.3 is built, validated, packaged, installed and pushed** (`5468939`). Main Bus FX use real Routing-node tabs with one
 full-width selected editor, retained instances and responsive compact controls.
 No audio DSP or host parameters change. After the final rack `PanelStyle` fix,
 the full Release build succeeded and **34 focused CTests passed in 176.42 s**,
@@ -800,7 +799,7 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
-**1.9.3 — built, validated, packaged and installed (coordinator-reported):** after
+**1.9.3 — built, validated, packaged, installed and pushed:** after
 the rack-owned `PanelStyle` fix, the full Release build succeeded and all **34
 focused CTests passed in 176.42 s**, including **67 editor groups and rack UI**.
 Independent static review found no blockers. Reviewed images cover rack Reverb
@@ -813,8 +812,8 @@ mono-to-stereo at **44.1 kHz**, and **1344-sample latency**. Both per-user forma
 reported **Installed and SHA256 verified** via `source/build/install-release.ps1`.
 Hashes and the concise initial test-correction history are in the
 [1.9.3 record](docs/Release-1.9.3-Validation.md). The long legacy DSP suite was not
-rerun; actual host checks remain unverified. **Commit/push remain pending.**
-This documentation-only pass ran no build or tests.
+rerun; actual host checks remain unverified. Release commit `5468939` is pushed
+to `origin/main` with matching packaged binaries.
 
 ### Historical 1.9.2 verification
 

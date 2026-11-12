@@ -1,6 +1,6 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.3 built, validated, packaged and installed; push pending
+## Current status — 1.9.3 built, validated, packaged, installed and pushed
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
@@ -38,13 +38,13 @@ UI-only scope: no audio DSP, host parameter IDs/counts, ranges or defaults chang
   at original indices, stereo 48 kHz, mono-to-stereo 44.1 kHz and latency 1344 samples.
 - [x] Run `source/build/install-release.ps1`: both per-user CLAP and VST3 reported
   **Installed and SHA256 verified**.
-- [ ] Complete release commit/push after final validation and package refresh.
+- [x] Commit and push source and matching packages: `5468939` on `origin/main`.
 - [ ] Actual Bitwig visual/listening/transport/automation/recall and native FPS checks.
 
 See [Release 1.9.3 validation](docs/Release-1.9.3-Validation.md) for evidence
 and package hashes. The long legacy DSP suite was not rerun; actual host checks remain
 unverified. **1.9.3 is now installed; 1.9.2's record remains historical and does not
-validate 1.9.3.** Commit/push remain for the coordinator.
+validate 1.9.3.** Release commit `5468939` is pushed to `origin/main`.
 
 ### Historical 1.9.2 — parameter graph restored; validated and installed
 
