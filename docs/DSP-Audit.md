@@ -3,8 +3,9 @@
 ## Scope and delivery status
 
 **1.9.0 is built, packaged and validated: all 34 focused CTests passed in
-146.69 s. Installation is blocked; actual Bitwig checks remain open.**
-This engineering record does not certify installation or subjective sonic quality. The original DSP audit changed `source/src/CreativeEffects.h` and
+146.69 s. Installation is complete; actual Bitwig checks remain open.**
+Installation is coordinator-reported and SHA256-verified; this engineering record
+does not certify subjective sonic quality. The original DSP audit changed `source/src/CreativeEffects.h` and
 added standalone tests/measurements. The current combined implementation also
 includes routing/modulation corrections, Splitter, rotary controls with the Stack
 slider pointer fix, the same-node Main Bus FX rack and shared Routing undo bridge,
@@ -13,9 +14,10 @@ and end-to-end actual granular snapshot publication/rendering.
 Standalone results below retain their original scope. Final Release CLAP/VST3
 builds and 34 focused CTests passed (eight factory shards, 63 editor groups), plus
 separate legacy DSP in 81.8347 s. Tracked packages match Release artifacts by
-SHA256; packaged CLAP smoke passed. Installation was blocked by a locked installed
-CLAP: no installed files changed, so 1.8.0 remains installed. Actual Bitwig
-listening/transport is unperformed; no commit/push completion is claimed.
+SHA256; packaged CLAP smoke passed. After the user closed Bitwig, the coordinator
+reran `source/build/install-release.ps1`; both per-user CLAP and VST3 reported
+Installed and SHA256 verified. Actual Bitwig listening/transport is unperformed.
+Release commit `531045b` is pushed to `origin/main`.
 
 Decisions: **repair** the existing reverb's output calibration and granular
 history boundaries; **keep** their algorithms and existing normalization; repair
@@ -502,9 +504,8 @@ message-thread timings are not audio CPU or a real-time guarantee.
 **Packaging complete:** Release artifacts copied to tracked CLAP/VST3 packages
 and SHA256-matched; packaged CLAP smoke passed 2087 parameters, mono/stereo
 latency, bypass and automation. Exact package hashes are in the release record.
-**Install attempt blocked:** installed CLAP locked by another process; no installed
-files changed and **1.8.0 remains installed**. Retry when unlocked, never by
-terminating Bitwig. **Actual Bitwig listening/transport, automation, recall and
-sustained playback/dropout checks remain unperformed.** No commit/push completion
-or commit hash is claimed. This documentation update ran no builds/tests, changed
-no packages and made no commit or push.
+**Installation complete:** after the user closed Bitwig, the coordinator reran
+`source/build/install-release.ps1`; both per-user CLAP and VST3 reported
+**Installed** and **SHA256 verified**. Release commit `531045b` is pushed to
+`origin/main`. **Actual Bitwig listening/transport, automation, recall and
+sustained playback/dropout checks remain unperformed.**

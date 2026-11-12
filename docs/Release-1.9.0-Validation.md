@@ -40,16 +40,20 @@ Final coordinator-reported integration results:
 | `Windows-x64/CLAP/Vocal Stack.clap` | `f84f10ddb689ffe30322a04894875514ab77b4996ab2e27de0107730ca4aba1a` |
 | `Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3` | `37d9f1e13eda36b1ff1fa24a26a09993c4e420f3d42964b231fa1c54c25d08ac` |
 
-**Install attempt BLOCKED:** the installed CLAP was locked by another process.
-**No installed files changed; 1.8.0 remains installed.** These hashes identify
-tracked packages/Release artifacts, not successfully installed 1.9.0 binaries.
-Retry installation only after the locking process releases the plugin; never
+**Initial install attempt (historical):** the installed CLAP was locked by
+another process. That attempt changed no installed files and left 1.8.0 installed.
+
+**Installation retry COMPLETE:** after the user closed Bitwig, the coordinator
+reran `source/build/install-release.ps1` and observed both per-user CLAP and VST3
+report **Installed** and **SHA256 verified**. Version 1.9.0 is now installed in
+both per-user formats; the package/Release hashes above are unchanged. Never
 terminate Bitwig or overwrite a loaded plugin to force an update.
 
+Release commit `531045b` is pushed to `origin/main`.
+
 **Still unchecked:** actual Bitwig listening/transport, host automation/session
-recall and sustained playback/dropouts, plus install retry. Packaged smoke is not
-an actual Bitwig session. Commit/push is coordinator-owned and about to be handled;
-no completion or commit hash is claimed by this documentation record.
+recall and sustained playback/dropouts. Packaged smoke and successful installation
+are not an actual Bitwig session.
 
 ## Factory preset headroom and reproducibility
 
@@ -399,8 +403,8 @@ wall time; overloaded cases process less audio before the wall cap.
   Further profiling/optimization and longer targeted quiet-lane measurements
   are warranted for this exact heavy fixture. They are not implemented here.
 - Raw artifacts are in an OS temporary directory; preserve them externally if
-  needed. No packaged binary was changed, no shared build was mutated, and no
-  commit was made.
+  needed. During this isolated probe, no packaged binary was changed and no shared
+  build was mutated. Release commit `531045b` is pushed to `origin/main`.
 
 ### Release evidence boundary
 
@@ -409,6 +413,7 @@ render review, three additional actual-grain captures/0.60 s UI rerun, factory
 fixture, package hashes and packaged CLAP smoke are complete as recorded above.
 Performance tables retain their original evidence identities and caveats; they
 are not silently relabeled as a fresh benchmark of the packaged artifacts.
-Installation is blocked with no installed files changed (1.8.0 remains installed).
-Actual Bitwig checks remain open. No commit/push completion or hash is claimed.
-This documentation update ran no builds/tests or benchmarks and made no commit.
+Installation is complete: after the user closed Bitwig, the coordinator reran
+`source/build/install-release.ps1`; both per-user CLAP and VST3 reported Installed
+and SHA256 verified. Release commit `531045b` is pushed to `origin/main`.
+Actual Bitwig listening/transport and other host checks remain unperformed.

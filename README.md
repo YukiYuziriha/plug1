@@ -3,8 +3,9 @@
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-1.9.0 is **built, packaged and validated**. Installation was blocked by a locked
-installed CLAP; no installed files changed, so **1.8.0 remains installed**.
+1.9.0 is **built, packaged, validated and installed**. Both per-user CLAP and
+VST3 installations were SHA256-verified after the user closed Bitwig.
+Release commit `531045b` is pushed to `origin/main`.
 It adds two-dimensional expanded-node packing, a compact modulation rail with
 DSP-accurate LFO previews and sticky bottom-editor visibility, full-level A/B
 Splitter nodes, and a **Main Bus FX rack** in Stack using the same Routing nodes
@@ -33,9 +34,10 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**Current installation status:** the 1.9.0 install attempt was blocked because the
-installed CLAP is locked by another process. No installed files were changed;
-1.8.0 remains installed. Retry after the locking process releases the plugin;
+**Current installation status: complete for 1.9.0.** After the user closed
+Bitwig, the coordinator reran `source/build/install-release.ps1`; both per-user
+CLAP and VST3 reported **Installed** and **SHA256 verified**. Actual Bitwig
+listening/transport remains unperformed. For future updates, close the host first;
 do not terminate Bitwig or overwrite a loaded plugin to force installation.
 
 1. Extract the ZIP.
@@ -751,11 +753,11 @@ full-processor performance probe reports heavy-workload deadline overruns,
 especially two serial instances at 96 kHz; successful execution is not a real-time
 performance pass. The release record preserves measurements and limitations.
 
-**Installation blocked:** installed CLAP locked by another process; no installed
-files changed and **1.8.0 remains installed**. Retry when unlocked. **Actual Bitwig
-listening/transport, automation and session recall remain unchecked.** Commit/push
-is coordinator-owned; no completion or commit identity is claimed here. Earlier
-release results below are historical.
+**Installation complete:** after the user closed Bitwig, the coordinator reran
+`source/build/install-release.ps1`; both per-user CLAP and VST3 reported
+**Installed** and **SHA256 verified**. Release commit `531045b` is pushed to
+`origin/main`. **Actual Bitwig listening/transport, automation and session recall
+remain unchecked.** Earlier release results below are historical.
 
 ### Historical 1.8.0 verification
 

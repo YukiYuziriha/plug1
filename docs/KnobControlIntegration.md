@@ -38,8 +38,9 @@ Granular and the new Stack FX preview are refreshed. This is not DAW audition.
 
 Release artifacts were copied to tracked packages and SHA256-matched; packaged
 CLAP smoke passed 2087 parameters, mono/stereo latency, bypass and automation.
-**Install attempt blocked:** installed CLAP locked by another process; no installed
-files changed and 1.8.0 remains installed. Retry when unlocked; actual Bitwig
-checks remain open. Commit/push is coordinator-owned with no completion or hash
-claimed. See [release validation](Release-1.9.0-Validation.md) for package hashes
-and performance caveats. This documentation update ran no builds/tests or commit.
+**Installation complete:** after the user closed Bitwig, the coordinator reran
+`source/build/install-release.ps1`; both per-user CLAP and VST3 reported
+**Installed** and **SHA256 verified**. Release commit `531045b` is pushed to
+`origin/main`. Actual Bitwig listening/transport, automation and session recall
+remain unperformed. See [release validation](Release-1.9.0-Validation.md) for
+package hashes and performance caveats.
