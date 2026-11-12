@@ -1,6 +1,24 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.3 built, validated, packaged, installed and pushed
+## Current status — 1.9.4 built, validated, packaged and installed
+
+- [x] Size FX tabs to their actual titles: 4 px title padding per side and 2 px
+  between tabs. Preserve usable bypass/remove targets and full names.
+- [x] Make drag/reorder hit testing use actual variable tab bounds.
+- [x] Relayout tab controls even when inspector body bounds stay unchanged.
+- [x] Match knob names and values at 12.5 px; wrap longer names below controls.
+- [x] Release build and 34 focused CTests passed in 209.76 s, including 67 editor
+  groups and rack UI. Packaged CLAP smoke passed (2087 parameters, indices intact).
+- [x] Inspect final Neon/Spectral rack and EQ screenshots; refresh tracked image.
+- [x] Refresh packages and install both per-user formats, SHA256-verified.
+- [ ] Actual Bitwig visual/listening verification. DSP is unchanged; long legacy
+  DSP suite was not rerun.
+
+Package SHA256:
+- CLAP: `fb2bd048ca4426e4cbb879f1b5d60aed21d42bce43723eed889eba6292a79c6f`
+- VST3: `1f45b74a82fa368a6a83032434660e4baa86d2e8078e2b98a608ac7ae422205c`
+
+### Historical 1.9.3 — built, validated, packaged, installed and pushed
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task

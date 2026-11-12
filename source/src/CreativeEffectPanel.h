@@ -61,7 +61,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             setComponentID(id + "Control");
             slider.addMouseListener(this, true);
             label.setText(name, juce::dontSendNotification);
-            label.setFont(juce::Font(juce::FontOptions(11.5f)));
+            label.setFont(juce::Font(juce::FontOptions(ParameterKnob::controlFontSize)));
             label.setMinimumHorizontalScale(1.f);
             label.setInterceptsMouseClicks(false, false);
             addAndMakeVisible(label);

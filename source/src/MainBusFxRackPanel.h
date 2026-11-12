@@ -12,7 +12,7 @@ class MainBusFxRackPanel final : public juce::Component, private juce::Timer {
 public:
     explicit MainBusFxRackPanel(Processor& processor) : owner(processor) {
         setName("Main Bus FX rack"); setComponentID("mainBusFxRack");
-                setLookAndFeel(&panelStyle);
+        setLookAndFeel(&panelStyle);
         add.setButtonText("+ FX"); add.setComponentID("mainBusAddFx");
         add.onClick = [this] { showAddMenu(); };
         addAndMakeVisible(add); addAndMakeVisible(status); addAndMakeVisible(viewport);
@@ -23,9 +23,9 @@ public:
         detail::passiveControl(*this); sync(); startTimerHz(12);
     }
     ~MainBusFxRackPanel() override {
-            stopTimer(); viewport.setViewedComponent(nullptr, false); setLookAndFeel(nullptr);
-        }
-    static constexpr int tabWidth = 188, tabGap = 4, preferredHeight = 340;
+        stopTimer(); viewport.setViewedComponent(nullptr, false); setLookAndFeel(nullptr);
+    }
+    static constexpr int tabGap = 2, preferredHeight = 340;
     // The editor supplies RoutingPanel's validated, one-step graph undo path.
     std::function<bool(const Graph&, juce::String&)> commitGraph;
     void setNeon(bool value) {
@@ -36,7 +36,7 @@ public:
         add.setColour(juce::TextButton::buttonColourId, p.inset);
         add.setColour(juce::TextButton::textColourOffId, p.text);
         for (auto& card : cards) card->setNeon(value);
-        repaint();
+        resized(); repaint();
     }
     void sync() {
         const auto graph = owner.getRoutingGraph(); const auto segment = mainBusFx::discover(graph);
@@ -95,14 +95,18 @@ public:
         add.setBounds(header.removeFromRight(64).reduced(2, 4));
         header.removeFromRight(4);
         viewport.setBounds(header);
-        const int total = juce::jmax(0, int(cards.size()) * (tabWidth + tabGap) - tabGap);
+        int total = 0;
+                for (auto& card : cards) total += card->preferredTabWidth() + tabGap;
+                total = juce::jmax(0, total - tabGap);
         const int height = juce::jmax(0, header.getHeight() - viewport.getScrollBarThickness());
         content.setSize(juce::jmax(header.getWidth(), total), height);
         int x = 0;
         for (auto& card : cards) {
-            card->tab.setBounds(x, 0, tabWidth, height);
+            const int width = card->preferredTabWidth();
+            card->tab.setBounds(x, 0, width, height);
             card->setBounds(area);
-            x += tabWidth + tabGap;
+            card->resized(); // Tab width can change without changing the inspector body bounds.
+            x += width + tabGap;
         }
         revealSelection();
     }
@@ -125,6 +129,14 @@ private:
                 setTriggeredOnMouseDown(false);
                 onClick = [this] { card.rack.select(card.model.id); };
             }
+            void paintButton(juce::Graphics& g, bool hover, bool down) override {
+                auto& style = getLookAndFeel();
+                style.drawButtonBackground(g, *this, findColour(juce::TextButton::buttonColourId), hover, down);
+                g.setFont(style.getTextButtonFont(*this, getHeight()));
+                g.setColour(findColour(getToggleState() ? juce::TextButton::textColourOnId
+                                                       : juce::TextButton::textColourOffId));
+                g.drawText(getButtonText(), getLocalBounds().reduced(4, 0), juce::Justification::centredLeft);
+            }
             void mouseDown(const juce::MouseEvent& e) override {
                 if (!e.mods.isLeftButtonDown()) return;
                 card.rack.select(card.model.id);
@@ -141,7 +153,11 @@ private:
                 const auto point = e.getEventRelativeTo(&rack.viewport).position;
                 rack.viewport.autoScroll(int(point.x), int(point.y), 24, 16);
                 const int x = e.getEventRelativeTo(&rack.content).x;
-                rack.dragTarget = juce::jlimit(0, int(rack.cards.size()) - 1, x / (tabWidth + tabGap));
+                rack.dragTarget = int(rack.cards.size()) - 1;
+                                for (size_t i = 0; i < rack.cards.size(); ++i)
+                                    if (x < rack.cards[i]->tab.getRight() + tabGap / 2) {
+                                        rack.dragTarget = int(i); break;
+                                    }
             }
             void mouseUp(const juce::MouseEvent& e) override {
                 const bool valid = started && card.canReorder && signature == card.rack.cardSignature
@@ -172,7 +188,7 @@ private:
             tab.addAndMakeVisible(handle); tab.addAndMakeVisible(enabled);
             tab.addAndMakeVisible(remove);
             remove.setComponentID("mainBusFxRemove");
-            handle.setButtonText(name(model.type) + "  #" + juce::String(model.id));
+            handle.setButtonText(name(model.type) + " #" + juce::String(model.id));
             enabled.setButtonText("On"); enabled.setClickingTogglesState(true);
             enabled.setTooltip("Enable/bypass this instance (does not select the tab)");
             remove.setButtonText("x");
@@ -217,6 +233,10 @@ private:
             detail::passiveControl(tab);
         }
         ~Card() override { cancelEditing(); bodyViewport.setViewedComponent(nullptr, false); }
+                int preferredTabWidth() {
+                    const auto font = handle.getLookAndFeel().getTextButtonFont(handle, 28);
+                    return int(std::ceil(juce::GlyphArrangement::getStringWidth(font, handle.getButtonText()))) + 62;
+                }
         void resized() override {
             auto area = getLocalBounds().reduced(4);
             auto header = tab.getLocalBounds().reduced(1);

@@ -51,7 +51,8 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             : panel(p), id(parameterId) {
             setComponentID(id + "Control");
             label.setText(name, juce::dontSendNotification);
-            label.setFont(juce::Font(juce::FontOptions(11.5f)));
+            label.setFont(juce::Font(juce::FontOptions(ParameterKnob::controlFontSize)));
+                        label.setMinimumHorizontalScale(1.f);
             label.setInterceptsMouseClicks(false, false); addAndMakeVisible(label);
             if (mode) {
                 combo.setComponentID(id); combo.setName(name);
@@ -126,7 +127,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                 label.setBounds(b.removeFromTop(17));
                 combo.setBounds(b.withHeight(24));
             } else {
-                label.setBounds(b.removeFromBottom(17));
+                label.setBounds(b.removeFromBottom(28));
                 slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, juce::jmin(76, b.getWidth()), 21);
                 slider.setBounds(b);
             }

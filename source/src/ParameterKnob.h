@@ -242,10 +242,13 @@ private:
 
 class ParameterKnob final : public juce::Component {
 public:
+    static constexpr float controlFontSize = 12.5f;
     class Style final : public juce::LookAndFeel_V4 {
     public:
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
-            return createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
+            auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
+                        label->setFont(juce::Font(juce::FontOptions(controlFontSize)));
+                        return label;
         }
         void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h,
                               float position, float, float, juce::Slider::SliderStyle,
@@ -299,7 +302,8 @@ public:
         setComponentID(id + "Control");
         label.setText(title, juce::dontSendNotification);
         label.setJustificationType(juce::Justification::centred);
-        label.setFont(juce::Font(juce::FontOptions(11.0f)));
+        label.setFont(juce::Font(juce::FontOptions(controlFontSize)));
+                label.setMinimumHorizontalScale(1.f);
         label.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
         label.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(label);
@@ -352,7 +356,7 @@ public:
         forwardPassiveWheel(*this, event, wheel);
     }
     void resized() override {
-        auto area = getLocalBounds(); label.setBounds(area.removeFromBottom(20)); slider.setBounds(area);
+        auto area = getLocalBounds(); label.setBounds(area.removeFromBottom(28)); slider.setBounds(area);
     }
     void setNeon(bool neon) {
         const auto p = themePalette(*this, neon);

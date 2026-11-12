@@ -306,7 +306,7 @@ void tabSelectionLifecycleRegressions(Processor& owner) {
         juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
         handle, handle, now, start, now, 1, true};
     handle->mouseDown(dragStart);
-    const auto dragEnd = dragStart.withNewPosition(start.translated(float(MainBusFxRackPanel::tabWidth + MainBusFxRackPanel::tabGap), 0));
+    const auto dragEnd = dragStart.withNewPosition(start.translated(float(tab->getWidth() + MainBusFxRackPanel::tabGap), 0));
     handle->mouseDrag(dragEnd);
     auto external = mainBusFx::move(owner.getRoutingGraph(), 101, 0);
     expect(owner.setRoutingGraph(external.graph, error), "external edit during tab drag accepted");
@@ -479,7 +479,14 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
         viewportIn(*reverb)->setViewPosition(0, 0);
         auto* reverbTab = find(rack, "mainBusFxTab101");
         auto* title = dynamic_cast<juce::TextButton*>(find(*reverbTab, "mainBusFxDrag"));
-        const auto onId = fxParameterId(2, "On");
+        const auto titleFont = title->getLookAndFeel().getTextButtonFont(*title, title->getHeight());
+                const float textWidth = juce::GlyphArrangement::getStringWidth(titleFont, title->getButtonText());
+                expect(title->getWidth() >= textWidth + 8 && title->getWidth() <= textWidth + 9,
+                       "FX title has only four pixels of padding per side, without clipping");
+                auto* crusherTab = find(rack, "mainBusFxTab104");
+                expect(crusherTab && crusherTab->getWidth() > reverbTab->getWidth(),
+                       "tab widths follow their titles rather than reserving fixed empty space");
+                const auto onId = fxParameterId(2, "On");
         const float savedOn = owner.parameters.getRawParameterValue(onId)->load();
         const auto tick = [&] { pump(); pump(); pump(); };
         set(owner, onId, 1); tick();
@@ -531,7 +538,7 @@ void run(const juce::File& output) {
     auto* handle = find(*find(rack, "mainBusFxTab100"), "mainBusFxDrag");
     const auto now = juce::Time::getCurrentTime();
     const auto start = handle->getLocalBounds().getCentre().toFloat();
-    const auto finish = start.translated(-float(MainBusFxRackPanel::tabWidth + MainBusFxRackPanel::tabGap), 0);
+    const auto finish = start.translated(-float(handle->getParentComponent()->getWidth() + MainBusFxRackPanel::tabGap), 0);
     const auto event = [&](juce::Point<float> point) {
         return juce::MouseEvent{juce::Desktop::getInstance().getMainMouseSource(), point,
             juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,

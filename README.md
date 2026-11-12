@@ -1,9 +1,18 @@
-# Vocal Stack 1.9.3
+# Vocal Stack 1.9.4
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.3 is built, validated, packaged, installed and pushed** (`5468939`). Main Bus FX use real Routing-node tabs with one
+**1.9.4 is built, validated, packaged and installed.** FX tabs now size to their
+actual titles with 4 px horizontal title padding and 2 px between tabs, rather
+than reserving 188 px each. Drag/reorder hit testing follows the variable widths.
+Knob names and numeric values share a consistent **12.5 px** font, with long names
+wrapping below the control. Release build succeeded; **34 focused CTests passed
+in 209.76 s**, including 67 editor groups, and packaged CLAP smoke passed. Both
+per-user plugin formats were installed and SHA256-verified. DSP is unchanged;
+actual Bitwig visual/listening checks remain unverified.
+
+**Historical 1.9.3 is built, validated, packaged, installed and pushed** (`5468939`). Main Bus FX use real Routing-node tabs with one
 full-width selected editor, retained instances and responsive compact controls.
 No audio DSP or host parameters change. After the final rack `PanelStyle` fix,
 the full Release build succeeded and **34 focused CTests passed in 176.42 s**,
@@ -60,7 +69,7 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.3 installation succeeded:** both per-user CLAP and VST3 reported
+**1.9.4 installation succeeded:** both per-user CLAP and VST3 reported
 **Installed and SHA256 verified** via the coordinator's run of
 `source/build/install-release.ps1`. Do not terminate Bitwig or overwrite a loaded
 plugin to force replacement. Actual Bitwig listening/transport and native FPS
@@ -798,6 +807,13 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.9.4:** full Release build, all **34 focused CTests (209.76 s)**, 67 editor
+groups, packaged CLAP smoke and both SHA256-verified per-user installations passed.
+Compact variable-width tabs, drag ordering and equal name/value font sizes are
+covered by UI regressions. Final rack images were inspected in Neon and Spectral.
+The long legacy DSP suite was not rerun for this UI-only release; native host
+visual/listening and performance remain unverified.
 
 **1.9.3 — built, validated, packaged, installed and pushed:** after
 the rack-owned `PanelStyle` fix, the full Release build succeeded and all **34

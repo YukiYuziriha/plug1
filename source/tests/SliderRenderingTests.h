@@ -211,6 +211,10 @@ inline void controlModes() {
                 toneUiTests::require(title && title->getY() >= slider->getBottom()
                         && row->getLocalBounds().contains(title->getBounds()),
                     "FX parameter title must be below, without clipping");
+                                    auto* value = toneUiTests::find<juce::Label>(*slider, [](auto&) { return true; });
+                                    toneUiTests::require(value && std::abs(value->getFont().getHeight() - ParameterKnob::controlFontSize) < .01f
+                                            && std::abs(title->getFont().getHeight() - value->getFont().getHeight()) < .01f,
+                                        "FX names and values must share the intermediate 12.5px font size");
             }
             if (auto* button = dynamic_cast<juce::Button*>(&component);
                 button && button->isVisible() && button->getComponentID().startsWith("fx1")) {
