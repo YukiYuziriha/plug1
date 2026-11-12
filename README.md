@@ -3,12 +3,13 @@
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.1 is built, validated and packaged; installation is pending.** The coordinator
+**1.9.1 is built, validated, packaged and installed.** The coordinator
 reports all 34 focused CTests passed, followed by a successful full Release rebuild
 and four targeted passes after the final duplicate WaveMix control fix. Packaged
-CLAP/VST3 hashes match Release artifacts. Installation was blocked by the installed
-CLAP being in use; no installed files changed, so 1.9.0 remains installed.
-Commit/push is pending with the coordinator. See the
+CLAP/VST3 hashes match Release artifacts. The coordinator reran
+`source/build/install-release.ps1`; both per-user CLAP and VST3 reported
+**Installed and SHA256 verified**. Release commit `fa44543` is pushed to
+`origin/main`. See the
 [1.9.1 validation record](docs/Release-1.9.1-Validation.md).
 
 **Previous release 1.9.0** was built, packaged, validated and installed. Both per-user CLAP and
@@ -42,10 +43,11 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.1 installation is blocked:** the installed CLAP is in use by a process.
-No installed files changed; **1.9.0 remains installed**. Close the host before
-retrying installation; do not terminate Bitwig or overwrite a loaded plugin to
-force replacement. Actual Bitwig listening/transport remains unchecked.
+**1.9.1 installation retry succeeded:** both per-user CLAP and VST3 reported
+**Installed and SHA256 verified** via the coordinator's run of
+`source/build/install-release.ps1`. Do not terminate Bitwig or overwrite a loaded
+plugin to force replacement. Actual Bitwig listening/transport and native FPS
+remain unchecked.
 
 1. Extract the ZIP.
 2. Copy `Windows-x64/CLAP/Vocal Stack.clap` to

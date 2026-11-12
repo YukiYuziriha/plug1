@@ -1,12 +1,12 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.1 built, validated and packaged; installation pending
+## Current status — 1.9.1 built, validated, packaged and installed
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
 list. When requirements conflict, the latest release record takes precedence.
 
-### 1.9.1 — UI fixes validated; installation blocked
+### 1.9.1 — UI fixes validated; installation retry succeeded
 
 - [x] Horizontal 204 px Main Bus FX cards beside the roughly 172 px voice-card
   scale; full parameter UIs with internal vertical scroll, fixed headers and no
@@ -40,9 +40,10 @@ list. When requirements conflict, the latest release record takes precedence.
   grain/Delay views and update root images. Informational 26-node/120-frame UI
   profile median/p95/max: compact 9.081/13.008/49.161 ms, expanded
   14.755/22.607/37.176 ms, at most 12 mounted cards—not a native FPS guarantee.
-- [ ] Retry installation after the host closes: installed CLAP is in use by a
-  process; no installed files changed and 1.9.0 remains installed.
-- [ ] Coordinator commit/push; not yet claimed complete.
+- [x] Complete installation retry: coordinator reran
+  `source/build/install-release.ps1`; both per-user CLAP and VST3 reported
+  **Installed and SHA256 verified**.
+- [x] Release commit `fa44543` pushed to `origin/main`.
 - [ ] Actual Bitwig listening/transport/automation/recall and native FPS checks.
   No audio DSP changes; legacy DSP was not rerun (1.9.0 pass remains historical).
 

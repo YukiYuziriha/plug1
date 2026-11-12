@@ -1,4 +1,4 @@
-# Release 1.9.1 — built, validated and packaged; installation pending
+# Release 1.9.1 — built, validated, packaged and installed
 
 ## Status and evidence boundary
 
@@ -18,9 +18,10 @@ task handoff, not a newly observed run.
   preceded this final fix; the targeted run validates the rebuilt revision.
 - **Packaged CLAP smoke passed:** 2087 parameters, latency, bypass and automation.
   Tracked CLAP/VST3 packages match Release artifacts by SHA256 (below).
-- **Installation is blocked**, not complete: the installed CLAP is in use by a
-  process. No installed files changed; **1.9.0 remains installed**.
-- Commit/push is pending with the coordinator; no completed push is claimed.
+- **Installation retry succeeded:** the coordinator reran
+  `source/build/install-release.ps1`; both per-user CLAP and VST3 reported
+  **Installed and SHA256 verified**.
+- Release commit `fa44543` is pushed to `origin/main`.
 
 ## Implemented UI scope
 
@@ -82,14 +83,19 @@ Both tracked package binaries SHA256-match the final Release artifacts:
 | `Windows-x64/CLAP/Vocal Stack.clap` | `b4f2d6d9387aefae4ee5338e3da41b2d33ca4c1c980ee177114841e18daaa1ce` |
 | `Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3` | `3aebefa834be8f9d9fa919239ff35d17ab628cd543e45036c5b4589ad66a91a4` |
 
-**Installation attempt blocked:** the installed CLAP is being used by a process.
-No installed files changed; **1.9.0 remains installed**, despite 1.9.1 packages
-being ready. Never terminate Bitwig or overwrite a loaded plugin to force an update.
+**Earlier installation attempt (historical):** the installed CLAP was being used
+by a process; no installed files changed during that attempt and 1.9.0 remained
+installed at that point. Never terminate Bitwig or overwrite a loaded plugin to
+force an update.
 
-Remaining work:
+**Successful retry:** the coordinator ran `source/build/install-release.ps1`;
+both per-user CLAP and VST3 reported **Installed and SHA256 verified** for 1.9.1.
+Release commit `fa44543` is pushed to `origin/main`.
 
-- [ ] Retry installation after the host closes and verify installed hashes.
-- [ ] Coordinator commit/push; not yet complete in this record.
+Delivery and remaining checks:
+
+- [x] Retry installation and verify installed hashes for both per-user formats.
+- [x] Release commit `fa44543` pushed to `origin/main`.
 - [ ] Actual Bitwig listening, transport, automation/session recall, sustained
   playback and native FPS checks; automated coverage is not host validation.
 
