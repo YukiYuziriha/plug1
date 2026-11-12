@@ -1,9 +1,20 @@
-# Vocal Stack 1.9.1
+# Vocal Stack 1.9.2
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.1 is built, validated, packaged and installed.** The coordinator
+**1.9.2 is built, validated and packaged, but not installed** (coordinator-reported).
+Release CLAP/VST3 builds succeeded; all **34 focused CTests passed in 182.97 s**,
+including **66 editor groups**. Packages SHA256-match Release artifacts and
+packaged CLAP smoke passed. The granular graph restores the original-style
+parameter illustration rather than the flickering live cloud. All six theme/width
+review screenshots were manually reviewed; root Granular and Stack FX previews
+were updated from the current Release. **Installation was blocked by a locked
+CLAP; no installed files changed and 1.9.1 remains installed.** Commit/push is
+pending the coordinator; actual DAW visual checks remain unverified. See the
+[1.9.2 validation record](docs/Release-1.9.2-Validation.md).
+
+**Previous release 1.9.1 is built, validated, packaged and installed.** The coordinator
 reports all 34 focused CTests passed, followed by a successful full Release rebuild
 and four targeted passes after the final duplicate WaveMix control fix. Packaged
 CLAP/VST3 hashes match Release artifacts. The coordinator reran
@@ -43,6 +54,8 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
+**1.9.2 installation was blocked by a locked CLAP; no installed files changed
+and 1.9.1 remains installed.** Retry after the host releases the plugin. The historical
 **1.9.1 installation retry succeeded:** both per-user CLAP and VST3 reported
 **Installed and SHA256 verified** via the coordinator's run of
 `source/build/install-release.ps1`. Do not terminate Bitwig or overwrite a loaded
@@ -364,9 +377,12 @@ main controls, forward wheel events without changing parameters or taking focus.
 In embedded EQ graphs, plain wheel scrolls; **Alt-wheel** edits Q (or Q assignment
 depth), retaining host gesture boundaries.
 
-Granular displays a real snapshot-derived cloud zoomed to valid capture/read
-positions, not 32 fixed rows: sparse/dense grains retain stable slot identities,
-envelopes and direction markers. Delay shows a parameter-timed animated schematic,
+Granular displays fixed overlapping parameter-envelope curves, grid gradients
+and three-second history/read-window guides from coherent parameters. The graph
+remains visible before preparation, with stopped transport and without audio;
+audio telemetry does not drive its geometry. There is no active-grain auto-zoom
+or cloud scatter. This is a parameter illustration, not a recorded waveform or
+measured grain telemetry. Delay shows a parameter-timed animated schematic,
 not measured echoes; its clock pauses while hidden, clipped or bypassed. Sync still
 updates Time/Beats enablement when the visual is offscreen.
 
@@ -408,14 +424,18 @@ level matching, AGC, a limiter, or hidden dry audio at 100% Wet. Routing keeps i
 linear dry/wet blend; intermediate settings can still dip with decorrelated or
 filtered material, and headroom is not guaranteed for arbitrary input/graphs.
 
-Granular now restricts reads to captured history, clamps lookback to valid data,
+Granular DSP restricts reads to captured history, clamps lookback to valid data,
 and retires grains crossing freeze/capture boundaries with a short held-sample
-fade. Routing and Stack show the same **actual DSP grain snapshots**: circular
-positions, progress/envelopes, pan, direction and valid/frozen capture state.
-Frames are published once per host block, not extrapolated; stopped transport
-shows the last completed block. No capture waveform is fabricated. Other creative
-plots remain parameter-derived schematics, not measured impulse responses.
-Compressor gain reduction now reports the actual smoothed gain before makeup.
+fade. **1.9.2 changes presentation only; DSP is unchanged.** Routing and Stack use
+`CreativeEffectVisual`'s original-style fixed overlapping parameter envelopes,
+grid gradients and three-second history/read-window guides. Geometry comes from
+coherent parameters, not audio telemetry, and remains visible unprepared,
+stopped or without audio. No active-grain auto-zoom or cloud scatter is used.
+This is a **parameter illustration**, not an actual recorded waveform or measured
+grain telemetry. The DSP snapshot bridge remains available in the backend but
+no longer drives this graph. Other creative plots remain parameter-derived
+schematics, not measured impulse responses. Compressor gain reduction reports
+the actual smoothed gain before makeup.
 
 Reverb RT60 is a midband target, not a guaranteed measured decay: damping,
 filters and interpolation shorten it. Reverb freeze is bounded/near-lossless,
@@ -439,7 +459,7 @@ These are original DSP, UI and presets, not proprietary code/assets/preset ports
 
 ![Reverb inspector and whole-patch preset browser](VocalStack-Reverb.png)
 
-![Actual live DSP grain snapshot in the Device skin](VocalStack-Granular.png)
+![Release 1.9.2 Device-skin granular parameter illustration](VocalStack-Granular.png)
 
 ### Utility and character filters
 
@@ -732,7 +752,7 @@ the CLAP tail sentinel.
 - `HarmonyShifter.h`: fixed-latency STFT musical pitch/formant processor.
 - `Waveshaper.h` / `Equalizer.h` / `Multiband.h`: independent tone processors.
 - `ToneEffectPanel.h` / `ToneEqGraph.h`: selected-FX controls and native EQ graph.
-- `CreativeEffects.h` / `CreativeEffectPanel.h` / `CreativeEffectVisual.h`: creative DSP, inspectors, parameter schematics and actual granular snapshots.
+- `CreativeEffects.h` / `CreativeEffectPanel.h` / `CreativeEffectVisual.h`: creative DSP, inspectors and parameter schematics; the granular snapshot bridge remains backend-available, not a graph geometry source.
 - `UtilityFilters.h` / `VitalFilterDSP.h` / `UtilityEffectPanel.h`: utilities, character filters and cached response plots.
 - `VisualTheme.h`: shared Device/Neon/Spectral palette and inheritance.
 - `PresetManager.h`: validated full-patch files, factory patches and footer browser.
@@ -764,6 +784,26 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
+**1.9.2 — built, validated and packaged (coordinator-reported):** Release
+CLAP/VST3 builds succeeded. The combined build/test command timed out at 600 s
+after the build completed, interrupting tests; a separate `ctest` run without
+rebuilding passed **all 34 focused tests in 182.97 s**, including **66 editor
+groups**. Grain UI passed in **11.37 s**, covering unprepared/stopped rendering,
+snapshot-count changes, model retention after failed coherent reads and
+all-five-effects coherence across three themes.
+
+All six 174/440 px theme screenshots were manually reviewed by the coordinator;
+root Granular and Stack FX screenshots were updated from the current Release.
+CLAP/VST3 packages SHA256-match Release artifacts; packaged CLAP smoke passed
+**2087 parameters, latency, bypass and automation**. No audio DSP changed;
+legacy DSP was not rerun. **Installation was blocked by a locked CLAP; no installed
+files changed and 1.9.1 remains installed.** Actual DAW visual/listening and native
+FPS checks remain unverified; coordinator commit/push is pending. Hashes and
+boundaries are in the [1.9.2 record](docs/Release-1.9.2-Validation.md). This
+documentation-only task ran no builds or tests.
+
+### Historical 1.9.1 verification
+
 **1.9.1 — built, validated and packaged (coordinator-reported):** all **34 focused
 CTests passed in 154.15 s**, including **66 editor groups and eight factory-audio
 shards**. After removing a duplicate WaveMix control, the full Release rebuild
@@ -779,10 +819,11 @@ images updated. UI profile (26 nodes, 120 frames) median/p95/max:
 12 mounted cards. These are informational timings, not a native FPS guarantee.
 No audio DSP changed; legacy DSP was not rerun (1.9.0's pass is historical).
 
-**Installation remains blocked; no installed files changed and 1.9.0 remains
-installed.** Commit/push awaits the coordinator. Actual Bitwig listening and native
-FPS remain unchecked. Hashes, test corrections and delivery boundaries are in the
-[1.9.1 record](docs/Release-1.9.1-Validation.md).
+**The 1.9.1 installation retry succeeded:** both per-user formats reported
+Installed and SHA256 verified; commit `fa44543` was pushed to `origin/main`.
+1.9.1 remains installed pending an actual 1.9.2 retry. Actual Bitwig listening and
+native FPS remain unchecked. Hashes, test corrections and delivery boundaries
+are in the [1.9.1 record](docs/Release-1.9.1-Validation.md).
 
 ### Historical 1.9.0 verification
 

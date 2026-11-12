@@ -1,12 +1,42 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.1 built, validated, packaged and installed
+## Current status — 1.9.2 built, validated and packaged; installation blocked
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
 list. When requirements conflict, the latest release record takes precedence.
 
-### 1.9.1 — UI fixes validated; installation retry succeeded
+### 1.9.2 — parameter graph restored; validated, not installed
+
+- [x] Version bumped to 1.9.2; presentation-only change, no DSP changes.
+- [x] Restore `CreativeEffectVisual`'s original-style fixed overlapping parameter
+  envelope curves, grid gradients and three-second history/read-window guides.
+  The original graph was wanted with visual polish, not a flickering live cloud.
+- [x] Derive geometry from coherent parameters, not audio telemetry. Keep the
+  graph visible unprepared, stopped and without audio; no active-grain auto-zoom
+  or cloud scatter. Label it a parameter illustration, not a recorded waveform
+  or measured grain telemetry. The DSP snapshot bridge remains backend-available.
+- [x] Coordinator reports Release CLAP/VST3 builds succeeded. The combined
+  build/test command timed out at 600 s after building, during tests; separate
+  `ctest` without rebuilding passed all 34 focused tests in 182.97 s, including
+  66 editor groups. Grain UI passed in 11.37 s: unprepared/stopped graph,
+  snapshot-count changes, retained model on failed coherent read and all-five-FX
+  coherence across three themes. No audio DSP changes; legacy DSP not rerun.
+- [x] Coordinator manually reviewed all six
+  `.cache/update-ui-review/grain-parameter-{device,neon,spectral}-{174,440}.png`
+  screenshots; root Granular and Stack FX previews updated from current Release.
+- [x] Copy CLAP/VST3 packages and SHA256-match Release artifacts; packaged CLAP
+  smoke passed 2087 parameters, latency, bypass and automation.
+- [ ] Retry installation: attempt blocked by locked CLAP; no installed files
+  changed, **1.9.1 remains installed**. Do not overwrite loaded plugins or
+  terminate Bitwig to force installation.
+- [ ] Coordinator commit/push pending; not yet claimed complete.
+- [ ] Actual Bitwig visual/listening/transport/automation/recall and native FPS checks.
+
+See [Release 1.9.2 validation](docs/Release-1.9.2-Validation.md). This documentation
+pass runs no build/tests and performs no packaging, installation or commit.
+
+### Historical 1.9.1 — UI fixes validated; installation retry succeeded
 
 - [x] Horizontal 204 px Main Bus FX cards beside the roughly 172 px voice-card
   scale; full parameter UIs with internal vertical scroll, fixed headers and no

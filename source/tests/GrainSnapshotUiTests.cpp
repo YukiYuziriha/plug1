@@ -69,6 +69,139 @@ juce::Component* find(juce::Component& root, const juce::String& id) {
     for (auto* child : root.getChildren()) if (auto* result = find(*child, id)) return result;
     return nullptr;
 }
+// Explicit instantiation permits a test-only private-member pointer without
+// changing Processor's production API or the layout seen by other translation units.
+struct SnapshotSequence {
+    using type = std::atomic<uint64_t> Processor::*;
+    friend type snapshotSequence(SnapshotSequence);
+};
+template<class Tag, typename Tag::type Member> struct PrivateMember {
+    friend typename Tag::type snapshotSequence(Tag) { return Member; }
+};
+template struct PrivateMember<SnapshotSequence, &Processor::modulationSnapshotSequence>;
+
+juce::Image plotImage(CreativeEffectVisual& visual) {
+    // Include the history/pitch rails, envelope, and axes, but not optional
+    // audio-status text in the header/footer. Audio cannot reframe this region.
+    return visual.createComponentSnapshot(visual.getLocalBounds()).getClippedImage(
+        {8, 40, visual.getWidth() - 16, visual.getHeight() - 98}).createCopy();
+}
+void checkGranularModel(const CreativeEffectVisual& visual, Processor& owner) {
+    const auto read = [&](CreativeParameter field) {
+        return owner.parameters.getParameter(creativeParameterId(1, size_t(field)))->convertFrom0to1(
+            owner.parameters.getParameter(creativeParameterId(1, size_t(field)))->getValue());
+    };
+    const auto near = [](float actual, float expected) { expect(std::abs(actual - expected) < .002f, "granular model must match exact parameter units/formulas"); };
+    const auto model = visual.granularModel();
+    expect(visual.hasParameterSnapshot(), "graph exists without preparing/audio publication");
+    const float length = read(CreativeParameter::granularSize), density = read(CreativeParameter::granularDensity);
+    const float pitch = read(CreativeParameter::granularPitch), lookback = read(CreativeParameter::granularPosition);
+    const float scatter = read(CreativeParameter::granularJitter), ratio = std::pow(2.f, pitch / 12.f);
+    const bool frozen = read(CreativeParameter::granularFreeze) >= .5f, reverse = read(CreativeParameter::granularReverse) >= .5f;
+    const float guard = length * (frozen ? ratio : reverse ? 0.f : std::max(0.f, ratio - 1.f));
+    near(model.lengthMs, length); near(model.densityHz, density); near(model.pitchSemitones, pitch);
+    near(model.spacingMs, 1000.f / density); near(model.spanMs, std::max(500.f, length * 3.f));
+    near(model.overlap, length * density * .001f); near(model.lookbackMs, lookback); near(model.scatterMs, scatter);
+    near(model.guardMs, guard); near(model.historyNearMs, std::clamp(lookback + guard, 0.f, 3000.f));
+    near(model.historyFarMs, std::min(3000.f, model.historyNearMs + length * ratio + scatter));
+    expect(model.frozen == frozen && model.reverse == reverse, "granular discrete parameter model values");
+}
+void parameterGraph() {
+    auto storage = std::make_unique<Processor>(); auto& owner = *storage;
+    juce::String error; expect(owner.setRoutingGraph(graph(), error), "install unprepared granular");
+    juce::Component root; root.setBounds(0, 0, 900, 540); root.setVisible(true); root.addToDesktop(0);
+    CreativeEffectVisual visual(owner, 1, CreativeKind::granular);
+    root.addAndMakeVisible(visual);
+    const std::array<const char*, 3> names{"device", "neon", "spectral"};
+    std::array<uint64_t, 3> themeHashes{};
+    for (int skin = 0; skin < 3; ++skin) for (int width : {174, 440}) {
+        root.getProperties().set(vocalstackThemeProperty, skin); owner.setSkin(skin);
+        visual.setBounds(0, 0, width, width == 174 ? 216 : 238); visual.setNeon(skin == 1); visual.refreshAt(1000);
+        checkGranularModel(visual, owner);
+        const auto baseline = plotImage(visual);
+        const auto palette = themePalette(visual, skin == 1);
+        int coloured = 0;
+        for (int y = 0; y < baseline.getHeight(); ++y) for (int x = 0; x < baseline.getWidth(); ++x) {
+            const auto pixel = baseline.getPixelAt(x, y);
+            // Grid and text are neutral in Device; the envelope/rails are not.
+            if (pixel.getSaturation() > .15f && pixel != palette.inset && pixel != palette.border) ++coloured;
+        }
+        expect(coloured > width / 2, "unprepared/no-audio parameter graph contains coloured geometry, not a waiting/empty panel");
+        visual.refreshAt(9000);
+        expect(hash(plotImage(visual)) == hash(baseline), "stopped graph cannot animate on UI clock ticks");
+        save(visual, "grain-parameter-" + juce::String(names[size_t(skin)]) + "-" + juce::String(width));
+        if (width == 440) themeHashes[size_t(skin)] = hash(baseline);
+        for (auto field : {CreativeParameter::granularSize, CreativeParameter::granularDensity,
+                           CreativeParameter::granularPitch, CreativeParameter::granularPosition,
+                           CreativeParameter::granularJitter, CreativeParameter::granularReverse, CreativeParameter::granularFreeze}) {
+            const auto id = creativeParameterId(1, size_t(field));
+            auto* p = owner.parameters.getParameter(id); const auto initial = p->getValue();
+            const auto before = hash(visual.createComponentSnapshot(visual.getLocalBounds()));
+            p->setValueNotifyingHost(initial < .6f ? .85f : .15f); visual.refreshAt(9000);
+            checkGranularModel(visual, owner);
+            expect(hash(visual.createComponentSnapshot(visual.getLocalBounds())) != before,
+                   "unprepared host parameter edit must update granular geometry/labels immediately");
+            if (field == CreativeParameter::granularSize || field == CreativeParameter::granularDensity
+                || field == CreativeParameter::granularPitch || field == CreativeParameter::granularPosition)
+                expect(hash(plotImage(visual)) != hash(baseline), "length/density/pitch/lookback must change plot geometry, not only footer text");
+            p->setValueNotifyingHost(initial); visual.refreshAt(9000);
+            expect(hash(plotImage(visual)) == hash(baseline), "restoring parameters must restore exact graph framing");
+        }
+        auto& sequence = owner.*snapshotSequence(SnapshotSequence{});
+        expect((sequence.load() & 1u) == 0, "snapshot fixture starts coherent");
+        const auto beforeFailure = hash(visual.createComponentSnapshot(visual.getLocalBounds()));
+        sequence.fetch_add(1);
+        creative(owner, CreativeParameter::granularSize, 420);
+        parameter(owner, fxParameterId(1, "Mix"), 37);
+        const bool failedRead = !owner.getModulationSnapshot().consistent;
+        visual.refreshAt(10000);
+        const auto failedImage = hash(visual.createComponentSnapshot(visual.getLocalBounds()));
+        sequence.fetch_add(1);
+        expect(failedRead, "fixture must force the bounded parameter snapshot read to fail");
+        expect(failedImage == beforeFailure, "failed coherent snapshot must retain the entire previous graph without flicker");
+        visual.refreshAt(10000);
+        expect(hash(visual.createComponentSnapshot(visual.getLocalBounds())) != beforeFailure, "next coherent read must recover new parameter values");
+        creative(owner, CreativeParameter::granularSize, creativeParameters[size_t(CreativeParameter::granularSize)].initial);
+        parameter(owner, fxParameterId(1, "Mix"), 100); visual.refreshAt(10000);
+    }
+    expect(themeHashes[0] != themeHashes[1] && themeHashes[0] != themeHashes[2]
+        && themeHashes[1] != themeHashes[2], "parameter graphs retain all three distinct palettes");
+    root.removeFromDesktop();
+}
+void bridgeEffectivePitch() {
+    auto owner = std::make_unique<Processor>(); juce::String error;
+    expect(owner->setRoutingGraph(graph(), error), "install effective pitch bridge fixture");
+    const auto id = creativeParameterId(1, size_t(CreativeParameter::granularPitch));
+    auto* pitch = owner->parameters.getParameter(id); pitch->setValueNotifyingHost(.3f);
+    ModulationState state; state.modulators = {{1}};
+    state.modulators[0].waveform = ModulationWaveform::square; state.modulators[0].rateHz = .1f;
+    state.assignments = {{1, id, .2f, true}};
+    expect(owner->setModulationState(state, error), "install effective grain pitch modulation");
+    owner->prepareToPlay(48000, 64);
+    juce::AudioBuffer<float> audio(2, 64); juce::MidiBuffer midi;
+    for (int block = 0; block < 400; ++block) {
+        for (int channel = 0; channel < 2; ++channel) for (int sample = 0; sample < 64; ++sample)
+            audio.setSample(channel, sample, channel == 0 ? .2f : -.1f);
+        owner->processBlock(audio, midi);
+    }
+    RoutingGrainFrame frame;
+    expect(owner->readGrainSnapshot(1, frame) && frame.grains.count > 0 && frame.grains.capturedFrames > 0,
+           "effective pitch bridge needs actual nonempty DSP grains");
+    const auto effective = owner->getModulationSnapshot();
+    const auto target = std::find_if(effective.targets.begin(), effective.targets.end(), [&](const auto& t) { return t.parameterId == id; });
+    expect(effective.consistent && target != effective.targets.end(), "effective bridge pitch target exists");
+    const float effectivePitch = pitch->convertFrom0to1(target->effectiveNormalized);
+    expect(std::abs(effectivePitch - pitch->convertFrom0to1(pitch->getValue())) > 1, "bridge pitch modulation is active");
+    for (uint32_t grain = 0; grain < frame.grains.count; ++grain)
+        expect(std::abs(std::abs(frame.grains.grains[grain].step) - std::pow(2.f, effectivePitch / 12.f)) < .001f,
+               "actual grain playback rate must use effective pitch");
+    const auto sample = frame.grains.sample;
+    parameter(*owner, id, 12);
+    RoutingGrainFrame unchanged;
+    expect(owner->readGrainSnapshot(1, unchanged) && unchanged.grains.sample == sample,
+           "host-only pitch edit cannot invent an actual audio publication");
+    owner->releaseResources();
+}
 void integration() {
     auto storage = std::make_unique<Processor>(); auto& owner = *storage;
     owner.prepareToPlay(48000, 257);
@@ -98,20 +231,31 @@ void integration() {
         themeHashes[size_t(skin)] = hash(a);
         const std::array<const char*, 3> names{"device", "neon", "spectral"};
         auto file = juce::File::getCurrentWorkingDirectory().getChildFile(
-            juce::String("grain-live-") + names[size_t(skin)] + ".png");
+            juce::String("grain-parameter-playing-") + names[size_t(skin)] + ".png");
         auto stream = file.createOutputStream();
-        expect(stream && stream->openedOk(), "open live grain screenshot");
+        expect(stream && stream->openedOk(), "open playing parameter graph screenshot");
         stream->setPosition(0); stream->truncate();
-        expect(juce::PNGImageFormat().writeImageToStream(a, *stream), "save actual live grain visual");
+        expect(juce::PNGImageFormat().writeImageToStream(a, *stream), "save playing parameter graph");
     }
     expect(themeHashes[0] != themeHashes[1] && themeHashes[1] != themeHashes[2]
         && themeHashes[0] != themeHashes[2], "Device/Neon/Spectral palettes actually differ");
-    const auto still = hash(routing.createComponentSnapshot(routing.getLocalBounds()));
+    const auto still = hash(plotImage(routing));
+    const auto activeSample = frame.grains.sample;
+    const auto activeCount = frame.grains.count;
     routing.refresh();
-    expect(hash(routing.createComponentSnapshot(routing.getLocalBounds())) == still, "no invented grain motion without audio");
+    expect(hash(plotImage(routing)) == still, "parameter graph is stable without audio");
     for (int i = 0; i < 5; ++i) render();
     routing.refresh();
-    expect(hash(routing.createComponentSnapshot(routing.getLocalBounds())) != still, "new audio snapshot visibly moves grains");
+    expect(owner.readGrainSnapshot(1, frame) && frame.grains.sample > activeSample, "audio fixture really advances grain publication");
+    expect(hash(plotImage(routing)) == still, "new audio/active set must not move or autozoom the parameter graph");
+    bool changedCount = frame.grains.count != activeCount;
+    for (int block = 0; block < 160; ++block) {
+        render(); expect(owner.readGrainSnapshot(1, frame), "active-set fixture remains readable");
+        changedCount = changedCount || frame.grains.count != activeCount;
+        routing.refresh();
+        expect(hash(plotImage(routing)) == still, "spawn/expiry must not reframe axes or flicker the envelope graph");
+    }
+    expect(changedCount, "stability fixture must exercise a real active grain count change");
     for (bool dense : {false, true}) {
         creative(owner, CreativeParameter::granularDensity, dense ? 80.f : 12.f);
         creative(owner, CreativeParameter::granularSize, dense ? 500.f : 120.f);
@@ -134,11 +278,20 @@ void integration() {
     for (int i = 0; i < 30; ++i) render();
     expect(owner.readGrainSnapshot(1, frame) && frame.grains.frozen, "freeze snapshot is actual DSP state");
     const auto frozenHead = frame.grains.captureHead;
-    routing.refresh(); const auto frozenImage = hash(routing.createComponentSnapshot(routing.getLocalBounds()));
+    const auto frozenSample = frame.grains.sample;
+    const auto frozenGrains = frame.grains;
+    routing.refresh(); const auto frozenImage = hash(plotImage(routing));
     for (int i = 0; i < 5; ++i) render();
     routing.refresh();
     expect(owner.readGrainSnapshot(1, frame) && frame.grains.captureHead == frozenHead, "freeze holds capture head");
-    expect(hash(routing.createComponentSnapshot(routing.getLocalBounds())) != frozenImage, "frozen capture still has live grain playback");
+    expect(frame.grains.sample > frozenSample && frame.grains.count > 0, "frozen capture still publishes actual grain playback");
+    bool playbackMoved = frame.grains.count != frozenGrains.count;
+    for (uint32_t grain = 0; grain < std::min(frame.grains.count, frozenGrains.count); ++grain)
+        playbackMoved = playbackMoved || frame.grains.grains[grain].slot != frozenGrains.grains[grain].slot
+            || frame.grains.grains[grain].progress != frozenGrains.grains[grain].progress
+            || frame.grains.grains[grain].position != frozenGrains.grains[grain].position;
+    expect(playbackMoved, "freeze holds capture, not actual grain lifetime/read-position progression");
+    expect(hash(plotImage(routing)) == frozenImage, "frozen playback must not animate/reframe the parameter graph");
     save(routing, "grain-frozen");
     routing.setBounds(0, 0, 440, 238); routing.refresh();
     const auto last = hash(routing.createComponentSnapshot(routing.getLocalBounds()));
@@ -147,20 +300,36 @@ void integration() {
     render(); routing.refresh();
     expect(hash(routing.createComponentSnapshot(routing.getLocalBounds())) == last, "offscreen refresh performs no snapshot/model work");
     routing.setBounds(0, 0, 440, 238); routing.refresh();
-    const auto currentImage = hash(routing.createComponentSnapshot(routing.getLocalBounds()));
-    expect(owner.setRoutingGraph(graph(NodeType::delay), error), "replace granular");
+    const auto currentImage = hash(plotImage(routing));
+    auto replacement = graph(NodeType::delay);
+    // Type replacement normally resets creative parameters. Keep them fixed in
+    // this fixture to isolate grain-publication failure from legitimate edits.
+    for (size_t field = 0; field < creativeParameterCount; ++field) {
+        auto* p = owner.parameters.getParameter(creativeParameterId(1, field));
+        replacement.nodes[1].creative.values[field] = p->convertFrom0to1(p->getValue());
+    }
+    expect(owner.setRoutingGraph(replacement, error), "replace granular while retaining parameter values");
     expect(!owner.readGrainSnapshot(1, frame), "old granular data hidden immediately on request");
-    expect(hash(routing.createComponentSnapshot(routing.getLocalBounds())) != currentImage,
-           "paint rejects invalidated cache even before timer refresh");
+    expect(hash(plotImage(routing)) == currentImage,
+           "failed/invalidated actual snapshot must not erase the stored parameter graph");
     save(routing, "grain-replaced");
     render(); expect(!owner.readGrainSnapshot(1, frame), "replacement has no grains");
+    routing.refresh(); expect(hash(plotImage(routing)) == currentImage, "missing grain publication cannot reframe parameter graph");
     expect(owner.setRoutingGraph(graph(), error), "reuse granular slot"); render();
     expect(owner.readGrainSnapshot(1, frame) && frame.generation != generation, "slot reuse has fresh generation");
-    routing.refresh(); const auto beforeReset = hash(routing.createComponentSnapshot(routing.getLocalBounds()));
+    const auto beforeResetEpoch = frame.resetEpoch;
+    routing.refresh(); const auto beforeReset = hash(plotImage(routing));
     owner.reset(); expect(owner.readGrainSnapshot(1, frame) && frame.grains.count == 0 && frame.grains.capturedFrames == 0, "reset publishes empty capture");
-    expect(hash(routing.createComponentSnapshot(routing.getLocalBounds())) != beforeReset, "paint invalidates reset before next timer");
+    expect(frame.resetEpoch != beforeResetEpoch, "reset advances actual snapshot identity");
+    expect(hash(plotImage(routing)) == beforeReset, "audio reset cannot erase parameter graph before timer");
+    routing.refresh(); expect(hash(plotImage(routing)) == beforeReset, "audio reset cannot reframe parameter graph after refresh");
     routing.refresh(); save(routing, "grain-reset");
-    owner.releaseResources(); root.removeFromDesktop();
+    owner.releaseResources(); routing.refresh();
+    expect(hash(plotImage(routing)) == beforeReset, "released/stopped processor retains the parameter envelope graph");
+    creative(owner, CreativeParameter::granularSize, 420); routing.refresh();
+    expect(hash(plotImage(routing)) != beforeReset, "stopped processor still responds to host grain-length edits");
+    checkGranularModel(routing, owner);
+    save(routing, "grain-parameter-stopped"); root.removeFromDesktop();
 }
 struct Tempo final : juce::AudioPlayHead {
     double bpm = 90;
@@ -322,7 +491,7 @@ void layouts() {
 }
 int main() {
     juce::ScopedJuceInitialiser_GUI init;
-    try { bridgeOwnership(); integration(); delayTiming(); layouts(); }
+    try { bridgeOwnership(); parameterGraph(); bridgeEffectivePitch(); integration(); delayTiming(); layouts(); }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
-    std::cout << "Grain publication/live cloud/freeze/reset/themes/compact scrolling/delay timing/clipped Sync UI and host edits tests passed\n";
+    std::cout << "Stable granular parameter graph/publication/freeze/reset/themes/compact scrolling/delay timing/clipped Sync UI and host edits tests passed\n";
 }

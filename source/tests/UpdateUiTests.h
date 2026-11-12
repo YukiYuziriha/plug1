@@ -408,48 +408,29 @@ inline void creativeVisuals() {
             auto& p = ui::parameter(*owner, target.parameterId);
             write(*reference, target.parameterId, p.convertFrom0to1(target.effectiveNormalized));
         }
-        if (kinds[k] == CreativeKind::granular) {
-            // Granular is actual DSP telemetry, not a schematic of host/effective parameters.
-            for (int block = 0; block < 400; ++block) {
-                for (int channel = 0; channel < audio.getNumChannels(); ++channel)
-                    for (int sample = 0; sample < audio.getNumSamples(); ++sample)
-                        audio.setSample(channel, sample, channel == 0 ? .2f : -.1f);
-                owner->processBlock(audio, midi);
-            }
-            RoutingGrainFrame frame;
-            ui::require(owner->readGrainSnapshot(1, frame) && frame.grains.count > 0
-                            && frame.grains.capturedFrames > 0, "Granular visual needs a current, nonempty DSP cloud");
-            const auto effective = owner->getModulationSnapshot();
-            const auto pitchTarget = std::find_if(effective.targets.begin(), effective.targets.end(), [&](const auto& target) {
-                return target.parameterId == id;
-            });
-            ui::require(effective.consistent && pitchTarget != effective.targets.end(), "Granular pitch target missing");
-            const float effectivePitch = parameter.convertFrom0to1(pitchTarget->effectiveNormalized);
-            ui::require(std::abs(effectivePitch - ui::read(*owner, id)) > 1, "Granular pitch modulation fixture is inactive");
-            for (uint32_t grain = 0; grain < frame.grains.count; ++grain)
-                ui::near(std::abs(frame.grains.grains[grain].step), std::pow(2.f, effectivePitch / 12.f),
-                         "Actual grain playback rate ignored effective pitch", .001f);
-            visual.refresh();
-            const auto live = ui::render(visual);
-            ui::require(!samePixels(base, live), "Granular visual did not display published audio grains");
-            ui::near(ui::read(*owner, id), parameter.convertFrom0to1(.3f), "Grain visual changed host base");
-            // A host edit without another audio block must not invent a new cloud.
-            write(*owner, id, 12); visual.refresh();
-            ui::require(samePixels(live, ui::render(visual)), "Granular visual synthesized grains from a host base edit");
-            owner->reset(); visual.refresh();
-            ui::require(owner->readGrainSnapshot(1, frame) && frame.grains.count == 0 && frame.grains.capturedFrames == 0,
-                        "Granular reset did not publish empty DSP state");
-            ui::require(!samePixels(live, ui::render(visual)), "Granular visual retained the pre-reset cloud");
-            ui::require(visual.getTooltip().containsIgnoreCase("Actual DSP grains")
-                            && !visual.getTooltip().containsIgnoreCase("parameter-derived"), "Granular tooltip must describe real telemetry");
-            ui::passive(visual); owner->releaseResources();
-            continue;
-        }
+
         visual.refreshAt(modelTimeMs); expected.refreshAt(modelTimeMs);
         const auto modulated = ui::render(visual);
         const auto context = " (" + CreativeEffectPanel::effectName(kinds[k]) + ", " + themeName(theme) + ")";
         ui::require(!samePixels(base, modulated), "Creative visual ignored effective modulation" + context);
         ui::require(samePixels(modulated, ui::render(expected)), "Creative model mixed host bases and effective snapshot values" + context);
+        if (kinds[k] == CreativeKind::granular) {
+            const auto actual = visual.granularModel(), effective = expected.granularModel();
+            ui::require(visual.hasParameterSnapshot(), "Granular parameter model has no coherent snapshot");
+            ui::near(actual.lengthMs, effective.lengthMs, "Effective granular length");
+            ui::near(actual.densityHz, effective.densityHz, "Effective granular density");
+            ui::near(actual.spacingMs, effective.spacingMs, "Effective granular window spacing");
+            ui::near(actual.spanMs, effective.spanMs, "Effective granular axis span");
+            ui::near(actual.overlap, effective.overlap, "Effective granular overlap");
+            ui::near(actual.pitchSemitones, effective.pitchSemitones, "Effective granular pitch");
+            ui::near(actual.lookbackMs, effective.lookbackMs, "Effective granular lookback");
+            ui::near(actual.scatterMs, effective.scatterMs, "Effective granular scatter");
+            ui::near(actual.guardMs, effective.guardMs, "Effective granular pitch/freeze guard");
+            ui::near(actual.historyNearMs, effective.historyNearMs, "Effective granular history near");
+            ui::near(actual.historyFarMs, effective.historyFarMs, "Effective granular history far");
+            ui::require(actual.reverse == effective.reverse && actual.frozen == effective.frozen,
+                        "Granular model mixed effective discrete flags with host bases");
+        }
         double comparisonTimeMs = modelTimeMs + 125;
         if (kinds[k] == CreativeKind::delay) {
             ui::near(float(visual.timingPhase()), 0, "Fixed-time Delay comparison advanced phase");
@@ -474,7 +455,11 @@ inline void creativeVisuals() {
         ui::near(ui::read(*owner, id), parameter.convertFrom0to1(.3f), "Visual changed host base");
         write(*owner, "fx1On", 0); visual.refreshAt(comparisonTimeMs);
         ui::require(!samePixels(later, ui::render(visual)), "Creative visual did not display bypass" + context);
-        ui::require(visual.getTooltip().containsIgnoreCase("not a measured impulse response"), "Model must not claim live reverb telemetry");
+        if (kinds[k] == CreativeKind::granular)
+            ui::require(visual.getTooltip().containsIgnoreCase("parameter")
+                            && visual.getTooltip().containsIgnoreCase("not live"), "Granular tooltip must distinguish parameter envelopes from measured grains");
+        else
+            ui::require(visual.getTooltip().containsIgnoreCase("not a measured impulse response"), "Model must not claim live reverb telemetry");
         ui::passive(visual); owner->releaseResources();
     }
 }

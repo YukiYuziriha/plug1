@@ -5,12 +5,12 @@
 
 namespace vocalstack {
 
-// Message-thread models; granular reads only the Processor's owned audio snapshot.
+// Message-thread parameter models. Granular geometry is independent of audio state.
 class CreativeEffectVisual final : public juce::Component, public juce::SettableTooltipClient {
 public:
     CreativeEffectVisual(Processor& processor, size_t fxSlot, CreativeKind effectKind)
         : owner(processor), slot(fxSlot), kind(effectKind) {
-        setName(kind == CreativeKind::granular ? "Live grain snapshot" : "Effect parameter model");
+        setName(kind == CreativeKind::granular ? "Grain parameter envelope graph" : "Effect parameter model");
         setWantsKeyboardFocus(false);
         setMouseClickGrabsKeyboardFocus(false);
         setTooltip(kind == CreativeKind::granular
@@ -28,30 +28,25 @@ public:
     double timingPhase() const { return delayPhase; }
     void visibilityChanged() override { lastAnimationMs = -1; }
     void parentHierarchyChanged() override { lastAnimationMs = -1; }
-    void mouseMove(const juce::MouseEvent& event) override {
-        if (kind != CreativeKind::granular || !grainReady || !owner.isGrainSnapshotCurrent(grainFrame)) return;
-        int next = -1;
-        float distance = 18.f;
-        for (uint32_t i = 0; i < grainFrame.grains.count; ++i) {
-            const auto& grain = grainFrame.grains.grains[i];
-            const float candidate = grainPoints[grain.slot].getDistanceFrom(event.position);
-            if (candidate < distance) { distance = candidate; next = int(grain.slot); }
-        }
-        if (next != hoveredSlot) { hoveredSlot = next; repaint(); }
-        if (next < 0) setTooltip(grainDescription());
-        for (uint32_t i = 0; i < grainFrame.grains.count; ++i) {
-            const auto& grain = grainFrame.grains.grains[i];
-            if (int(grain.slot) == next)
-                setTooltip("DSP slot " + juce::String(next + 1) + " / ring " + number(grain.position * 100, 2)
-                    + "% / lifetime " + number(grain.progress * 100, 1) + "% / envelope " + number(grain.envelope, 3)
-                    + " / pan " + number(grain.pan, 2) + (grain.step < 0 ? " / reverse" : " / forward")
-                    + (grain.holdingBoundary ? " / boundary held" : ""));
-        }
-    }
-    void mouseExit(const juce::MouseEvent&) override {
-        hoveredSlot = -1;
-        if (kind == CreativeKind::granular) setTooltip(grainDescription());
-        repaint();
+    // Read-only rendering seam: units are milliseconds, Hz and nominal overlap.
+    // History is a fixed 3 s parameter guide, not available captured audio.
+    struct GranularModel {
+        float lengthMs, densityHz, spacingMs, spanMs, overlap;
+        float pitchSemitones, lookbackMs, scatterMs, guardMs, historyNearMs, historyFarMs;
+        bool frozen, reverse;
+    };
+    bool hasParameterSnapshot() const { return ready; }
+    GranularModel granularModel() const {
+        const float length = value(P::granularSize), density = value(P::granularDensity);
+        const float semitones = value(P::granularPitch), ratio = std::pow(2.f, semitones / 12.f);
+        const bool frozen = value(P::granularFreeze) >= .5f, reverse = value(P::granularReverse) >= .5f;
+        // Nominal playback guard, excluding the DSP's sample-rate-dependent
+        // interpolation padding and startup/recorded-history clamps.
+        const float guard = length * (frozen ? ratio : reverse ? 0.f : std::max(0.f, ratio - 1.f));
+        const float near = std::clamp(value(P::granularPosition) + guard, 0.f, 3000.f);
+        return {length, density, 1000.f / density, std::max(500.f, length * 3.f), length * density * .001f,
+                semitones, value(P::granularPosition), value(P::granularJitter), guard, near,
+                std::min(3000.f, near + length * ratio + value(P::granularJitter)), frozen, reverse};
     }
     bool visibleInHierarchy() const {
         if (!isShowing()) return false;
@@ -67,15 +62,6 @@ public:
     // a parameter-timed illustration, not host transport or measured audio.
     void refreshAt(double nowMs) {
         if (!visibleInHierarchy()) { lastAnimationMs = -1; return; }
-        if (kind == CreativeKind::granular) {
-            const auto generation = grainFrame.generation;
-            grainReady = owner.readGrainSnapshot(slot, grainFrame);
-            if (!grainReady || generation != grainFrame.generation) {
-                hoveredSlot = -1; setTooltip(grainDescription());
-            }
-            repaint();
-            return;
-        }
         auto next = owner.getModulationSnapshot();
         // Preserve the entire previous model on a failed bounded snapshot read.
         if (next.consistent) {
@@ -99,11 +85,7 @@ public:
         repaint();
     }
     void paint(juce::Graphics& g) override {
-        // A hidden view may become visible before its next timer refresh. Never
-        // paint its cached cloud after a reset/removal/reuse in the meantime.
-        if (kind == CreativeKind::granular && grainReady && !owner.isGrainSnapshotCurrent(grainFrame)) {
-            grainReady = false; hoveredSlot = -1; setTooltip(grainDescription());
-        }
+
         const auto c = themePalette(*this, neon);
         auto b = getLocalBounds().toFloat();
         g.setColour(c.inset); g.fillRoundedRectangle(b, 5);
@@ -111,10 +93,8 @@ public:
         b.reduce(8, 8);
         if (kind == CreativeKind::granular) { granular(g, b, {}, c); return; }
         if (kind == CreativeKind::delay) { delay(g, b, {}, c); return; }
-        text(g, b.removeFromTop(16), kind == CreativeKind::granular ? "ACTUAL GRAIN SNAPSHOT" : (enabled ? "PARAMETER MODEL" : "BYPASS | stored parameter model"), c.text);
-        text(g, b.removeFromTop(15), kind == CreativeKind::granular
-            ? (grainReady ? "Audio-thread state / no extrapolation" : "Waiting for current audio snapshot")
-            : (ready ? "Effective targets / base if unassigned" : "Waiting for coherent parameter snapshot"), c.muted);
+        text(g, b.removeFromTop(16), enabled ? "PARAMETER MODEL" : "BYPASS | stored parameter model", c.text);
+        text(g, b.removeFromTop(15), ready ? "Effective targets / base if unassigned" : "Waiting for coherent parameter snapshot", c.muted);
         auto footer = b.removeFromBottom(43);
         b.removeFromBottom(15); // Dedicated axis-label row.
         auto plot = b.withTrimmedLeft(23).withTrimmedRight(5).reduced(0, 6);
@@ -130,10 +110,10 @@ public:
 private:
     using P = CreativeParameter;
     static juce::String grainDescription() {
-        return "Actual DSP grains, never extrapolated. Read zoom: percent of valid capture from oldest (0%) to newest (100%). "
-               "Each envelope is a stable DSP slot; hover for its ID and exact values. Cursor: lifetime; brightness/height: envelope; "
-               "arrow: playback direction; colour: stereo pan. Stable slot separation avoids fixed empty rows. "
-               "The upper ring rail marks valid audio and capture head. Freeze holds capture, not grain playback.";
+        return "Parameter envelope graph, not live audio or measured grains. Fixed example windows show grain length and nominal "
+               "density/overlap using coherent effective targets (host base if unassigned). The 3 s history guide shows requested "
+               "lookback, nominal pitch guard and scatter in milliseconds, not recorded audio. Interpolation padding, startup clamps, "
+               "random timing and the live voice limit are not simulated. Freeze holds capture, not grain playback.";
     }
     float value(P p) const { return values[size_t(p)]; }
     static juce::String number(double v, int decimals = 1) {
@@ -246,101 +226,80 @@ private:
         g.setColour(c.border); g.fillRect(progress);
         g.setColour(c.text); g.fillRect(progress.withWidth(progress.getWidth() * float(delayPhase)));
     }
-    void granular(juce::Graphics& g, juce::Rectangle<float> r, juce::Rectangle<float>, const ThemePalette& c) {
-        text(g, r.removeFromTop(17), "GRAIN CLOUD / SNAPSHOT", c.text);
-        if (!grainReady) {
-            text(g, r.removeFromTop(18), "Awaiting current audio", c.muted);
-            return;
-        }
-        const auto& frame = grainFrame.grains;
-        const auto state = frame.frozen ? "FROZEN" : frame.capturing ? "CAPTURING" : "IDLE";
-        text(g, r.removeFromTop(17), juce::String(state) + " / " + juce::String(frame.count) + " grains", frame.frozen ? c.accent : c.secondary);
-        auto footer = r.removeFromBottom(49);
-        auto rail = r.removeFromTop(6).reduced(0, 1);
-        g.setColour(c.border); g.fillRoundedRectangle(rail, 2);
-        const auto captureColour = frame.frozen ? c.accent : c.secondary;
-        const float start = frame.captureHead - frame.validFraction;
-        const auto segment = [&](float left, float right) {
-            if (right <= left) return;
-            g.setColour(captureColour);
-            g.fillRect(rail.withX(rail.getX() + left * rail.getWidth()).withWidth((right - left) * rail.getWidth()));
-        };
-        if (start < 0) { segment(0, frame.captureHead); segment(1 + start, 1); }
-        else segment(start, frame.captureHead);
-        const float head = rail.getX() + frame.captureHead * rail.getWidth();
-        g.setColour(c.text); g.drawLine(head, rail.getY() - 2, head, rail.getBottom() + 2, 1.5f);
-        r.removeFromTop(8); r.removeFromBottom(4);
-        g.setColour(c.border.withAlpha(.5f));
-        g.drawHorizontalLine(int(r.getCentreY()), r.getX(), r.getRight());
-        // Zoom only valid captured audio: ring coordinates unwrap at its oldest
-        // sample. No grain is invented, culled or moved forward between frames.
-        const float span = std::max(frame.validFraction, .000001f);
-        const float oldest = frame.captureHead - frame.validFraction;
-        const auto capturePosition = [&](const auto& grain) {
-            float offset = grain.position - oldest;
-            offset -= std::floor(offset);
-            return std::clamp(offset / span, 0.f, 1.f);
-        };
-        float viewStart = 1, viewEnd = 0;
-        for (uint32_t i = 0; i < frame.count; ++i) {
-            const float position = capturePosition(frame.grains[i]);
-            viewStart = std::min(viewStart, position); viewEnd = std::max(viewEnd, position);
-        }
-        // Frame the occupied read window, not eight seconds of mostly unused
-        // ring. Axis labels remain coordinates within the valid capture span.
-        const float padding = std::max(.025f, (viewEnd - viewStart) * .15f);
-        viewStart = std::max(0.f, viewStart - padding);
-        viewEnd = std::min(1.f, std::max(viewStart + .05f, viewEnd + padding));
-        if (frame.count == 0) { viewStart = 0; viewEnd = 1; }
-        uint32_t reverse = 0, holding = 0;
-        const float halfWidth = r.getWidth() < 240 ? 8.f : 14.f;
-        for (uint32_t i = 0; i < std::min<uint32_t>(frame.count, uint32_t(frame.grains.size())); ++i) {
-            const auto& grain = frame.grains[i];
-            const float position = (capturePosition(grain) - viewStart) / std::max(.000001f, viewEnd - viewStart);
-            const float x = r.getX() + halfWidth + position * std::max(1.f, r.getWidth() - halfWidth * 2);
-            // Stable slot separation keeps coincident positions readable, with
-            // a small pan offset. Colour, not y, is the primary pan encoding.
-            const float stagger = (float((grain.slot * 13) % 32) / 31.f - .5f) * .76f;
-            const float y = r.getY() + 19.f + std::max(1.f, r.getHeight() - 38.f) * (.5f + grain.pan * .08f + stagger);
-            grainPoints[grain.slot] = {x, y};
-            const auto colour = grain.pan < 0 ? c.secondary : c.accent;
-            const float envelope = std::clamp(grain.envelope, 0.f, 1.f);
-            const float height = 6.f + 9.f * envelope;
-            juce::Path window;
-            window.startNewSubPath(x - halfWidth, y);
-            for (int step = 1; step <= 20; ++step) {
-                const float t = float(step) / 20;
-                const float hann = .5f - .5f * std::cos(t * juce::MathConstants<float>::twoPi);
-                window.lineTo(x - halfWidth + 2 * halfWidth * t, y - hann * height);
+    void granular(juce::Graphics& g, juce::Rectangle<float> r, juce::Rectangle<float>, const ThemePalette& c) const {
+        const auto model = granularModel();
+        const bool narrow = r.getWidth() < 280;
+        text(g, r.removeFromTop(16), narrow ? "PARAMETER ENVELOPES" : "GRAIN PARAMETER ENVELOPES", c.text);
+        text(g, r.removeFromTop(15), !enabled ? "Bypass / not live audio" : model.frozen ? "Freeze / not live audio" : "Model / not live audio", c.muted);
+        auto footer = r.removeFromBottom(48);
+        auto historyLabel = r.removeFromTop(14);
+        text(g, historyLabel, "History guide", c.secondary);
+        g.setColour(c.muted); g.drawText("3 s", historyLabel, juce::Justification::centredRight);
+        auto history = r.removeFromTop(8).reduced(1, 1);
+        const auto historyX = [&](float age) { return history.getRight() - age / 3000.f * history.getWidth(); };
+        g.setColour(c.border); g.fillRoundedRectangle(history, 2);
+        auto region = juce::Rectangle<float>(historyX(model.historyFarMs), history.getY(),
+            std::max(2.f, (model.historyFarMs - model.historyNearMs) / 3000.f * history.getWidth()), history.getHeight());
+        g.setGradientFill(juce::ColourGradient(c.secondary.withAlpha(.18f), region.getX(), region.getY(),
+            c.secondary.withAlpha(.7f), region.getRight(), region.getY(), false));
+        g.fillRoundedRectangle(region, 2);
+        g.setColour(c.accent);
+        g.drawLine(historyX(model.historyNearMs), history.getY() - 2, historyX(model.historyNearMs), history.getBottom() + 2, 1.5f);
+        r.removeFromTop(5);
+        auto historyAxis = r.removeFromTop(13);
+        text(g, historyAxis, "-3000 ms", c.muted);
+        g.setColour(c.muted); g.drawText("0", historyAxis, juce::Justification::centredRight);
+        r.removeFromTop(4);
+        auto timeAxis = r.removeFromBottom(16);
+        auto plot = r.reduced(1, 2);
+        if (plot.getHeight() > 0 && plot.getWidth() > 0) {
+            g.setGradientFill(juce::ColourGradient(c.secondary.withAlpha(.065f), plot.getX(), plot.getY(),
+                c.inset.withAlpha(0.f), plot.getX(), plot.getBottom(), false));
+            g.fillRect(plot);
+            grid(g, plot, c.border.withAlpha(.45f));
+            const auto xFor = [&](float ms) { return plot.getX() + ms / model.spanMs * plot.getWidth(); };
+            // Original stable overlapping example windows, including the tails
+            // of preceding windows. Neither wall clock nor live grains enter.
+            juce::Graphics::ScopedSaveState saved(g);
+            g.reduceClipRegion(plot.toNearestInt());
+            const int preceding = int(std::ceil(model.lengthMs / model.spacingMs));
+            const int following = int(std::ceil(model.spanMs / model.spacingMs));
+            for (int grain = -preceding; grain <= following; ++grain) {
+                const float start = float(grain) * model.spacingMs;
+                const float from = std::max(0.f, -start / model.lengthMs);
+                const float to = std::min(1.f, (model.spanMs - start) / model.lengthMs);
+                if (from >= to) continue;
+                juce::Path window;
+                for (int i = 0; i <= 64; ++i) {
+                    const float phase = from + (to - from) * float(i) / 64.f;
+                    const float envelope = 16.f * phase * phase * (1.f - phase) * (1.f - phase);
+                    const float x = xFor(start + phase * model.lengthMs);
+                    const float y = plot.getBottom() - envelope * plot.getHeight() * .82f;
+                    if (i == 0) window.startNewSubPath(x, y); else window.lineTo(x, y);
+                }
+                auto fill = window;
+                fill.lineTo(window.getCurrentPosition().x, plot.getBottom());
+                fill.lineTo(xFor(start + from * model.lengthMs), plot.getBottom()); fill.closeSubPath();
+                const auto colour = grain % 2 == 0 ? c.secondary : c.accent;
+                g.setGradientFill(juce::ColourGradient(colour.withAlpha(.16f), plot.getX(), plot.getY(),
+                    colour.withAlpha(.015f), plot.getX(), plot.getBottom(), false));
+                g.fillPath(fill);
+                g.setColour(colour.withAlpha(grain == 0 ? .95f : .5f));
+                g.strokePath(window, juce::PathStrokeType(grain == 0 ? 1.6f : .9f));
             }
-            g.setColour(colour.withAlpha(.12f + .18f * envelope));
-            g.fillPath(window);
-            g.setColour(colour.withAlpha(.5f + .5f * envelope));
-            g.strokePath(window, juce::PathStrokeType(1.2f));
-            const float cursor = x - halfWidth + 2 * halfWidth * std::clamp(grain.progress, 0.f, 1.f);
-            g.drawLine(cursor, y - height, cursor, y + 2, 1.f);
-            const float direction = grain.step < 0 ? -1.f : 1.f;
-            g.drawLine(x, y, x + direction * 5, y, 1);
-            g.drawLine(x + direction * 5, y, x + direction * 3, y - 2, 1);
-            g.drawLine(x + direction * 5, y, x + direction * 3, y + 2, 1);
-            if (frame.count <= 8 || hoveredSlot == int(grain.slot))
-                text(g, {x - halfWidth, y + 3, 2 * halfWidth + 3, 13}, juce::String(grain.slot + 1), colour);
-            if (hoveredSlot == int(grain.slot)) {
-                g.setColour(c.text); g.drawEllipse(x - 4, y - 4, 8, 8, 1);
-            }
-            if (grain.holdingBoundary) {
-                g.setColour(c.text); g.drawEllipse(x - 3, y - 3, 6, 6, 1);
-                ++holding;
-            }
-            if (grain.step < 0) ++reverse;
+            // One complete window's duration; density controls the spacing of
+            // every curve, not its width or the plotted time range.
+            const float y = plot.getY() + 2, end = xFor(model.lengthMs);
+            g.setColour(c.secondary);
+            g.drawLine(plot.getX(), y, end, y, 1);
+            g.drawLine(plot.getX(), y, plot.getX(), y + 4, 1);
+            g.drawLine(end, y, end, y + 4, 1);
         }
-        auto axisRow = footer.removeFromTop(16);
-        text(g, axisRow, number(viewStart * 100, 0) + "%", c.muted);
-        g.setColour(c.muted); g.drawText(number(viewEnd * 100, 0) + "%", axisRow, juce::Justification::centredRight);
-        g.drawText("Read zoom", axisRow, juce::Justification::centred);
-        text(g, footer.removeFromTop(16), juce::String(reverse) + " reverse / " + juce::String(holding) + " held", c.secondary);
-        text(g, footer, "Valid " + number(frame.validFraction * 100, 1) + "% / pan colour", c.muted);
-        if (frame.count == 0) text(g, r, frame.capturedFrames == 0 ? "Capture empty" : "No active grains", c.muted);
+        text(g, timeAxis, "0 ms", c.muted);
+        g.setColour(c.muted); g.drawText(number(model.spanMs, 0) + " ms", timeAxis, juce::Justification::centredRight);
+        text(g, footer.removeFromTop(16), number(model.lengthMs, 0) + " ms length / " + number(model.densityHz, 0) + " Hz", c.text);
+        text(g, footer.removeFromTop(16), "Overlap " + number(model.overlap, 1) + "x / " + pitch(model.pitchSemitones), c.secondary);
+        text(g, footer, "Lookback " + number(model.lookbackMs, 0) + " ms / " + (model.reverse ? "Rev" : "Fwd"), c.muted);
     }
     void compressor(juce::Graphics& g, juce::Rectangle<float> r, juce::Rectangle<float> f, const ThemePalette& c) const {
         const float threshold = value(P::compressorThreshold), knee = value(P::compressorKnee);
@@ -399,10 +358,6 @@ private:
         text(g, f, "Static stair transfer; hold / filter / noise omitted", c.muted);
     }
     Processor& owner;
-    RoutingGrainFrame grainFrame{};
-    std::array<juce::Point<float>, 32> grainPoints{};
-    int hoveredSlot = -1;
-    bool grainReady = false;
     size_t slot;
     CreativeKind kind;
     std::array<float, creativeParameterCount> values = CreativeSettings{}.values;
