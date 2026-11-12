@@ -1,6 +1,6 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.8.0
+## Current status — 1.8.0 released; next update in progress
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
@@ -70,6 +70,197 @@ UI-only scope: no audio DSP, host parameter IDs/counts or parameter ranges chang
   Informational UI timings, not native presentation FPS or audio deadline safety.
 - [x] Render 12 expanded views across three themes and 15 existing update views;
   publish `VocalStack-Expanded-Routing.png`.
+
+### Next update — delivery order and acceptance plan
+
+The following is approved/requested work, not a claim of delivery. Routing/UI
+and splitter source edits exist locally but have not completed build, regression,
+screenshot or package validation. Stack FX rack, reverb calibration and the broader
+DSP audit are planned; no upstream replacement algorithm has been selected yet.
+Do not install these partial changes or describe them as a validated release.
+
+Delivery order: **finish routing/modulation fixes and Splitter → audit baseline
+and references → reverb correction → granular hardening/live visualization →
+Stack Main Bus FX rack → remaining FX audit → integrated release validation**.
+Independent research/tests may run in parallel, with disjoint edit ownership.
+Do not add unrelated effects while this work is being polished. Backward
+compatibility is not a priority; avoid speculative migration infrastructure.
+
+#### 1. Finish the requested routing and modulation corrections
+
+- [ ] Replace downward-only expansion placement with bounded, deterministic 2D
+  packing that uses horizontal viewport space and wraps sensibly. Bulk expansion
+  plans final card sizes together rather than dodging soon-to-disappear compact
+  cards. Keep useful controls visible without fitting everything to unreadable size.
+- [ ] Preserve separate compact/expanded arrangements and deliberate manual moves.
+  Single expansion should reveal its target; repeated expansion should not destroy
+  the user's arrangement. Inspect existing automatic positions without guessing
+  that every unusual position is safe to overwrite.
+- [ ] Halve the left modulator rail width (132 → 66 px) and tile height/stride
+  (88 → 44 px). Keep selection, names/tooltips and preview traces usable.
+- [ ] Draw the configured LFO using the DSP evaluator, including waveform, phase,
+  skew, polarity and amount; Random uses actual published output history.
+- [ ] Add an always-reachable, sticky bottom modulation-panel hide/show control.
+  Selecting another modulator must not reopen it; persist independently from the
+  right inspector and retain Assign/selection behavior and DAW shortcuts.
+- [ ] Fix doubled-looking sliders. One identified source is the extra full-length
+  eligibility rail whenever an LFO is selected: remove that duplicate rail while
+  retaining assigned-range/effective-value feedback on the primary track. Verify
+  rendering and thumb/track alignment, rather than assuming this is the only cause.
+- [ ] Add **Splitter**: one input, outputs A/B carrying identical full-level signal
+  copies, independent cables, no FX-slot or host-parameter cost. Preserve band and
+  source provenance, so existing merge compensation still works. Not a crossover
+  and not a -6 dB power split. Cover rewiring, nested splits, cycles and state/presets.
+- [ ] Validate all of the above across three themes, narrow/wide windows, zoom,
+  state recall and Undo; render multi-card layouts and measure UI work again.
+
+Current implementation bounds remain **48 total nodes, 16 effects, 128 links,
+eight generated voices plus Lead**. Fixed-capacity audio storage and predeclared
+FX automation slots explain these limits; do not raise them merely to implement
+Splitter or the Stack rack. Measure memory/CPU and redesign deliberately if a
+future limit increase is requested.
+
+#### 2. Establish an engineering audit and reference baseline
+
+- [ ] Inventory DSP, routing/host integration and visuals for every effect. Record
+  each finding with a reproducible case, severity and a keep/repair/replace decision.
+  Include shared gain staging, dry/wet blend, latency/bypass, smoothing and meters.
+- [ ] Capture deterministic baseline audio and measurements before sonic changes:
+  impulses, noise, tones, stereo/correlated inputs and reproducible vocal-like
+  transients; no private audio sent to external services. Retain scripts/settings
+  so before/after comparisons can be reproduced locally.
+- [ ] Inspect mature open-source candidates at pinned revisions; record actual
+  code paths, license/attribution, dependencies, supported behavior, memory/CPU
+  costs and suitability. Popularity is not proof of quality or a promise to adopt.
+  Candidate research, **not yet inspected/selected**:
+  - Reverb: Dragonfly/Freeverb3; JUCE's Freeverb-derived implementation as another
+    reference/baseline, not an automatic replacement for the requested feature set.
+  - Granular: Mutable Instruments Clouds granular code; inspect Signalsmith's
+    available time/pitch DSP for applicable supporting techniques, without claiming
+    a ready-made granular replacement exists there.
+  - Dynamics/nonlinear FX: select explicit detector/envelope/knee and antialiasing
+    references after inventory; no named implementation is approved by default.
+- [ ] Reuse a coherent, suitable DSP implementation where it improves correctness
+  or quality. Preserve interpolation, smoothing, normalization, feedback and state
+  handling—not just a central equation. Retain pinned source/license/provenance
+  and document deliberate adaptations. Do not import branding or factory presets.
+- [ ] Where feasible, run the adapted implementation and retained upstream code
+  with identical inputs/settings; establish equivalence or document differences.
+  Separate faithful port checks from intentional calibration or feature changes.
+
+#### 3. Reverb first — wet-level calibration and algorithm quality
+
+- [ ] Reproduce the reported volume collapse as Wet increases. Measure dry-only,
+  wet-only and blend sweeps, first with ducking/swell/saturation/pitched feedback
+  disabled, then independently enabled. Default ducking must be distinguished
+  from a normalization or blend bug; do not assign a cause without measurements.
+- [ ] Audit input/output scaling, early/late balance, diffusion, delay lengths,
+  feedback matrix, damping, interpolation and stereo summing. Measure impulse
+  decay/RT60 at representative sizes, decay and sample rates, including extremes.
+- [ ] Decide repair versus upstream-based replacement from that evidence. Preserve
+  the useful adjustable feature set (predelay, diffusion, damping, width, early
+  reflections, ducking, swell, pitched feedback/freeze), or explicitly document
+  controls whose semantics must change. Do not fake controls that no longer work.
+- [ ] Calibrate a bounded wet gain and an appropriate documented blend law. Wet
+  should not collapse unintentionally; do not promise identical loudness for all
+  signals/decays. Compare correlated/decorrelated material before choosing linear
+  versus equal-power behavior. No unrestricted tail/noise AGC, hidden limiter or
+  concealed dry feed at 100% wet. Add wet/output trim only if measurements justify it.
+- [ ] Validate freeze entry/exit, pitch feedback, tail stability, parameter sweeps,
+  silence/reset, finite output and peak headroom. Update defaults/presets to match
+  verified new behavior; distinguish nominal decay guides from measured/live data.
+
+#### 4. Granular — technically trustworthy, musically useful and honest visuals
+
+"Best" or "perfect" is an ambition, not a test result. Establish a robust baseline
+and measurable acceptance criteria before adding more modes or controls.
+
+- [ ] Audit capture/read buffers, valid read windows, wrapping, pitch interpolation,
+  reverse playback and frozen-buffer boundaries at all supported rates. Check
+  partially filled buffers and allocation/reset behavior before relying on presets.
+- [ ] Verify grain scheduling, length/density limits, window/envelope continuity,
+  overlap normalization, pan law/stereo coherence, position/scatter distributions,
+  gain buildup and bounded voice count/voice stealing. Test sparse and dense cases;
+  intentional sparse grain gaps must not be confused with a calibration defect.
+- [ ] Remove unintended clicks during continuous automation, grain births/deaths,
+  freeze/unfreeze and state transitions. Preserve intentional crushing/distortion;
+  do not hide errors behind a blanket low-pass or limiter.
+- [ ] Compare the current design with the selected reference, then keep, repair or
+  replace coherently. Prioritize playable vocal clouds, pitch texture and repeatable
+  control behavior; an upstream reference is not automatically the desired sound.
+- [ ] Publish bounded, lock-free snapshots of actual active grain positions,
+  progress/envelopes, direction and freeze/capture state. Render those in the UI,
+  not random decorative particles or the current parameter-only schematic. Add a
+  decimated buffer/waveform view if useful, with bounded audio publication costs.
+- [ ] Use the same visual model in Routing and Stack, themed for Device/Neon/Spectral.
+  Keep labels and interaction legible, and stop offscreen visual work. Visualizations
+  must not allocate, lock or touch GUI objects from the audio callback.
+
+#### 5. Stack Main Bus FX rack — fast view of the same routing nodes
+
+- [ ] Replace the fixed Stack Chorale area with **+ FX** and compact effect cards,
+  visually consistent with voice cards. Include Granular and ordinary serial audio
+  effects (Chorale, Waveshaper, Bitcrusher, Compressor, Delay, Reverb, EQ, filters and
+  utilities); exclude structural nodes such as Splitter and Multiband.
+- [ ] Use an effect-appropriate horizontal/compact layout, not a squeezed vertical
+  inspector. Share host bindings, modulation targets and visual models. Provide
+  enable, remove, clear identity/name and a dedicated drag handle for reordering.
+- [ ] Allow duplicate effects with independent parameters/state. Reuse the existing
+  routing FX-slot pool and total-node limit; show capacity exhaustion clearly.
+  No second hidden engine or separate allowance of extra FX slots.
+- [ ] Every card is the same node visible in Routing, like the current main Chorale.
+  Adding/removing/reordering commits validated main-bus topology changes with Undo;
+  selecting/editing/layout changes alone must not republish topology. Surviving
+  instances retain stable IDs, automation and DSP history during reorder.
+- [ ] Define the eligible main-bus serial segment explicitly, using the existing
+  main Mix → main Chorale → Output path as the starting model. Keep rack effects
+  before final Output trim. Display existing eligible main-bus FX, not per-voice FX.
+- [ ] Never flatten a custom parallel graph or infer a destructive chain rewrite.
+  Detect ambiguous/branched paths, explain why rack insertion/reorder is unavailable,
+  and leave routing untouched. Ask the user before introducing a new ambiguous
+  insertion rule; do not block normal parameter editing of identifiable instances.
+- [ ] Verify cross-view synchronization, shared capacity, duplicate IDs, reorder,
+  removal, modulation/automation, preset/session recall and one-step graph Undo.
+
+#### 6. Remaining effects and shared engine audit
+
+- [ ] Delay: fractional reads/interpolation, tempo/time/pitch automation, feedback
+  filtering/saturation, ping-pong stereo energy, ducking, maximum delay and tails.
+- [ ] Compressor/Gate: detector HP and stereo linking, dB/linear conversions,
+  threshold/ratio/knee transfer, attack/release semantics, gain smoothing, makeup
+  and measured gain-reduction display. Test pulses and sustained inputs.
+- [ ] Bitcrusher/Waveshaper: quantization/DC bias/dither, sample-rate reduction,
+  interpolation/hold behavior, drive normalization, antialiasing quality/cost and
+  output headroom. Preserve explicitly chosen raw/aliasing character modes.
+- [ ] Chorale, voice pitch/formant and filters: inspect modulation/interpolation,
+  stability, latency and phase behavior. Existing Vital reference comparisons remain
+  evidence for their covered paths, not blanket certification of all filter behavior.
+- [ ] Shared routing/state: source merge compensation, mono/stereo channel handling,
+  bypass/tails, instance reuse and preset restoration. Fix evidenced defects rather
+  than rewriting working modules merely because another implementation exists.
+
+#### 7. Acceptance and release gate
+
+- [ ] For DSP changes, run offline tests at 44.1/48/96 kHz and all other supported
+  rate boundaries, mono/stereo, irregular/small blocks, silence/reset, extremes,
+  rapid automation, tails/freeze, state recall and repeated prepare cycles. Check
+  finite output, clipping/headroom, declared latency and actual dry/wet endpoints.
+- [ ] Add quantitative per-effect assertions from measured/reference baselines;
+  publish methodology and tolerances. Do not use self-comparison alone to claim
+  correctness, or arbitrary gain caps to claim a polished algorithm.
+- [ ] Confirm no audio-thread allocations, locks or I/O. Profile single effects and
+  the full heavy patch, worst small-block time as well as average throughput,
+  expanded UI/Stack visuals and multiple instances. Compare at equivalent quality.
+- [ ] Run host/state/automation, preset and UI regressions; render all three themes
+  and check control gestures/keyboard focus. Add focused tests for every fixed bug.
+- [ ] Keep technical acceptance separate from listening preference. Produce local,
+  level-matched before/reference/after examples where valid; do the engineering
+  comparison without requiring the user to perform hours of reference testing.
+  Final Bitwig transport/listening and musical taste still require an actual host
+  session; do not claim those checks without doing them.
+- [ ] Version/docs, complete Release CLAP/VST3 build, tracked package hash match,
+  packaged CLAP smoke, commit and push. Install as requested only after validation
+  and while binaries are unlocked; never terminate Bitwig to force installation.
 
 ### Implementation boundaries
 
