@@ -16,7 +16,8 @@ Neon/Spectral screenshots were reviewed. No DSP or host parameters change.
 Release artifacts were copied to tracked `Windows-x64`, the FX-tabs screenshot
 was refreshed, and packaged CLAP smoke passed. Installation preflight was blocked
 by the installed CLAP being in use: neither installed format changed, so **1.9.4
-remains installed**. Close Bitwig before retrying. Commit/push remain pending;
+remains installed**. Close Bitwig before retrying. Release source and matching
+packages were committed as `e9f2b48` and pushed to `origin/main`;
 no actual DAW listening or native FPS result is claimed. See the
 [1.9.5 validation record](docs/Release-1.9.5-Validation.md).
 
@@ -833,7 +834,8 @@ Packaged CLAP smoke passed: 2087 automatable parameters at original indices,
 stereo 48 kHz, mono-to-stereo 44.1 kHz, 1344-sample latency, mono 96 kHz with
 2688-sample latency, and state/latency/bypass/automation/offline-layout checks.
 Installation preflight was blocked by the installed CLAP being in use; neither
-format changed and 1.9.4 remains installed. Commit/push remain pending;
+format changed and 1.9.4 remains installed. Release source and matching packages
+were committed as `e9f2b48` and pushed to `origin/main`;
 package hashes and details are in the [validation report](docs/Release-1.9.5-Validation.md).
 
 **Historical 1.9.4:** full Release build, all **34 focused CTests (209.76 s)**, 67 editor

@@ -2,7 +2,8 @@
 
 ## Current status — 1.9.5 built, tested and packaged; installation blocked
 
-UI-only, currently uncommitted: no DSP or host parameter changes.
+UI-only: no DSP or host parameter changes. Release source and matching packages
+are committed as `e9f2b48` and pushed to `origin/main`.
 
 - [x] Flat 25 px textured long FX Mix bars: theme-colored coherent mineral noise
   at coarse 3 px scale, cached at 15 Hz; exact marker and separate upper modulation
@@ -29,13 +30,13 @@ UI-only, currently uncommitted: no DSP or host parameter changes.
 - [ ] **Installation blocked:** `install-release.ps1` preflight found the installed
   CLAP in use. No installed files changed in either format; **1.9.4 remains
   installed**. User asked to close Bitwig before retrying installation/verification.
-- [ ] Commit and push the release with matching packages.
+- [x] Commit and push the release with matching packages: `e9f2b48` on `origin/main`.
 - [ ] Actual DAW visual/listening/transport/automation/recall and native FPS checks.
 
 The long legacy DSP suite was not rerun. Screenshot review is not a real-DAW
 listening or FPS result. Packaging and smoke are complete; installation is blocked,
-not completed. Commit/push are the next parent steps, with installation retry
-requiring Bitwig to be closed; see [1.9.5 validation](docs/Release-1.9.5-Validation.md).
+not completed. Release commit `e9f2b48` is pushed to `origin/main`; installation
+retry awaits Bitwig being closed. See [1.9.5 validation](docs/Release-1.9.5-Validation.md).
 
 ### Historical 1.9.4 — built, validated, packaged and installed
 

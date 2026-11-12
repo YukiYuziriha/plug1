@@ -2,7 +2,7 @@
 
 ## Status and evidence boundary
 
-The current, uncommitted UI changes have a successful **full Release 1.9.5
+The UI changes have a successful **full Release 1.9.5
 build** and **34/34 focused CTests passed in 225.47 s**, including **68 editor
 groups**. Initial editor validation passed **68 groups in 90 s**. Independent
 static review found **no blockers**.
@@ -12,8 +12,9 @@ validation evidence; this documentation update did not rerun builds or tests.
 **Package refresh and packaged CLAP smoke are complete. Installation is blocked:**
 `source/build/install-release.ps1` preflight found the installed CLAP in use and
 changed **no installed files in either format**. **1.9.4 remains installed.**
-The user has been asked to close Bitwig before retrying. Commit and push remain
-pending; packaged artifacts are not evidence of a successful 1.9.5 installation.
+The user has been asked to close Bitwig before retrying. Release source and
+matching packages were committed as **`e9f2b48`** and successfully pushed to
+**`origin/main`**; packaged artifacts are not evidence of a successful 1.9.5 installation.
 
 ## Implemented UI scope
 
@@ -88,12 +89,13 @@ there is no successful 1.9.5 installation or installed-hash verification yet.
 - [x] Run packaged CLAP smoke against the refreshed artifact.
 - [ ] **Blocked:** install both per-user formats and verify their SHA256 identities;
   close Bitwig before retrying. Preflight changed neither installed format.
-- [ ] Commit and push the release with matching packaged binaries.
+- [x] Commit and push the release with matching packaged binaries: `e9f2b48` on
+  `origin/main`.
 - [ ] Actual DAW visual/listening, transport, automation/session recall and
   native FPS checks.
 
-Packaging and smoke are complete. Commit/push are the next parent delivery steps;
-installation retry requires Bitwig to be closed. No successful 1.9.5 installation
-or release commit is recorded yet. Final delivery results will be added after
-those steps are observed. Do not terminate Bitwig or overwrite a loaded plugin
-to force installation.
+Packaging, smoke and commit/push are complete (`e9f2b48` on `origin/main`).
+Installation remains blocked with no installed files changed in either format;
+1.9.4 remains installed, and retry awaits Bitwig being closed. No successful
+1.9.5 installation is recorded yet. Do not terminate Bitwig or overwrite a loaded
+plugin to force installation.
