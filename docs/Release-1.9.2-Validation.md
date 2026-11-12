@@ -1,15 +1,16 @@
-# Release 1.9.2 — built, validated and packaged; installation blocked
+# Release 1.9.2 — built, validated, packaged and installed
 
 ## Status and evidence boundary
 
 **1.9.2 Release CLAP/VST3 builds and automated validation succeeded; packages
-were refreshed and hash-verified. Installation is blocked.** Results below are
+were refreshed and hash-verified. Installation retry succeeded.** Results below are
 coordinator-reported in the task handoff, not newly executed by this
 documentation-only pass. No build, tests, packaging, installation or commit was
-performed by this pass. Coordinator commit/push is pending, not claimed complete.
+performed by this pass. Release commit `c1ee5c7` is pushed to `origin/main`.
 
-**The installation attempt was blocked by a locked CLAP; no installed files
-changed and 1.9.1 remains installed until a successful retry.**
+The initial installation attempt was blocked by a locked CLAP; no installed files
+changed in that attempt. **The coordinator reran `source/build/install-release.ps1`;
+both per-user CLAP and VST3 reported Installed and SHA256 verified. 1.9.2 is installed.**
 The [1.9.1 record](Release-1.9.1-Validation.md) remains historical evidence for that
 release; its test results, hashes and installation do not validate 1.9.2.
 
@@ -53,13 +54,11 @@ Copied package binaries SHA256-match the successful Release artifacts:
 | `Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3` | `943dde6ca0547753c24e5105eaa28af099049bea16eb8bec32ed98ee92342a50` |
 
 **Packaged CLAP smoke passed:** 2087 parameters, latency, bypass and automation.
-These are package identities, not installed 1.9.2 identities.
+Both installed 1.9.2 formats were SHA256-verified against these packages on retry.
 
-## Remaining delivery and host checks
+## Delivery and remaining host checks
 
-- [ ] Retry installation after the CLAP lock is released and verify both installed
-  formats. No installed files changed in the blocked attempt; 1.9.1 remains
-  installed. Never terminate Bitwig or overwrite a loaded plugin to force it.
-- [ ] Coordinator commit/push; pending, not yet reported complete.
+- [x] Installation retry succeeded; both per-user formats installed and SHA256-verified.
+- [x] Release commit `c1ee5c7` pushed to `origin/main`.
 - [ ] Actual Bitwig visual/listening, transport, automation/session recall and
   native FPS checks; automated passes and screenshot review are not host approval.

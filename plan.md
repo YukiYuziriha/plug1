@@ -1,12 +1,12 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.2 built, validated and packaged; installation blocked
+## Current status — 1.9.2 built, validated, packaged and installed
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
 list. When requirements conflict, the latest release record takes precedence.
 
-### 1.9.2 — parameter graph restored; validated, not installed
+### 1.9.2 — parameter graph restored; validated and installed
 
 - [x] Version bumped to 1.9.2; presentation-only change, no DSP changes.
 - [x] Restore `CreativeEffectVisual`'s original-style fixed overlapping parameter
@@ -27,10 +27,10 @@ list. When requirements conflict, the latest release record takes precedence.
   screenshots; root Granular and Stack FX previews updated from current Release.
 - [x] Copy CLAP/VST3 packages and SHA256-match Release artifacts; packaged CLAP
   smoke passed 2087 parameters, latency, bypass and automation.
-- [ ] Retry installation: attempt blocked by locked CLAP; no installed files
-  changed, **1.9.1 remains installed**. Do not overwrite loaded plugins or
-  terminate Bitwig to force installation.
-- [ ] Coordinator commit/push pending; not yet claimed complete.
+- [x] Complete installation retry: coordinator reran
+  `source/build/install-release.ps1`; both per-user CLAP and VST3 reported
+  **Installed and SHA256 verified**. 1.9.2 is installed.
+- [x] Release commit `c1ee5c7` pushed to `origin/main`.
 - [ ] Actual Bitwig visual/listening/transport/automation/recall and native FPS checks.
 
 See [Release 1.9.2 validation](docs/Release-1.9.2-Validation.md). This documentation

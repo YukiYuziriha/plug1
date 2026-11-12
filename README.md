@@ -3,15 +3,15 @@
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.2 is built, validated and packaged, but not installed** (coordinator-reported).
+**1.9.2 is built, validated, packaged and installed** (coordinator-reported).
 Release CLAP/VST3 builds succeeded; all **34 focused CTests passed in 182.97 s**,
 including **66 editor groups**. Packages SHA256-match Release artifacts and
 packaged CLAP smoke passed. The granular graph restores the original-style
 parameter illustration rather than the flickering live cloud. All six theme/width
 review screenshots were manually reviewed; root Granular and Stack FX previews
-were updated from the current Release. **Installation was blocked by a locked
-CLAP; no installed files changed and 1.9.1 remains installed.** Commit/push is
-pending the coordinator; actual DAW visual checks remain unverified. See the
+were updated from the current Release. **Installation retry succeeded: both
+per-user CLAP and VST3 reported Installed and SHA256 verified.** Release commit
+`c1ee5c7` is pushed to `origin/main`; actual DAW visual checks remain unverified. See the
 [1.9.2 validation record](docs/Release-1.9.2-Validation.md).
 
 **Previous release 1.9.1 is built, validated, packaged and installed.** The coordinator
@@ -54,9 +54,7 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.2 installation was blocked by a locked CLAP; no installed files changed
-and 1.9.1 remains installed.** Retry after the host releases the plugin. The historical
-**1.9.1 installation retry succeeded:** both per-user CLAP and VST3 reported
+**1.9.2 installation retry succeeded:** both per-user CLAP and VST3 reported
 **Installed and SHA256 verified** via the coordinator's run of
 `source/build/install-release.ps1`. Do not terminate Bitwig or overwrite a loaded
 plugin to force replacement. Actual Bitwig listening/transport and native FPS
@@ -784,7 +782,7 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
-**1.9.2 — built, validated and packaged (coordinator-reported):** Release
+**1.9.2 — built, validated, packaged and installed (coordinator-reported):** Release
 CLAP/VST3 builds succeeded. The combined build/test command timed out at 600 s
 after the build completed, interrupting tests; a separate `ctest` run without
 rebuilding passed **all 34 focused tests in 182.97 s**, including **66 editor
@@ -796,9 +794,9 @@ All six 174/440 px theme screenshots were manually reviewed by the coordinator;
 root Granular and Stack FX screenshots were updated from the current Release.
 CLAP/VST3 packages SHA256-match Release artifacts; packaged CLAP smoke passed
 **2087 parameters, latency, bypass and automation**. No audio DSP changed;
-legacy DSP was not rerun. **Installation was blocked by a locked CLAP; no installed
-files changed and 1.9.1 remains installed.** Actual DAW visual/listening and native
-FPS checks remain unverified; coordinator commit/push is pending. Hashes and
+legacy DSP was not rerun. **Installation retry succeeded: both per-user CLAP and
+VST3 reported Installed and SHA256 verified.** Actual DAW visual/listening and native
+FPS checks remain unverified; release commit `c1ee5c7` is pushed to `origin/main`. Hashes and
 boundaries are in the [1.9.2 record](docs/Release-1.9.2-Validation.md). This
 documentation-only task ran no builds or tests.
 
@@ -821,7 +819,7 @@ No audio DSP changed; legacy DSP was not rerun (1.9.0's pass is historical).
 
 **The 1.9.1 installation retry succeeded:** both per-user formats reported
 Installed and SHA256 verified; commit `fa44543` was pushed to `origin/main`.
-1.9.1 remains installed pending an actual 1.9.2 retry. Actual Bitwig listening and
+1.9.2 has since been installed and SHA256-verified. Actual Bitwig listening and
 native FPS remain unchecked. Hashes, test corrections and delivery boundaries
 are in the [1.9.1 record](docs/Release-1.9.1-Validation.md).
 
