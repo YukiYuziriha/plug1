@@ -20,8 +20,8 @@ inline void checkContent(ToneEffectPanel& panel) {
     ui::require(content->getWidth() <= view.getViewArea().getWidth(), "Tone card needs horizontal scrolling");
     const bool wide = panel.getWidth() >= 620;
     const int inner = content->getWidth() - 16;
-    const int controlWidth = wide ? inner - inner * 44 / 100 - 12 : inner;
-    const int controlX = wide ? 8 + inner * 44 / 100 + 12 : 8;
+    const int controlWidth = wide ? inner - inner * 44 / 100 - 6 : inner;
+    const int controlX = wide ? 8 + inner * 44 / 100 + 6 : 8;
     std::vector<juce::Component*> visible;
     for (auto* child : content->getChildren()) {
         if (!child->isVisible()) continue;
@@ -59,11 +59,17 @@ inline void checkContent(ToneEffectPanel& panel) {
             ui::require(knob->getX() >= controlX, "Wide Tone control escaped its right-hand group");
             const bool linear = knob->slider.getSliderStyle() == juce::Slider::LinearHorizontal;
             if (linear) {
-                ui::require(knob->getWidth() == controlWidth && knob->getHeight() == 62,
+                ui::require(knob->getWidth() == controlWidth && knob->getHeight() == 94,
                             "Mix must be a standalone horizontal slider row");
+                ui::require(bool(knob->slider.getProperties()["vocalstackTexturedBar"]),
+                            "Tone Mix must opt into the textured FX bar");
+                ui::require(knob->slider.getHeight() - knob->slider.getTextBoxHeight() >= 8 + 25,
+                            "Tone Mix clips its modulation lane or 25px track");
             } else {
-                ui::require(knob->getWidth() == 78 && knob->getHeight() == 100,
+                ui::require(knob->getWidth() == 68 && knob->getHeight() == 100,
                             "Responsive knob must retain its compact fixed size");
+                ui::require((knob->getX() - controlX) % 70 == 0,
+                            "Tone rotary columns must have a 2px gap");
             }
             bool valueFound = false;
             for (auto* part : knob->slider.getChildren()) {
@@ -85,10 +91,19 @@ inline void checkContent(ToneEffectPanel& panel) {
         firstY = juce::jmin(firstY, knob->getY());
         lastY = juce::jmax(lastY, knob->getY());
     }
-    const int columns = juce::jmax(1, (controlWidth + 4) / 82);
+    const int columns = juce::jmax(1, (controlWidth + 2) / 70);
     if (knobCount > 0)
-        ui::require(lastY - firstY == ((knobCount - 1) / columns) * 104,
+        ui::require(lastY - firstY == ((knobCount - 1) / columns) * 102,
                     "Tone knobs did not rewrap to use the available inspector width");
+    if (auto* raw = ui::find<juce::Button>(panel, [](auto& button) { return button.getButtonText() == "Raw"; })) {
+        auto* match = ui::find<juce::Button>(panel, [](auto& button) { return button.getButtonText() == "Match"; });
+        auto* quality = ui::find<juce::ComboBox>(panel, [](auto& combo) { return combo.getName() == "Waveshaper quality"; });
+        ui::require(match && quality, "Waveshaper lost its adjacent audition/quality controls");
+        ui::require(match->getX() == raw->getRight() + 2 && match->getY() == raw->getY(),
+                    "Waveshaper switches must retain a 2px horizontal gap");
+        ui::require(firstY == quality->getBottom() + 2,
+                    "Waveshaper quality and rotary rows must retain a 2px vertical gap");
+    }
     ui::passive(panel);
 }
 
@@ -110,7 +125,7 @@ inline void narrowLayouts() {
                                 && left->getWidth() < viewport(panel).getViewedComponent()->getWidth() / 2,
                                 "Wide Tone plot still spans a full-width column");
                     if (width == 860)
-                        ui::require(viewport(panel).getViewedComponent()->getHeight() <= 280,
+                        ui::require(viewport(panel).getViewedComponent()->getHeight() <= (kind == 6 ? 300 : 280),
                                     "860px Tone inspector wastes its short wide layout on vertical scrolling");
                 }
                 viewport(panel).setViewPosition(0, 0);

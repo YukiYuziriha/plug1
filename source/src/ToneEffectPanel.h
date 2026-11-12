@@ -93,11 +93,11 @@ public:
         if (width >= 620) {
             // Reserve the scrollbar before measuring so the breakpoint cannot oscillate.
             const int inner = juce::jmax(1, width - contentViewport.getScrollBarThickness() - 16);
-            const int controlWidth = inner - inner * 44 / 100 - 12;
+            const int controlWidth = inner - inner * 44 / 100 - 6;
             const int columns = juce::jmax(1, (controlWidth + knobGap) / (knobWidth + knobGap));
             const int count = isEq() ? 5 : isWave() ? 3 : 2;
             const int gridHeight = ((count + columns - 1) / columns) * (knobHeight + knobGap);
-            return juce::jmax(280, (isEq() ? 161 : isWave() ? 172 : 83) + gridHeight);
+            return juce::jmax(280, (isEq() ? 158 : isWave() ? 198 : 83) + gridHeight);
         }
         const int inner = juce::jmax(1, width - 16);
         const int columns = juce::jmax(1, (inner + knobGap) / (knobWidth + knobGap));
@@ -105,8 +105,8 @@ public:
         const int gridHeight = ((count + columns - 1) / columns) * (knobHeight + knobGap);
         // Match the fixed rows in layoutContent; short inspectors scroll without shrinking plots.
         const bool compact = width < compactWidth;
-        const int fixedHeight = isEq() ? (compact ? 450 : 490)
-                                      : isWave() ? (compact ? 480 : 540) : (compact ? 320 : 400);
+        const int fixedHeight = isEq() ? (compact ? 445 : 485)
+                                      : isWave() ? (compact ? 500 : 560) : (compact ? 314 : 394);
         return juce::jmax(preferredHeight, fixedHeight + gridHeight);
     }
     void setNeon(bool enabled) {
@@ -150,8 +150,8 @@ public:
             if (id.startsWith("fx" + juce::String(int(slot)) + "EqBand" + juce::String(int(band + 1)))) { selectBand(band); break; }
     }
     void paint(juce::Graphics& g) override {
-        g.setColour(themePalette(*this, neon).panel);
-        g.fillRoundedRectangle(getLocalBounds().toFloat(), componentTheme(*this, neon) == Theme::device ? 5.0f : 0.0f);
+        const auto palette = themePalette(*this, neon);
+        background.paint(g, getLocalBounds(), palette.panel, palette.accent, fluidAnimationSeconds(*this));
     }
     void resized() override {
         const auto position = contentViewport.getViewPosition();
@@ -166,7 +166,9 @@ public:
     }
 private:
     static constexpr int compactWidth = 320;
-    static constexpr int knobWidth = 78, knobHeight = 100, knobGap = 4;
+    static constexpr int knobWidth = 68, knobHeight = 100, knobGap = 2;
+    // Leave room for the value, 8px modulation lane, 25px track, and 28px caption.
+    static constexpr int mixHeight = 94;
     void layoutContent() {
         const bool wide = getWidth() >= 620;
         const bool compact = !wide && content.getWidth() < compactWidth;
@@ -178,7 +180,7 @@ private:
         juce::Rectangle<int> plotArea;
         if (wide) {
             plotArea = area.removeFromLeft(area.getWidth() * 44 / 100);
-            area.removeFromLeft(12);
+            area.removeFromLeft(6);
         }
         const auto knobGrid = [&] {
             const int columns = juce::jmax(1, (area.getWidth() + knobGap) / (knobWidth + knobGap));
@@ -202,7 +204,7 @@ private:
             const int gridHeight = ((int(bandControls.size() + controls.size()) + columns - 1) / columns)
                                    * (knobHeight + knobGap);
             const int graphHeight = wide ? juce::jlimit(200, 480, plotArea.getHeight() - 36)
-                : compact ? 200 : juce::jlimit(260, 480, content.getHeight() - gridHeight - 214);
+                : compact ? 200 : juce::jlimit(260, 480, content.getHeight() - gridHeight - 209);
             if (wide) {
                 graph->setBounds(plotArea.removeFromTop(graphHeight));
                 plotArea.removeFromTop(6);
@@ -220,11 +222,11 @@ private:
             area.removeFromTop(4);
             auto actions = area.removeFromTop(24);
             bandOn.setBounds(actions.removeFromLeft(56));
-            actions.removeFromLeft(4);
+            actions.removeFromLeft(2);
             remove.setBounds(actions.removeFromLeft(64));
-            area.removeFromTop(4);
+            area.removeFromTop(2);
             mode.setBounds(area.removeFromTop(29));
-            area.removeFromTop(3);
+            area.removeFromTop(2);
             knobGrid();
             adaptive.setButtonText("Adapt Q");
             adaptive.setBounds(area.removeFromTop(25).withWidth(64));
@@ -235,7 +237,7 @@ private:
                     plotArea.removeFromTop(4);
                 } else {
                     mode.setBounds(area.removeFromTop(29));
-                    area.removeFromTop(10);
+                    area.removeFromTop(6);
                 }
             }
             if (visual) {
@@ -251,10 +253,10 @@ private:
                 auto toggles = area.removeFromTop(25);
                 raw.setButtonText("Raw");
                 raw.setBounds(toggles.removeFromLeft(56));
-                toggles.removeFromLeft(4);
+                toggles.removeFromLeft(2);
                 levelMatch.setButtonText("Match");
                 levelMatch.setBounds(toggles.removeFromLeft(64));
-                area.removeFromTop(4);
+                area.removeFromTop(2);
                 if (wide) {
                     auto qualityRow = area.removeFromTop(29);
                     qualityLabel.setBounds(qualityRow.removeFromLeft(52));
@@ -263,16 +265,16 @@ private:
                     qualityLabel.setBounds(area.removeFromTop(18));
                     quality.setBounds(area.removeFromTop(29));
                 }
-                area.removeFromTop(4);
+                area.removeFromTop(2);
             }
             knobGrid();
             for (auto& control : controls) {
                 if (control->slider.getSliderStyle() != juce::Slider::LinearHorizontal) continue;
-                control->setBounds(area.removeFromTop(62));
-                area.removeFromTop(4);
+                control->setBounds(area.removeFromTop(mixHeight));
+                area.removeFromTop(2);
             }
         }
-        area.removeFromTop(8);
+        area.removeFromTop(6);
         hint.setBounds(wide ? plotArea : area);
     }
 private:
@@ -537,6 +539,7 @@ private:
     size_t slot, selectedBand = 0;
     NodeType type;
     bool neon = false, expandedView = false;
+    FluidBackground background;
     juce::Component content;
     PassiveViewport contentViewport;
     juce::Label heading, hint, qualityLabel;

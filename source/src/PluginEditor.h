@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include "VisualTheme.h"
+#include "FluidBackground.h"
 #include "MeterPanel.h"
 #include "DoublerPanel.h"
 #include "RoutingPanel.h"
@@ -31,6 +32,7 @@ private:
     };
 
     void timerCallback() override;
+    void visibilityChanged() override;
     void applyTheme();
     void updateBypassControls(float bypassValue);
     void syncDrawer();
@@ -51,6 +53,10 @@ private:
         void paint(juce::Graphics& g) override { if (draw) draw(g); }
     };
     LayoutCanvas layoutCanvas;
+    FluidBackground rootBackground, canvasBackground;
+    double animationSeconds = 0.0;
+    double lastVisibleTick = -1.0;
+    double lastBackgroundFrame = -1.0;
     PassiveViewport stackViewport;
 
     bool restoringWindow = true;

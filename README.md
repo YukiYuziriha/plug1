@@ -1,16 +1,29 @@
-# Vocal Stack 1.9.4
+# Vocal Stack 1.9.5
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.4 is built, validated, packaged and installed.** FX tabs now size to their
-actual titles with 4 px horizontal title padding and 2 px between tabs, rather
-than reserving 188 px each. Drag/reorder hit testing follows the variable widths.
-Knob names and numeric values share a consistent **12.5 px** font, with long names
-wrapping below the control. Release build succeeded; **34 focused CTests passed
-in 209.76 s**, including 67 editor groups, and packaged CLAP smoke passed. Both
-per-user plugin formats were installed and SHA256-verified. DSP is unchanged;
-actual Bitwig visual/listening checks remain unverified.
+**1.9.5 is built, tested and packaged; installation is blocked.**
+Long FX Mix controls now use flat **25 px textured bars**, with theme-colored,
+coarse mineral noise, an exact value marker and a separate upper modulation lane.
+Subtle, low-saturation fluid backgrounds extend across the editor and FX surfaces;
+compact voice sliders and knobs are unaffected. FX-only spacing is tighter, with
+94 px Mix rows preserving room for captions, values and modulation.
+
+The full Release build succeeded and **34 focused CTests passed in 225.47 s**,
+including **68 editor groups**. Independent static review found no blockers;
+Neon/Spectral screenshots were reviewed. No DSP or host parameters change.
+Release artifacts were copied to tracked `Windows-x64`, the FX-tabs screenshot
+was refreshed, and packaged CLAP smoke passed. Installation preflight was blocked
+by the installed CLAP being in use: neither installed format changed, so **1.9.4
+remains installed**. Close Bitwig before retrying. Commit/push remain pending;
+no actual DAW listening or native FPS result is claimed. See the
+[1.9.5 validation record](docs/Release-1.9.5-Validation.md).
+
+**Historical 1.9.4:** delivered title-sized FX tabs, variable-width drag hit testing
+and consistent 12.5 px knob name/value text. Release build, 34 focused CTests
+(209.76 s), packaged CLAP smoke and both SHA256-verified per-user installations
+passed; actual Bitwig checks remained unverified.
 
 **Historical 1.9.3 is built, validated, packaged, installed and pushed** (`5468939`). Main Bus FX use real Routing-node tabs with one
 full-width selected editor, retained instances and responsive compact controls.
@@ -69,11 +82,12 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.4 installation succeeded:** both per-user CLAP and VST3 reported
-**Installed and SHA256 verified** via the coordinator's run of
-`source/build/install-release.ps1`. Do not terminate Bitwig or overwrite a loaded
-plugin to force replacement. Actual Bitwig listening/transport and native FPS
-remain unchecked.
+**1.9.5 installation is blocked; packaging and packaged CLAP smoke are complete.**
+`source/build/install-release.ps1` preflight found the installed CLAP in use and
+changed **no installed files in either format**. **1.9.4 remains installed.**
+The user has been asked to close Bitwig before installation is retried. Do not
+terminate Bitwig or overwrite a loaded plugin to force replacement. Actual Bitwig
+listening/transport and native FPS remain unchecked.
 
 1. Extract the ZIP.
 2. Copy `Windows-x64/CLAP/Vocal Stack.clap` to
@@ -808,7 +822,21 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
-**1.9.4:** full Release build, all **34 focused CTests (209.76 s)**, 67 editor
+**1.9.5:** initial editor validation passed **68 groups in 90 s**; the subsequent
+full Release build succeeded and all **34 focused CTests passed in 225.47 s**,
+including 68 editor groups. Independent static review found no blockers.
+Reviewed screenshots cover Neon Reverb rack, Spectral Granular, and full editors
+in Neon and Device, with stable granular presentation. These are image checks,
+not real-DAW listening or FPS measurements. The long legacy DSP suite was not
+rerun. Tracked Release CLAP/VST3 packages and `VocalStack-FX-Tabs.png` were refreshed.
+Packaged CLAP smoke passed: 2087 automatable parameters at original indices,
+stereo 48 kHz, mono-to-stereo 44.1 kHz, 1344-sample latency, mono 96 kHz with
+2688-sample latency, and state/latency/bypass/automation/offline-layout checks.
+Installation preflight was blocked by the installed CLAP being in use; neither
+format changed and 1.9.4 remains installed. Commit/push remain pending;
+package hashes and details are in the [validation report](docs/Release-1.9.5-Validation.md).
+
+**Historical 1.9.4:** full Release build, all **34 focused CTests (209.76 s)**, 67 editor
 groups, packaged CLAP smoke and both SHA256-verified per-user installations passed.
 Compact variable-width tabs, drag ordering and equal name/value font sizes are
 covered by UI regressions. Final rack images were inspected in Neon and Spectral.

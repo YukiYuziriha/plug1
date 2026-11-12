@@ -1,0 +1,100 @@
+#pragma once
+
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <cmath>
+#include <cstdint>
+
+namespace vocalstack {
+
+inline const juce::Identifier vocalstackAnimationTimeProperty{"vocalstackAnimationTime"};
+inline const juce::Identifier vocalstackAnimationTimeOverrideProperty{"vocalstackAnimationTimeOverride"};
+
+// Overrides anywhere above the caller win over the editor's ticking phase.
+// Without an editor (or an explicit phase), snapshots always use time zero.
+inline double fluidAnimationSeconds(const juce::Component& component) {
+    const auto finiteSeconds = [](const juce::var& value) {
+        const double seconds = static_cast<double>(value);
+        return std::isfinite(seconds) ? juce::jmax(0.0, seconds) : 0.0;
+    };
+    for (auto* current = &component; current != nullptr; current = current->getParentComponent())
+        if (current->getProperties().contains(vocalstackAnimationTimeOverrideProperty))
+            return finiteSeconds(current->getProperties()[vocalstackAnimationTimeOverrideProperty]);
+    for (auto* current = &component; current != nullptr; current = current->getParentComponent())
+        if (current->getProperties().contains(vocalstackAnimationTimeProperty))
+            return finiteSeconds(current->getProperties()[vocalstackAnimationTimeProperty]);
+    return 0.0;
+}
+
+// GUI-thread only. Own one per surface; no timers or component dependencies.
+class FluidBackground {
+public:
+    void paint(juce::Graphics& g, juce::Rectangle<int> bounds, juce::Colour base,
+               juce::Colour accent, double seconds) {
+        if (bounds.isEmpty()) return;
+        // A fixed grid makes the physical pixels grow with the component, while
+        // aspect adjustment keeps them approximately square in small FX cards.
+        constexpr int longest = 40;
+        const int width = bounds.getWidth() >= bounds.getHeight() ? longest
+            : juce::jmax(1, juce::roundToInt(double(longest) * bounds.getWidth() / bounds.getHeight()));
+        const int height = bounds.getHeight() >= bounds.getWidth() ? longest
+            : juce::jmax(1, juce::roundToInt(double(longest) * bounds.getHeight() / bounds.getWidth()));
+        const double frame = std::floor((std::isfinite(seconds) ? juce::jlimit(0.0, 1.0e9, seconds) : 0.0) * 10.0);
+        if (image.isNull() || image.getWidth() != width || image.getHeight() != height
+            || frame != cachedFrame || base != cachedBase || accent != cachedAccent) {
+            if (image.isNull() || image.getWidth() != width || image.getHeight() != height)
+                image = juce::Image(juce::Image::RGB, width, height, false);
+            cachedFrame = frame;
+            cachedBase = base;
+            cachedAccent = accent;
+            const double phase = frame * 0.0025;
+            juce::Image::BitmapData pixels(image, juce::Image::BitmapData::writeOnly);
+            // Keep the original dark surface dominant. A desaturated, brightness-
+            // matched accent gives only a faint theme tint, never a vivid wash.
+            const float brightness = base.getBrightness();
+            const auto low = base.withBrightness(brightness * .88f);
+            const auto tint = accent.withSaturation(juce::jmin(.18f, accent.getSaturation()))
+                .withBrightness(juce::jmin(1.f, brightness * 1.12f + .004f));
+            const auto high = base.withBrightness(juce::jmin(1.f, brightness * 1.18f + .006f))
+                .interpolatedWith(tint, .12f);
+            for (int y = 0; y < height; ++y)
+                for (int x = 0; x < width; ++x) {
+                    const double nx = double(x) / width, ny = double(y) / height;
+                    const double broad = noise(nx * 3.0 + phase, ny * 3.0, phase * 0.7);
+                    const double detail = noise(nx * 9.0, ny * 9.0 - phase * 0.6, phase);
+                    const double gradient = 0.5 + 0.5 * std::sin(nx * 3.5 + ny * 2.0 + phase);
+                    const float blend = float(0.60 * broad + 0.25 * detail + 0.15 * gradient);
+                    pixels.setPixelColour(x, y, low.interpolatedWith(high, blend));
+                }
+        }
+        juce::Graphics::ScopedSaveState state(g);
+        g.setImageResamplingQuality(juce::Graphics::lowResamplingQuality);
+        g.drawImage(image, bounds.toFloat());
+    }
+
+private:
+    static double lattice(int x, int y, int z) noexcept {
+        std::uint32_t h = std::uint32_t(x) * 374761393u + std::uint32_t(y) * 668265263u
+                        + std::uint32_t(z) * 2246822519u + 1013904223u;
+        h = (h ^ (h >> 13)) * 1274126177u;
+        h ^= h >> 16;
+        return double(h & 0x00ffffffu) / 16777215.0;
+    }
+    static double noise(double x, double y, double z) noexcept {
+        // Wrap extremely long/injected phases before integer lattice conversion.
+        x = std::fmod(x, 4096.0); y = std::fmod(y, 4096.0); z = std::fmod(z, 4096.0);
+        const int ix = int(std::floor(x)), iy = int(std::floor(y)), iz = int(std::floor(z));
+        const auto smooth = [](double v) { return v * v * v * (v * (v * 6.0 - 15.0) + 10.0); };
+        const auto mix = [](double a, double b, double t) { return a + (b - a) * t; };
+        const double u = smooth(x - ix), v = smooth(y - iy), w = smooth(z - iz);
+        return mix(mix(mix(lattice(ix, iy, iz), lattice(ix + 1, iy, iz), u),
+                       mix(lattice(ix, iy + 1, iz), lattice(ix + 1, iy + 1, iz), u), v),
+                   mix(mix(lattice(ix, iy, iz + 1), lattice(ix + 1, iy, iz + 1), u),
+                       mix(lattice(ix, iy + 1, iz + 1), lattice(ix + 1, iy + 1, iz + 1), u), v), w);
+    }
+
+    juce::Image image;
+    double cachedFrame = -1.0;
+    juce::Colour cachedBase, cachedAccent;
+};
+
+} // namespace vocalstack

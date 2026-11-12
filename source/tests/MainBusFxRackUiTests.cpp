@@ -195,7 +195,8 @@ void editorHitTestedWheelRegressions() {
             expect(header != nullptr, "creative node has a selectable drag tab");
             const auto prefix = CreativeEffectPanel::effectName(creativeKind(creativeTypes[effect])) + " / ";
             const auto reset = [&](int innerY) {
-                stack->setViewPosition(0, 250);
+                const auto rackBounds = stack->getViewedComponent()->getLocalArea(rack, rack->getLocalBounds());
+                stack->setViewPosition(0, rackBounds.getCentreY() - stack->getViewHeight() / 2);
                 row->setViewPosition(tab->getX() - 60, 0);
                 body->setViewPosition(0, innerY);
                 expect(stack->getViewPositionY() > 0
@@ -393,17 +394,21 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
             expect(mixSlider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
                    "rack-owned Mix value is above the control");
             auto* mixControl = dynamic_cast<ParameterKnob*>(mixSlider->getParentComponent());
-            expect(mixControl && mixControl->getHeight() == 60 && mixControl->getWidth() <= 240,
-                   "standalone rack Mix has a compact 60px-high footprint");
+            expect(mixControl && mixControl->getHeight() == 94 && mixControl->getWidth() <= 240,
+                   "standalone rack Mix reserves a 94px-high footprint for its textured bar");
+            expect(bool(mixSlider->getProperties()["vocalstackTexturedBar"]), "standalone rack Mix opts into textured bar styling");
+            expect(mixSlider->getLookAndFeel().getSliderLayout(*mixSlider).sliderBounds.getHeight() >= 25 + 8,
+                   "standalone rack Mix fits its 25px bar and 8px modulation lane");
             if (node.type == NodeType::chorale) {
                 auto* motion = dynamic_cast<juce::Slider*>(find(*card, fxParameterId(slot, "Motion")));
                 expect(motion && motion->getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag
                            && motion->getTextBoxPosition() == juce::Slider::TextBoxAbove,
                        "Chorale Motion remains a rotary with its value above");
                 auto* motionControl = motion->getParentComponent();
-                expect(motionControl->getWidth() == 78 && motionControl->getHeight() == 100,
-                       "Chorale Motion never stretches across the inspector");
-                expect(mixControl->getX() > motionControl->getRight()
+                expect(motionControl->getWidth() == 68 && motionControl->getHeight() == 100
+                           && motion->getWidth() >= 64 && !bool(motion->getProperties()["vocalstackTexturedBar"]),
+                       "Chorale Motion retains a readable 68x100 rotary cell without linear bar styling");
+                expect(mixControl->getX() - motionControl->getRight() == 2
                            && mixControl->getY() < motionControl->getBottom(),
                        "wide Chorale places standalone Mix beside the compact Motion knob");
             } else {

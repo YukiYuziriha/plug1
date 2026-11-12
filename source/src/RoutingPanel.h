@@ -4,6 +4,7 @@
 #include "CreativeEffectPanel.h"
 #include "UtilityEffectPanel.h"
 #include "ModulationPanel.h"
+#include "FluidBackground.h"
 #include <map>
 #include <limits>
 
@@ -439,7 +440,7 @@ public:
     }
     void paint(juce::Graphics& g) override {
         const auto palette = themePalette(*this, neon);
-        g.fillAll(palette.background);
+        background.paint(g, getLocalBounds(), palette.background, palette.accent, fluidAnimationSeconds(*this));
         g.setColour(palette.border);
         if (inspectorVisible) g.drawVerticalLine(inspectorDivider.getBounds().getCentreX(), 46.0f, float(inspector.getBottom()));
         if (modulationDivider.isVisible())
@@ -1043,7 +1044,7 @@ private:
     }
     void paintCanvas(juce::Graphics& g) {
         const auto palette = themePalette(*this, neon);
-        g.fillAll(palette.inset);
+        canvasBackground.paint(g, canvas.getLocalBounds(), palette.inset, palette.accent, fluidAnimationSeconds(canvas));
         const auto accent = palette.accent;
         g.setColour(palette.border.withAlpha(.55f));
         const float step = 32 * zoom;
@@ -2027,6 +2028,7 @@ private:
         canvas.repaint();
     }
     Processor& owner;
+    FluidBackground background, canvasBackground;
     Graph graph;
     std::map<std::uint32_t, juce::Point<float>> positions, compactPositions, expandedPositions;
     std::map<std::uint32_t, bool> expanded;

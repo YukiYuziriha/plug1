@@ -1,20 +1,53 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.4 built, validated, packaged and installed
+## Current status — 1.9.5 built, tested and packaged; installation blocked
 
-- [x] Size FX tabs to their actual titles: 4 px title padding per side and 2 px
-  between tabs. Preserve usable bypass/remove targets and full names.
-- [x] Make drag/reorder hit testing use actual variable tab bounds.
-- [x] Relayout tab controls even when inspector body bounds stay unchanged.
-- [x] Match knob names and values at 12.5 px; wrap longer names below controls.
-- [x] Release build and 34 focused CTests passed in 209.76 s, including 67 editor
-  groups and rack UI. Packaged CLAP smoke passed (2087 parameters, indices intact).
-- [x] Inspect final Neon/Spectral rack and EQ screenshots; refresh tracked image.
-- [x] Refresh packages and install both per-user formats, SHA256-verified.
-- [ ] Actual Bitwig visual/listening verification. DSP is unchanged; long legacy
-  DSP suite was not rerun.
+UI-only, currently uncommitted: no DSP or host parameter changes.
 
-Package SHA256:
+- [x] Flat 25 px textured long FX Mix bars: theme-colored coherent mineral noise
+  at coarse 3 px scale, cached at 15 Hz; exact marker and separate upper modulation
+  lane. Compact voice sliders and knobs remain unaffected.
+- [x] Whole-plugin coarse fluid backgrounds on root/canvas/routing and FX surfaces:
+  maximum 40-cell grid dimension, frame-proportioned with features growing with
+  the frame; slow 10 Hz cache. Slight theme tint only, saturation capped at 0.18,
+  brightness matched and blended at 12% so the base dominates, not a vivid gradient.
+- [x] Reuse the existing 30 Hz editor timer, with no new timer; pause the animation
+  clock while hidden and repaint the root at 10 Hz.
+- [x] FX-only 68 px control cells plus 2 px gaps, reduced group gutters and
+  switch/dropdown gaps; 94 px Mix rows accommodate the 25 px bar, 28 px caption,
+  value and upper modulation lane.
+- [x] Initial editor validation: 68 groups passed in 90 s.
+- [x] Full Release 1.9.5 build; all 34 focused CTests passed in 225.47 s, including
+  68 editor groups. Independent static review found no blockers.
+- [x] Review Neon Reverb rack, Spectral Granular, and Neon/Device full-editor
+  screenshots; granular presentation remained stable.
+- [x] Copy Release CLAP/VST3 artifacts to tracked `Windows-x64`, record SHA256
+  identities in the validation report, and refresh `VocalStack-FX-Tabs.png`.
+- [x] Packaged CLAP smoke: 2087 automatable parameters at original indices;
+  stereo 48 kHz, mono-to-stereo 44.1 kHz, 1344-sample latency; mono 96 kHz with
+  2688-sample latency; state/latency/bypass/automation/offline-layout checks passed.
+- [ ] **Installation blocked:** `install-release.ps1` preflight found the installed
+  CLAP in use. No installed files changed in either format; **1.9.4 remains
+  installed**. User asked to close Bitwig before retrying installation/verification.
+- [ ] Commit and push the release with matching packages.
+- [ ] Actual DAW visual/listening/transport/automation/recall and native FPS checks.
+
+The long legacy DSP suite was not rerun. Screenshot review is not a real-DAW
+listening or FPS result. Packaging and smoke are complete; installation is blocked,
+not completed. Commit/push are the next parent steps, with installation retry
+requiring Bitwig to be closed; see [1.9.5 validation](docs/Release-1.9.5-Validation.md).
+
+### Historical 1.9.4 — built, validated, packaged and installed
+
+Title-sized FX tabs (4 px title padding per side, 2 px gaps), variable-width
+reorder hit testing, reliable tab relayout and matching 12.5 px knob name/value
+text shipped. Release build and 34 focused CTests passed in 209.76 s, including
+67 editor groups and rack UI. Final Neon/Spectral images were reviewed; packaged
+CLAP smoke passed (2087 parameters, indices intact), and both per-user formats
+were installed and SHA256-verified. Actual Bitwig checks remained unverified;
+the long legacy DSP suite was not rerun.
+
+Historical package SHA256:
 - CLAP: `fb2bd048ca4426e4cbb879f1b5d60aed21d42bce43723eed889eba6292a79c6f`
 - VST3: `1f45b74a82fa368a6a83032434660e4baa86d2e8078e2b98a608ac7ae422205c`
 

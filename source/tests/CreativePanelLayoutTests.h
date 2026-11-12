@@ -62,8 +62,13 @@ inline void run() {
                 require(mix && mix->getSliderStyle() == juce::Slider::LinearHorizontal,
                         "Creative Mix must be a standalone horizontal slider");
                 auto* mixRow = mix->getParentComponent();
+                require(bool(mix->getProperties()["vocalstackTexturedBar"]),
+                        "Creative Mix must opt into the textured FX bar");
+                require(mixRow->getHeight() == 94
+                            && mix->getHeight() - mix->getTextBoxHeight() >= 8 + 25,
+                        "Creative Mix clips its modulation lane or 25px track");
                 const bool split = content->getWidth() - 16 >= 680;
-                require(!split || mixRow->getX() > visual->getRight(),
+                require(!split || mixRow->getX() == visual->getRight() + 6,
                         "Wide creative inspector must put controls beside the graph");
                 require(split || mixRow->getY() > visual->getBottom(),
                         "Sidebar creative controls must follow the graph");
@@ -75,12 +80,22 @@ inline void run() {
                             "Creative row outside scrollable content");
                     for (const auto& previous : cells)
                         require(!previous.intersects(row->getBounds()), "Creative rows overlap");
+                    if (!cells.empty() && cells.back().getY() == row->getY())
+                        require(row->getX() == cells.back().getRight() + 2,
+                                "Creative controls must retain a 2px horizontal gap");
                     cells.push_back(row->getBounds());
                     passive(*control);
                     if (auto* slider = dynamic_cast<juce::Slider*>(control)) {
                         require(slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
                                 "Creative values must be above controls");
-                        if (slider != mix) require(row->getWidth() <= 84, "Creative knob gaps grow with width");
+                        if (slider != mix) {
+                            require(row->getWidth() == 68 && row->getHeight() == 100,
+                                    "Creative knob geometry changed");
+                            require(slider->getTextBoxWidth() == 66 && slider->getTextBoxHeight() == 20,
+                                    "Creative rotary value must fit the narrower cell");
+                            require(!bool(slider->getProperties()["vocalstackTexturedBar"]),
+                                    "Creative rotary knob opted into the long FX bar");
+                        }
                         for (auto* sibling : row->getChildren())
                             if (auto* label = dynamic_cast<juce::Label*>(sibling))
                                 require(label->getY() >= slider->getBottom(), "Creative caption must be below control");
@@ -91,6 +106,17 @@ inline void run() {
                     panel.revealParameter(id);
                     const auto visible = viewport->getLocalArea(row, row->getLocalBounds());
                     require(viewport->getLocalBounds().contains(visible), "Creative row not fully scroll reachable");
+                }
+                for (auto* child : content->getChildren()) {
+                    auto* heading = dynamic_cast<juce::Label*>(child);
+                    if (!heading || heading->getHeight() != 20) continue;
+                    int previousBottom = 0;
+                    for (const auto& cell : cells)
+                        if (cell.getBottom() <= heading->getY())
+                            previousBottom = juce::jmax(previousBottom, cell.getBottom());
+                    if (previousBottom != 0)
+                        require(heading->getY() - previousBottom == 6,
+                                "Creative groups must retain a restrained 6px separation");
                 }
                 require(visual->getHeight() >= 216, "Creative graph lost its readable height");
             }

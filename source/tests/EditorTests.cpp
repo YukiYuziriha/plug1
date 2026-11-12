@@ -15,6 +15,7 @@
 #include "ToneCardLayoutTests.h"
 #include "UtilityPanelTests.h"
 #include "CreativePanelLayoutTests.h"
+#include "FluidBackgroundTests.h"
 #include "RackUndoIntegrationTests.h"
 
 #include <algorithm>
@@ -778,7 +779,7 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 67> tests{{
+    const std::array<Test, 68> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -808,6 +809,7 @@ int main(int argc, char** argv) {
                 {"Responsive Creative controls, compact switches and scroll anchors", vocalstack::creativePanelLayoutTests::run},
         {"Half-speed relative sliders across sizes, skew and themes", vocalstack::updateUiTests::halfSpeedSliders},
         {"Slider selection, feedback, alignment, sensitivity and knob modes", vocalstack::sliderRenderingTests::run},
+                {"Fluid pixel backgrounds, proportional blocks and deterministic phases", vocalstack::fluidBackgroundTests::run},
                 {"Hovered controls scroll nearest viewport without parameter edits", vocalstack::hoverWheelRegressionTests::run},
                 {"Voice-sized Tone cards and passive EQ wheel scrolling", vocalstack::toneCardLayoutTests::run},
                 {"Immediate filter redraw and bounded latest-target synth scheduler", [] {

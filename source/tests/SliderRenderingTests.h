@@ -6,6 +6,7 @@
 #include "CreativeEffectPanel.h"
 #include "UtilityEffectPanel.h"
 #include "ModulationPanel.h"
+#include <set>
 
 namespace vocalstack::sliderRenderingTests {
 inline bool identical(const juce::Image& a, const juce::Image& b) {
@@ -250,7 +251,65 @@ inline void controlModes() {
         toneUiTests::require(check(check, eq, false) > 0, "EQ controls missing");
     }
 }
+inline void texturedFxBars() {
+    auto owner = std::make_unique<Processor>();
+    for (int theme : {0, 1, 2}) for (int width : {190, 340, 800}) {
+        ParameterKnob control(*owner, "fx1Mix", "Mix", "%");
+        control.getProperties().set(vocalstackThemeProperty, theme);
+        control.setLinear(true); control.setSize(width, 94); control.setNeon(theme == 1);
+        auto& slider = control.slider;
+        toneUiTests::require(bool(slider.getProperties()["vocalstackTexturedBar"]), "FX Mix did not opt into its textured bar");
+        const auto layout = slider.getLookAndFeel().getSliderLayout(slider);
+        const auto bar = ParameterKnob::Style::texturedBarBounds(layout.sliderBounds.toFloat());
+        toneUiTests::require(std::abs(bar.getHeight() - 25.f) < .01f
+            && bar.getY() - 7 >= layout.textBoxBounds.getBottom(),
+            "25px FX bar or its modulation lane overlaps numeric text");
+        slider.setValue(50, juce::dontSendNotification);
+        const auto baseline = render(slider);
+        toneUiTests::require(identical(baseline, render(slider)), "Procedural slider texture flickers between repaints");
+        std::set<juce::uint32> shades;
+        const auto sample = bar.toNearestInt().withTrimmedLeft(8).withTrimmedRight(int(bar.getWidth() * .6f));
+        for (int y = sample.getY() + 2; y < sample.getBottom() - 2; ++y)
+            for (int x = sample.getX(); x < sample.getRight(); ++x) shades.insert(baseline.getPixelAt(x, y).getARGB());
+        toneUiTests::require(shades.size() >= 2 && shades.size() <= 6,
+            "FX texture must have a small blocky palette, not a gradient or flat fill");
+        slider.setValue(80, juce::dontSendNotification);
+        const auto extended = render(slider);
+        for (int y = sample.getY() + 2; y < sample.getBottom() - 2; ++y)
+            for (int x = sample.getX(); x < sample.getRight(); ++x)
+                toneUiTests::require(baseline.getPixelAt(x, y) == extended.getPixelAt(x, y),
+                    "Texture swims/rescales when the value changes");
+        slider.setValue(50, juce::dontSendNotification);
+        control.getProperties().set(vocalstackAnimationTimeOverrideProperty, 4.0);
+        const auto animated = render(slider);
+        toneUiTests::require(!identical(baseline, animated), "FX slider material did not animate at an explicit later phase");
+        toneUiTests::require(identical(animated, render(slider)), "FX texture changes within a fixed animation frame");
+        for (int y = 0; y < animated.getHeight(); ++y) for (int x = 0; x < animated.getWidth(); ++x)
+            if (animated.getPixelAt(x, y) != baseline.getPixelAt(x, y))
+                toneUiTests::require(bar.contains(float(x) + .5f, float(y) + .5f),
+                    "Texture animation changed the label, marker lane or outside geometry");
+        control.getProperties().set(vocalstackAnimationTimeOverrideProperty, 0.0);
+        toneUiTests::require(identical(baseline, render(slider)), "Returning to an explicit phase changed the material");
+        for (float effective : {0.f, .5f, 1.f}) {
+            ModulationSnapshot snapshot; snapshot.targets.push_back({"fx1Mix", .5f, effective, effective - .5f});
+            ModulationState state;
+            slider.refreshModulation(snapshot, state, 0);
+            const auto marked = render(slider);
+            int changed = 0;
+            for (int y = 0; y < marked.getHeight(); ++y) for (int x = 0; x < marked.getWidth(); ++x)
+                if (marked.getPixelAt(x, y) != baseline.getPixelAt(x, y)) {
+                    ++changed;
+                    toneUiTests::require(y < bar.getY(), "Effective marker splits the thick bar/base thumb");
+                }
+            toneUiTests::require(changed > 0, "Thick-bar effective marker is clipped at an endpoint");
+        }
+    }
+    ParameterKnob voice(*owner, "voice1Pan", "Pan"); voice.setLinear(true);
+    toneUiTests::require(!bool(voice.slider.getProperties()["vocalstackTexturedBar"]),
+        "Compact voice slider was changed by FX styling");
+}
 inline void run() {
+    texturedFxBars();
     selectionAndFeedback();
     alignmentAndSensitivity();
     pointerSeparation();

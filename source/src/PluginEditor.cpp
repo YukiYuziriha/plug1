@@ -61,6 +61,7 @@ Editor::Editor(Processor& processor)
     : AudioProcessorEditor(processor), owner(processor), presets(processor), globalMix(processor, "globalMix", "Mix", "%"), routingPanel(processor),
       advancedPanel(processor), mainBusFxRack(processor) {
     setLookAndFeel(&style);
+    getProperties().set(vocalstackAnimationTimeProperty, 0.0);
     addAndMakeVisible(stackViewport);
     stackViewport.setComponentID("stackViewport");
     stackViewport.setViewedComponent(&layoutCanvas, false);
@@ -328,7 +329,27 @@ void Editor::updateBypassControls(float bypassValue) {
     globalMix.setAlpha(bypassed ? 0.35f : 1.0f);
 }
 
+void Editor::visibilityChanged() {
+    lastVisibleTick = -1.0;
+}
+
 void Editor::timerCallback() {
+    if (isShowing()) {
+        const double now = Time::getMillisecondCounterHiRes() * 0.001;
+        if (lastVisibleTick >= 0.0) animationSeconds += jmax(0.0, now - lastVisibleTick);
+        lastVisibleTick = now;
+        getProperties().set(vocalstackAnimationTimeProperty, animationSeconds);
+        // Sliders consume the fresh phase through their existing modulation
+        // refresh. Repaint whole surfaces only for a new background frame.
+        const double frame = std::floor(jlimit(0.0, 1.0e9, fluidAnimationSeconds(*this)) * 10.0);
+        if (frame != lastBackgroundFrame) {
+            lastBackgroundFrame = frame;
+            repaint();
+            if (layoutCanvas.isShowing()) layoutCanvas.repaint();
+        }
+    } else {
+        lastVisibleTick = -1.0;
+    }
     if (advancedPanel.isVisible() != !routingVisible)
         syncDrawer();
     advancedPanel.sync();
@@ -394,11 +415,13 @@ bool Editor::keyPressed(const KeyPress& key) {
 }
 
 void Editor::paint(Graphics& g) {
-    g.fillAll(themePalette(*this).background);
+    const auto palette = themePalette(*this);
+    rootBackground.paint(g, getLocalBounds(), palette.background, palette.accent, fluidAnimationSeconds(*this));
 }
 
 void Editor::drawDevice(Graphics& g) {
-    g.fillAll(rgb(0x292b2a));
+    canvasBackground.paint(g, layoutCanvas.getLocalBounds(), rgb(0x292b2a),
+                           themePalette(*this).accent, fluidAnimationSeconds(*this));
     g.setColour(rgb(0x373a37));
     g.fillRoundedRectangle(18.0f, 14.0f, routingVisible ? float(getWidth() - 36) : 904.0f, 50.0f, 5.0f);
     g.setColour(rgb(0xf5a24b));
@@ -430,7 +453,8 @@ void Editor::drawDevice(Graphics& g) {
 }
 
 void Editor::drawFlash(Graphics& g) {
-    g.fillAll(rgb(night));
+    canvasBackground.paint(g, layoutCanvas.getLocalBounds(), rgb(night),
+                           themePalette(*this).accent, fluidAnimationSeconds(*this));
     const auto drawPlate = [&](Rectangle<int> plate) {
         g.setColour(rgb(panel));
         g.fillRect(plate);
@@ -476,6 +500,7 @@ void Editor::drawFlash(Graphics& g) {
 
 void Editor::drawSpectral(Graphics& g) {
     const auto p = themePalette(*this);
+    canvasBackground.paint(g, layoutCanvas.getLocalBounds(), p.background, p.accent, fluidAnimationSeconds(*this));
     g.setColour(p.panel);
     g.fillRect(18, 14, routingVisible ? getWidth() - 36 : 904, 50);
     g.setColour(p.accent);

@@ -111,7 +111,8 @@ public:
         revealSelection();
     }
     void paint(juce::Graphics& g) override {
-        const auto p = themePalette(*this, neon); g.setColour(p.panel); g.fillRect(getLocalBounds());
+        const auto p = themePalette(*this, neon);
+                background.paint(g, getLocalBounds(), p.panel, p.accent, fluidAnimationSeconds(*this));
         g.setColour(p.border); g.drawRect(getLocalBounds());
     }
 private:
@@ -252,7 +253,7 @@ private:
                     const int extraHeight = knobs.empty() ? 0 : mixHeight + controlGap;
                     controls.setSize(width, juce::jmax(area.getHeight(), panelHeight + extraHeight));
                     // Keep Tone's responsive graph-left/controls-right layout at the top.
-                    // The rack-owned Mix is a compact footer, not a full-width top strip.
+                    // The rack-owned Mix is a narrow footer with full track/label height.
                     fullPanel->setBounds(0, 0, width, panelHeight);
                     if (!knobs.empty()) {
                         const int mixWidth = juce::jmin(240, juce::jmax(1, width - 16));
@@ -286,7 +287,8 @@ private:
             repaint();
         }
         void paint(juce::Graphics& g) override {
-            const auto p = themePalette(*this, neon); g.setColour(p.inset); g.fillRoundedRectangle(getLocalBounds().toFloat(), 4);
+            const auto p = themePalette(*this, neon);
+                        background.paint(g, getLocalBounds(), p.inset, p.accent, fluidAnimationSeconds(*this));
             g.setColour(p.border); g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(.5f), 4, 1);
         }
         void syncTabState() {
@@ -328,8 +330,10 @@ private:
             controls.addAndMakeVisible(*knob); knobs.push_back(std::move(knob));
         }
         MainBusFxRackPanel& rack;
+        FluidBackground background;
         bool neon = false;
-        static constexpr int motionWidth = 78, motionHeight = 100, mixHeight = 60, controlGap = 8;
+        // Mix includes its value, modulation lane, 25px track, and 28px caption.
+        static constexpr int motionWidth = 68, motionHeight = 100, mixHeight = 94, controlGap = 2;
         modulationui::Button enabled;
         std::atomic<float>* enabledValue = nullptr;
         juce::Component controls;
@@ -381,6 +385,7 @@ private:
         NodeType::equalizer, NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter};
 
     modulationui::PanelStyle panelStyle;
+    FluidBackground background;
     Processor& owner;
     bool neon = false;
     uint32_t selectedId = 0;

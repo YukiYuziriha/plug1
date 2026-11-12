@@ -292,6 +292,10 @@ inline void utilityInspectors() {
                 }
             } else {
                 auto& slider = ui::slider(*panel, id); auto& parameter = ui::parameter(*owner, id);
+                ui::require(slider.getWidth() >= 64 && slider.getParentComponent()->getWidth() == 68
+                                && slider.getParentComponent()->getHeight() == 100,
+                            "Utility rotary must retain a readable compact 68x100 cell: " + id);
+                ui::require(!bool(slider.getProperties()["vocalstackTexturedBar"]), "Utility rotary opted into linear bar styling: " + id);
                 ui::require(slider.isDoubleClickReturnEnabled() && slider.isTextBoxEditable(), "Utility reset/numeric entry: " + id);
                 ui::near(slider.getMinimum(), d.min, "Utility UI minimum"); ui::near(slider.getMaximum(), d.max, "Utility UI maximum");
                 const auto before = ui::read(*owner, id);
@@ -312,8 +316,11 @@ inline void utilityInspectors() {
         panel->revealParameter("fx1Mix");
         auto& mix = ui::slider(*panel, "fx1Mix");
         ui::require(mix.getSliderStyle() == juce::Slider::LinearHorizontal, "Utility Mix must be linear");
+        ui::require(bool(mix.getProperties()["vocalstackTexturedBar"]) && mix.getParentComponent()->getHeight() == 94,
+                    "Utility Mix must opt into the textured bar in a 94px row");
         const auto mixBefore = ui::read(*owner, "fx1Mix");
         const auto mixTrack = mix.getLookAndFeel().getSliderLayout(mix).sliderBounds.toFloat();
+        ui::require(mixTrack.getHeight() >= 25 + 8, "Utility Mix must fit its 25px bar and 8px modulation lane");
         ui::drag(mix, mixTrack.getCentre(), mixTrack.getCentre().translated(-mixTrack.getWidth() * .3f, 0));
         ui::require(ui::read(*owner, "fx1Mix") != mixBefore, "Utility dry/wet drag did not edit its parameter");
         ui::near(ui::read(*owner, "fx1Mix"), mix.getValue(), "Utility dry/wet binding");
@@ -328,15 +335,20 @@ inline void utilityInspectors() {
 
 inline void halfSpeedSliders() {
     auto owner = std::make_unique<Processor>();
-    for (int theme = 0; theme < 3; ++theme) for (int width : {110, 190, 340}) for (double skew : {1., 2.}) {
+    for (int theme = 0; theme < 3; ++theme) for (int width : {110, 190, 340}) for (double skew : {1., 2.})
+        for (bool textured : {false, true}) {
         ParameterKnob::Style style;
         ModulationSlider slider;
         slider.setLookAndFeel(&style); slider.bindModulation(*owner, "fx1Mix"); inheritTheme(slider, theme);
         slider.setSliderStyle(juce::Slider::LinearHorizontal);
-        slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 58, 21);
-        slider.setRange(0, 1); slider.setSkewFactor(skew); slider.setSize(width, 36);
+        ui::require(!bool(slider.getProperties()["vocalstackTexturedBar"]), "Shared slider style must not opt into textured bars by default");
+        if (textured) slider.getProperties().set("vocalstackTexturedBar", true);
+        slider.setTextBoxStyle(textured ? juce::Slider::TextBoxAbove : juce::Slider::TextBoxRight,
+                               false, textured ? 68 : 58, textured ? 18 : 21);
+        slider.setRange(0, 1); slider.setSkewFactor(skew); slider.setSize(width, textured ? 66 : 36);
         slider.setValue(slider.proportionOfLengthToValue(.5), juce::dontSendNotification);
         const auto track = style.getSliderLayout(slider).sliderBounds.toFloat();
+        if (textured) ui::require(track.getHeight() >= 25 + 8, "Textured half-speed fixture must fit the bar and modulation lane");
         const auto start = juce::Point<float>(track.getX() + track.getWidth() * .7f, track.getCentreY());
         const auto end = start.translated(track.getWidth() * .2f, 0);
         const int sensitivity = slider.getMouseDragSensitivity();

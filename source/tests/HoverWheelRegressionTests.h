@@ -182,6 +182,12 @@ inline void fxHoveredSurfaces() {
                 require(slider->getSliderStyle() == (id == mixId ? juce::Slider::LinearHorizontal
                                                                : juce::Slider::RotaryHorizontalVerticalDrag),
                         "FX wheel fixture has the wrong control mode");
+                auto* controlRow = slider->getParentComponent();
+                require(slider->getWidth() >= 64 && controlRow->getHeight() == (id == mixId ? 94 : 100),
+                        "FX wheel target lost its readable compact control geometry: " + id);
+                require((id == mixId || controlRow->getWidth() == 68)
+                            && bool(slider->getProperties()["vocalstackTexturedBar"]) == (id == mixId),
+                        "Only the long FX Mix wheel target should use the textured bar: " + id);
                 juce::Label* value = nullptr;
                 for (auto* child : slider->getChildren()) if (auto* label = dynamic_cast<juce::Label*>(child)) value = label;
                 require(value && slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,

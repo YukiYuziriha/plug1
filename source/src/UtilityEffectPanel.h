@@ -78,6 +78,8 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             } else {
                 slider.owner = &panel.owner; slider.bindModulation(panel.owner, id);
                 slider.setName(name); slider.setLookAndFeel(&style);
+                if (field == utilityParameterCount)
+                    slider.getProperties().set("vocalstackTexturedBar", true);
                 slider.setSliderStyle(field == utilityParameterCount ? juce::Slider::LinearHorizontal
                                                                    : juce::Slider::RotaryHorizontalVerticalDrag);
                 slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 76, 21);
@@ -590,7 +592,10 @@ public:
     void revealParameter(const juce::String& id) {
         for (const auto& row : rows) if (row->id == id) viewport.setViewPosition(0, juce::jmax(0, row->getY() - 26));
     }
-    void paint(juce::Graphics& g) override { g.fillAll(themePalette(*this, neon).panel); }
+    void paint(juce::Graphics& g) override {
+            const auto palette = themePalette(*this, neon);
+            background.paint(g, getLocalBounds(), palette.panel, palette.accent, fluidAnimationSeconds(*this));
+        }
     void resized() override {
         const auto position = viewport.getViewPosition();
         viewport.setBounds(getLocalBounds());
@@ -598,28 +603,29 @@ public:
         const int inner = juce::jmax(1, width - 16);
         const bool wide = getWidth() >= 620;
         const int visualWidth = wide ? inner * 44 / 100 : inner;
-        const int controlX = wide ? 8 + visualWidth + 12 : 8;
-        const int controlWidth = wide ? inner - visualWidth - 12 : inner;
+        const int controlX = wide ? 8 + visualWidth + 6 : 8;
+        const int controlWidth = wide ? inner - visualWidth - 6 : inner;
         int y = 8;
         const int visualHeight = isFilter() ? 238 : kind == UtilityKind::gate ? 110 : 72;
-        visual.setBounds(8, y, visualWidth, visualHeight); y += visualHeight + 8;
+        visual.setBounds(8, y, visualWidth, visualHeight); y += visualHeight + 6;
         const int overviewHeight = juce::jmax(54, int(std::ceil(
             juce::GlyphArrangement::getStringWidth(overview.getFont(), overview.getText())
                 / double(juce::jmax(1, visualWidth - 8)))) * 16 + 8);
         overview.setBounds(8, y, visualWidth, overviewHeight); y += overviewHeight + 6;
         const int visualBottom = y;
         if (wide) y = 8;
-        constexpr int knobWidth = 78, knobHeight = 100, gap = 4;
+        constexpr int knobWidth = 68, knobHeight = 100, knobGap = 2;
         int x = controlX, rowHeight = 0;
         const auto flush = [&] {
-            if (rowHeight != 0) { y += rowHeight + gap; x = controlX; rowHeight = 0; }
+            if (rowHeight != 0) { y += rowHeight + knobGap; x = controlX; rowHeight = 0; }
         };
         for (const auto& row : rows) {
             if (row->combo.isVisible() || (row->slider.isVisible()
                             && row->slider.getSliderStyle() == juce::Slider::LinearHorizontal)) {
                 flush();
-                const int height = row->combo.isVisible() ? 46 : 62;
-                row->setBounds(controlX, y, controlWidth, height); y += height + gap;
+                // Mix reserves value (21), modulation lane (8), track (25), caption (28), and padding.
+                const int height = row->combo.isVisible() ? 46 : 94;
+                row->setBounds(controlX, y, controlWidth, height); y += height + knobGap;
             } else {
                 const bool toggle = row->toggle.isVisible();
                 const int cellWidth = toggle ? 64 : knobWidth;
@@ -627,7 +633,7 @@ public:
                 // Keep switches out of tall knob rows, but let adjacent switches share a row.
                 if (rowHeight != 0 && (rowHeight != cellHeight || x + cellWidth > controlX + controlWidth)) flush();
                 row->setBounds(x, y, juce::jmin(controlWidth, cellWidth), cellHeight);
-                x += cellWidth + gap;
+                x += cellWidth + knobGap;
                 rowHeight = cellHeight;
             }
         }
@@ -668,6 +674,7 @@ private:
     size_t slot;
     UtilityKind kind;
     bool neon = false, editing = false;
+    FluidBackground background;
     Visual visual;
     juce::Component content;
     PassiveViewport viewport;

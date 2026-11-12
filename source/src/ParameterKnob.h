@@ -2,7 +2,10 @@
 
 #include "PluginProcessor.h"
 #include "VisualTheme.h"
+#include "FluidBackground.h"
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <cmath>
+#include <cstdint>
 
 namespace vocalstack {
 
@@ -190,7 +193,8 @@ public:
         if (hasEffective) {
             g.setColour(componentTheme(*this) == Theme::spectral ? themePalette(*this).secondary : juce::Colour(0xff64f5e3));
             juce::Path marker;
-            marker.addTriangle(x(effective) - 3, y - 11, x(effective) + 3, y - 11, x(effective), y - 7);
+            const float markerY = bool(getProperties()["vocalstackTexturedBar"]) ? track.getY() - 7 : y - 11;
+                        marker.addTriangle(x(effective) - 3, markerY, x(effective) + 3, markerY, x(effective), markerY + 4);
             g.fillPath(marker);
         }
     }
@@ -245,6 +249,11 @@ public:
     static constexpr float controlFontSize = 12.5f;
     class Style final : public juce::LookAndFeel_V4 {
     public:
+        static constexpr int texturedBarHeight = 25;
+        static juce::Rectangle<float> texturedBarBounds(juce::Rectangle<float> area) {
+            const float height = juce::jmin(float(texturedBarHeight), juce::jmax(1.f, area.getHeight() - 8));
+            return {area.getX(), area.getY() + 8 + (area.getHeight() - 8 - height) * .5f, area.getWidth(), height};
+        }
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
             auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
                         label->setFont(juce::Font(juce::FontOptions(controlFontSize)));
@@ -253,6 +262,10 @@ public:
         void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h,
                               float position, float, float, juce::Slider::SliderStyle,
                               juce::Slider& slider) override {
+            if (bool(slider.getProperties()["vocalstackTexturedBar"])) {
+                drawTexturedBar(g, {float(x), float(y), float(juce::jmax(1, w)), float(h)}, position, slider);
+                return;
+            }
             const auto track = juce::Rectangle<float>(float(x), float(y) + float(h) * 0.5f, float(juce::jmax(1, w)), 2.0f);
             const bool bipolar = slider.getMinimum() < 0 && slider.getMaximum() > 0;
             const float origin = bipolar ? track.getX() + float(slider.valueToProportionOfLength(0)) * track.getWidth() : track.getX();
@@ -296,6 +309,71 @@ public:
                         centre.getPointOnCircumference(radius * 0.7f, angle)}, 2);
             if (auto* mod = dynamic_cast<ModulationSlider*>(&slider)) mod->drawModulation(g, centre, radius, start, end);
         }
+    private:
+        // Coordinate-hashed periodic noise, quantised into a small flat palette.
+        // Explicit animation phase morphs the material, never the value geometry.
+        static float textureHash(int x, int y) {
+            uint32_t n = uint32_t(x) * 0x9e3779b9u ^ uint32_t(y) * 0x85ebca6bu ^ 0x51ed270bu;
+            n ^= n >> 16; n *= 0x7feb352du; n ^= n >> 15;
+            n *= 0x846ca68bu; n ^= n >> 16;
+            return float(n & 65535u) / 65535.f;
+        }
+        static float textureNoise(float x, float y, int scale) {
+            const int ix = int(std::floor(x / float(scale))), iy = int(std::floor(y / float(scale))), period = 64 / scale;
+            const float fx = x / float(scale) - float(ix), fy = y / float(scale) - float(iy);
+            const float u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+            const auto sample = [=](int a, int b) { return textureHash((a % period + period) % period, b); };
+            const float a = sample(ix, iy) * (1 - u) + sample(ix + 1, iy) * u;
+            const float b = sample(ix, iy + 1) * (1 - u) + sample(ix + 1, iy + 1) * u;
+            return a * (1 - v) + b * v;
+        }
+        void prepareTexture(juce::Colour accent, double seconds) {
+            const double frame = std::floor(seconds * 15.0);
+            if (texture.isValid() && accent == textureColour && frame == textureFrame) return;
+            textureColour = accent; textureFrame = frame;
+            if (!texture.isValid()) texture = juce::Image(juce::Image::RGB, 192, 27, false);
+            const float phase = float(std::fmod(frame / 15.0, 4096.0));
+            juce::Image::BitmapData pixels(texture, juce::Image::BitmapData::writeOnly);
+            for (int row = 0; row < 9; ++row) for (int col = 0; col < 64; ++col) {
+                const float noise = .64f * textureNoise(float(col) + phase * 1.3f, float(row) + std::sin(phase * .18f) * 2.f, 8)
+                                  + .26f * textureNoise(float(col) - phase * .45f, float(row) + phase * .3f, 4)
+                                  + .10f * textureHash(col, row);
+                const float shade = float(juce::jlimit(0, 5, int(noise * 6))) / 5.f;
+                const auto colour = shade < .5f ? accent.interpolatedWith(juce::Colours::black, (.5f - shade) * .52f)
+                                               : accent.interpolatedWith(juce::Colours::white, (shade - .5f) * .28f);
+                for (int dy = 0; dy < 3; ++dy) for (int dx = 0; dx < 3; ++dx)
+                    pixels.setPixelColour(col * 3 + dx, row * 3 + dy, colour);
+            }
+        }
+        void drawTexturedBar(juce::Graphics& g, juce::Rectangle<float> area, float position, juce::Slider& slider) {
+            const auto track = texturedBarBounds(area).toNearestInt();
+            const auto palette = themePalette(slider);
+            const auto accent = slider.findColour(juce::Slider::trackColourId);
+            prepareTexture(accent, fluidAnimationSeconds(slider));
+            const float thumb = juce::jlimit(float(track.getX()), float(track.getRight()), position);
+            const bool bipolar = slider.getMinimum() < 0 && slider.getMaximum() > 0;
+            const float origin = bipolar ? float(track.getX()) + float(slider.valueToProportionOfLength(0)) * float(track.getWidth())
+                                         : float(track.getX());
+            g.setColour(palette.inset); g.fillRect(track);
+            {
+                const juce::Graphics::ScopedSaveState save(g);
+                g.reduceClipRegion(juce::Rectangle<float>(juce::jmin(origin, thumb), float(track.getY()),
+                    std::abs(thumb - origin), float(track.getHeight())).getSmallestIntegerContainer());
+                g.setImageResamplingQuality(juce::Graphics::lowResamplingQuality);
+                for (int left = track.getX(); left < track.getRight(); left += texture.getWidth())
+                    g.drawImageAt(texture, left, track.getY());
+            }
+            g.setColour(palette.border); g.drawRect(track, 1);
+            if (bipolar) { g.setColour(palette.muted); g.drawVerticalLine(juce::roundToInt(origin), float(track.getY()), float(track.getBottom())); }
+            if (auto* mod = dynamic_cast<ModulationSlider*>(&slider)) mod->drawLinearModulation(g, track.toFloat());
+            // One flat base marker, drawn after the modulation range. Effective
+            // feedback stays in its own lane above the entire thick bar.
+            g.setColour(palette.text);
+            g.fillRect(juce::Rectangle<float>(thumb - 1.5f, float(track.getY()), 3.f, float(track.getHeight())));
+        }
+        juce::Image texture;
+        juce::Colour textureColour;
+        double textureFrame = -1;
     };
 public:
     ParameterKnob(Processor& owner, const juce::String& id, const juce::String& title, const char* unit = "") {
@@ -348,6 +426,8 @@ public:
     }
     void setLinear(bool value) {
         slider.setSliderStyle(value ? juce::Slider::LinearHorizontal : juce::Slider::RotaryHorizontalVerticalDrag);
+        slider.getProperties().set("vocalstackTexturedBar", value &&
+            (slider.getComponentID().startsWith("fx") || slider.getComponentID() == "choraleMix"));
         slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 68, value ? 18 : 19);
         resized();
     }

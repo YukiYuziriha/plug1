@@ -120,7 +120,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             // Keep two-state controls button-sized, rather than filling a knob cell.
             toggle.setBounds(getLocalBounds().withSizeKeepingCentre(juce::jmin(58, getWidth()), 28));
         }
-        int preferredWidth() const { return buttonLink ? 60 : 84; }
+        int preferredWidth() const { return buttonLink ? 60 : 68; }
         bool textEditing = false;
         void setNeon(bool neon) {
             const auto palette = themePalette(*this, neon);
@@ -161,6 +161,7 @@ public:
         content.addAndMakeVisible(visual);
         addGroup("BLEND");
         addRow(fxParameterId(slot, "Mix"), "Mix", "True dry/wet blend for this FX slot: 0% dry, 100% wet.", "%", false);
+        groups.back().rows.back()->slider.getProperties().set("vocalstackTexturedBar", true);
         groups.back().rows.back()->slider.setSliderStyle(juce::Slider::LinearHorizontal);
         const char* previous = "";
         for (size_t i = 0; i < creativeParameterCount; ++i) {
@@ -225,8 +226,8 @@ public:
                 viewport.setViewPosition(0, juce::jmax(0, row->getY() - 26));
     }
     void paint(juce::Graphics& g) override {
-        g.setColour(themePalette(*this, neon).panel);
-        g.fillRoundedRectangle(getLocalBounds().toFloat(), 5);
+        const auto palette = themePalette(*this, neon);
+        background.paint(g, getLocalBounds(), palette.panel, palette.accent, fluidAnimationSeconds(*this));
     }
     void resized() override {
         const juce::ScopedValueSetter<bool> guard(layingOut, true);
@@ -243,21 +244,23 @@ public:
         juce::TextLayout descriptionLayout;
         descriptionLayout.createLayout(descriptionText, float(visualWidth));
         const int overviewHeight = juce::jmax(32, int(std::ceil(descriptionLayout.getHeight())) + 6);
-        overview.setBounds(8, visual.getBottom() + 10, visualWidth, overviewHeight);
-        int visualBottom = overview.getBottom() + 8;
+        overview.setBounds(8, visual.getBottom() + 6, visualWidth, overviewHeight);
+        int visualBottom = overview.getBottom() + 6;
         if (kind == CreativeKind::compressor) {
             meter.setBounds(8, visualBottom, visualWidth, 28);
-            visualBottom = meter.getBottom() + 8;
+            visualBottom = meter.getBottom() + 6;
         }
-        const int controlsX = split ? visual.getRight() + 16 : 8;
+        const int controlsX = split ? visual.getRight() + 6 : 8;
         const int controlsWidth = split ? juce::jmax(1, width - controlsX - 8) : innerWidth;
         int y = split ? 8 : visualBottom;
         for (auto& group : groups) {
             group.heading->setBounds(controlsX, y, controlsWidth, 20);
             y += 22;
             if (&group == &groups.front()) {
-                group.rows.front()->setBounds(controlsX, y, controlsWidth, 64);
-                y += 70;
+                // Value (20), modulation lane (8), track (25), caption (28), plus padding.
+                constexpr int mixHeight = 94;
+                group.rows.front()->setBounds(controlsX, y, controlsWidth, mixHeight);
+                y += mixHeight + 6;
                 continue;
             }
             int x = 0, lineHeight = 0;
@@ -271,7 +274,7 @@ public:
                 x += cellWidth + 2;
                 lineHeight = juce::jmax(lineHeight, cellHeight);
             }
-            y += lineHeight + 10;
+            y += lineHeight + 6;
         }
         content.setSize(width, juce::jmax(getHeight(), juce::jmax(visualBottom, y)));
         // Retain the preferred anchor even if a wide/tall view temporarily has
@@ -380,6 +383,7 @@ private:
     size_t slot;
     CreativeKind kind;
     bool neon = false;
+    FluidBackground background;
     CreativeEffectVisual visual;
     juce::Component content;
     InspectorViewport viewport;

@@ -113,8 +113,8 @@ struct UtilityPanelTests {
                 panel.setSize(width, 280);
                 const bool wide = width >= 620;
                 const int inner = panel.content.getWidth() - 16;
-                const int controlWidth = wide ? inner - inner * 44 / 100 - 12 : inner;
-                const int controlX = wide ? panel.visual.getRight() + 12 : 8;
+                const int controlWidth = wide ? inner - inner * 44 / 100 - 6 : inner;
+                const int controlX = wide ? panel.visual.getRight() + 6 : 8;
                 require(!wide || (panel.visual.getWidth() < inner / 2
                                  && panel.rows.front()->getY() == panel.visual.getY()),
                         "Wide Utility inspector still uses a full-width vertical column");
@@ -124,6 +124,12 @@ struct UtilityPanelTests {
                     const auto& row = panel.rows[i];
                     require(panel.content.getLocalBounds().contains(row->getBounds()), "Utility parameter clipped");
                     require(row->getX() >= controlX, "Wide Utility control escaped its right-hand group");
+                    panel.revealParameter(row->id);
+                    require(panel.viewport.getViewArea().contains(row->getBounds()),
+                            "Utility parameter is not fully scroll reachable");
+                    if (i != 0 && row->getY() > panel.rows[i - 1]->getY())
+                        require(row->getY() == panel.rows[i - 1]->getBottom() + 2,
+                                "Utility control rows must retain a 2px vertical gap");
                     require(!row->getBounds().intersects(panel.visual.getBounds())
                             && !row->getBounds().intersects(panel.overview.getBounds()), "Utility control overlaps its visual");
                     for (size_t j = 0; j < i; ++j)
@@ -137,11 +143,23 @@ struct UtilityPanelTests {
                         require(row->slider.getSliderStyle() == (mix ? juce::Slider::LinearHorizontal
                                                                  : juce::Slider::RotaryHorizontalVerticalDrag),
                                 "Utility parameter changed control style");
-                        require(row->getWidth() == (mix ? controlWidth : 78)
-                                && row->getHeight() == (mix ? 62 : 100), "Utility control stretched with inspector");
+                        require(row->getWidth() == (mix ? controlWidth : 68)
+                                && row->getHeight() == (mix ? 94 : 100), "Utility control stretched with inspector");
+                        require(bool(row->slider.getProperties()["vocalstackTexturedBar"]) == mix,
+                                "Only Utility Mix should opt into the textured FX bar");
+                        if (mix)
+                            require(row->slider.getHeight() - row->slider.getTextBoxHeight() >= 8 + 25
+                                        && row->label.getHeight() == 28,
+                                    "Utility Mix clips its modulation lane, 25px track, or caption");
                         require(row->slider.getTextBoxPosition() == juce::Slider::TextBoxAbove,
                                 "Utility value is not above its control");
                         require(row->label.getY() >= row->slider.getBottom(), "Utility name is not below its control");
+                        if (!mix) {
+                            require((row->getX() - controlX) % 70 == 0,
+                                    "Utility rotary columns must have a 2px gap");
+                            require(row->slider.getTextBoxWidth() == 64 && row->slider.getTextBoxHeight() == 21,
+                                    "Utility rotary value must fit the narrower cell");
+                        }
                     }
                 }
                 panel.viewport.setViewPosition(0, 100);
@@ -166,7 +184,7 @@ struct UtilityPanelTests {
                 panel.setNeon(neon); panel.setSize(width, 380);
                 for (const auto& row : panel.rows) {
                     require(panel.content.getLocalBounds().contains(row->getBounds()), "Narrow card clipped a parameter");
-                    require(row->getWidth() >= (row->toggle.isVisible() ? 48 : 76), "Narrow control is unusably small");
+                    require(row->getWidth() >= (row->toggle.isVisible() ? 48 : 68), "Narrow control is unusably small");
                     if (row->combo.isVisible()) require(row->getWidth() == panel.visual.getWidth(), "Mode selector is truncated to a knob cell");
                 }
                 if (width == 190 || width == 220) {
