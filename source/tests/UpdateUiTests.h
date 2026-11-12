@@ -384,8 +384,12 @@ inline void creativeVisuals() {
         visual.addToDesktop(0); visual.setVisible(true); visual.setNeon(theme == 1);
         expected.addToDesktop(0); expected.setVisible(true); expected.setNeon(theme == 1);
         ui::require(visual.visibleInHierarchy() && expected.visibleInHierarchy(), "Creative model fixture must be showing");
-        visual.refresh(); expected.refresh();
+        // Compare parameter models at one explicit clock instant: independent
+        // wall-clock refreshes advance Delay by different amounts.
+        constexpr double modelTimeMs = 1000;
+        visual.refreshAt(modelTimeMs); expected.refreshAt(modelTimeMs);
         const auto base = ui::render(visual);
+        ui::require(samePixels(base, ui::render(expected)), "Creative base model fixtures differ");
         ModulationState state; state.modulators = {{1}};
         state.modulators[0].waveform = ModulationWaveform::square; state.modulators[0].rateHz = .1f;
         state.assignments = {{1, "fx1Mix", -.2f, true}};
@@ -441,13 +445,35 @@ inline void creativeVisuals() {
             ui::passive(visual); owner->releaseResources();
             continue;
         }
-        visual.refresh(); expected.refresh();
+        visual.refreshAt(modelTimeMs); expected.refreshAt(modelTimeMs);
         const auto modulated = ui::render(visual);
-        ui::require(!samePixels(base, modulated), "Creative visual ignored effective modulation");
-        ui::require(samePixels(modulated, ui::render(expected)), "Creative model mixed host bases and effective snapshot values");
+        const auto context = " (" + CreativeEffectPanel::effectName(kinds[k]) + ", " + themeName(theme) + ")";
+        ui::require(!samePixels(base, modulated), "Creative visual ignored effective modulation" + context);
+        ui::require(samePixels(modulated, ui::render(expected)), "Creative model mixed host bases and effective snapshot values" + context);
+        double comparisonTimeMs = modelTimeMs + 125;
+        if (kinds[k] == CreativeKind::delay) {
+            ui::near(float(visual.timingPhase()), 0, "Fixed-time Delay comparison advanced phase");
+            ui::near(float(expected.timingPhase()), 0, "Fixed-time reference advanced phase");
+            ui::near(float(visual.delayIntervalSeconds()), float(expected.delayIntervalSeconds()),
+                     "Delay interval differs from effective-parameter reference");
+            comparisonTimeMs = modelTimeMs + visual.delayIntervalSeconds() * 250;
+        }
+        visual.refreshAt(comparisonTimeMs); expected.refreshAt(comparisonTimeMs);
+        const auto later = ui::render(visual);
+        ui::require(samePixels(later, ui::render(expected)), "Creative models differ at the same later timestamp" + context);
+        if (kinds[k] == CreativeKind::delay) {
+            ui::near(float(visual.timingPhase()), .25f, "Delay must advance exactly one quarter interval");
+            ui::near(float(expected.timingPhase()), .25f, "Reference must advance exactly one quarter interval");
+            ui::require(!samePixels(modulated, later), "Deterministic Delay animation did not move" + context);
+        } else {
+            ui::require(samePixels(modulated, later), "Nonanimated creative model changed with time" + context);
+        }
+        visual.refreshAt(comparisonTimeMs); expected.refreshAt(comparisonTimeMs);
+        ui::require(samePixels(later, ui::render(visual)) && samePixels(later, ui::render(expected)),
+                    "Repeated timestamp must preserve exact creative model pixels" + context);
         ui::near(ui::read(*owner, id), parameter.convertFrom0to1(.3f), "Visual changed host base");
-        write(*owner, "fx1On", 0); visual.refresh();
-        ui::require(!samePixels(modulated, ui::render(visual)), "Creative visual did not display bypass");
+        write(*owner, "fx1On", 0); visual.refreshAt(comparisonTimeMs);
+        ui::require(!samePixels(later, ui::render(visual)), "Creative visual did not display bypass" + context);
         ui::require(visual.getTooltip().containsIgnoreCase("not a measured impulse response"), "Model must not claim live reverb telemetry");
         ui::passive(visual); owner->releaseResources();
     }

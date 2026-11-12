@@ -11,6 +11,9 @@
 #include "UpdateUiTests.h"
 #include "SliderRenderingTests.h"
 #include "MainBusFxRackPanel.h"
+#include "HoverWheelRegressionTests.h"
+#include "ToneCardLayoutTests.h"
+#include "UtilityPanelTests.h"
 #include "RackUndoIntegrationTests.h"
 
 #include <algorithm>
@@ -656,24 +659,24 @@ void editorSkin(int theme) {
     for (const auto* obsolete : {"Show Advanced", "Hide Advanced", "Voice stack", "Open Routing"})
         expect(findButton(*editor, obsolete) == nullptr, "Obsolete Stack action remains: " + juce::String(obsolete));
     expect(!owner.settings().advanced, "Always-visible Stack changed legacy activation");
-    // The Main Bus rack occupies y=344..588; Stack starts at 610 and retains its 442px design allocation.
+    // Stack preserves native control sizes and scrolls vertically below the FX row.
     expect(editor->isResizable() && windowHeight == 1104 && windowWidth == 940,
            "Fresh editor must be resizable at 940x1104, including the 52px preset footer");
-    expect(canvas.getBounds() == juce::Rectangle<int>(0, 0, 940, 1052) && canvas.getTransform().isIdentity(),
-           "Fresh Stack must use its fixed unscaled 940x1052 design");
+    expect(canvas.getBounds() == juce::Rectangle<int>(0, 0, 940, 1148) && canvas.getTransform().isIdentity(),
+           "Fresh Stack must use its fixed unscaled 940x1148 design");
     int advancedSliders = 0, advancedButtons = 0, choraleSliders = 0, choraleButtons = 0;
     for (auto* child : canvas.getChildren()) {
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
             checkDrawerControls(owner, *child, advancedSliders, advancedButtons, true);
     }
     auto* rack = vocalstack::toneUiTests::find<vocalstack::MainBusFxRackPanel>(canvas, [](auto&) { return true; });
-    expect(rack && rack->isVisible() && rack->getBounds() == juce::Rectangle<int>(18, 344, 904, 244),
-           "Stack must retain the full 904x244 Main Bus FX rack below the main controls");
+    expect(rack && rack->isVisible() && rack->getBounds() == juce::Rectangle<int>(18, 344, 904, 340),
+           "Stack must retain the 904x340 horizontal Main Bus FX row below the main controls");
     auto* freshStack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(canvas, [](auto&) { return true; });
-    expect(freshStack && freshStack->getBounds() == juce::Rectangle<int>(18, 610, 904, 430)
+    expect(freshStack && freshStack->getBounds() == juce::Rectangle<int>(18, 706, 904, 430)
                && canvas.getLocalBounds().contains(freshStack->getBounds())
                && !rack->getBounds().intersects(freshStack->getBounds()),
-           "The rack must not overlap or clip the full Stack panel at its new 610px origin");
+           "The rack must not overlap or clip the full Stack panel at its new 706px origin");
     auto* chorale = vocalstack::toneUiTests::find<juce::Component>(*rack, [](auto& child) {
         return child.getComponentID() == "mainBusFx12";
     });
@@ -716,7 +719,7 @@ void editorSkin(int theme) {
     owner.setAdvancedVisible(false);
     juce::Timer::callPendingTimersSynchronously();
     auto* stack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(*editor, [](auto&) { return true; });
-    expect(stack && stack->isVisible() && canvas.getHeight() == 1052 && owner.settings().advanced,
+    expect(stack && stack->isVisible() && canvas.getHeight() == 1148 && owner.settings().advanced,
            "Legacy visibility state hid Stack or changed activation");
     editor.reset();
     editor.reset(owner.createEditor());
@@ -768,7 +771,7 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 63> tests{{
+    const std::array<Test, 66> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -797,6 +800,11 @@ int main(int argc, char** argv) {
         {"All utility inspectors in all three themes", vocalstack::updateUiTests::utilityInspectors},
         {"Half-speed relative sliders across sizes, skew and themes", vocalstack::updateUiTests::halfSpeedSliders},
         {"Slider selection, feedback, alignment, sensitivity and knob modes", vocalstack::sliderRenderingTests::run},
+                {"Hovered controls scroll nearest viewport without parameter edits", vocalstack::hoverWheelRegressionTests::run},
+                {"Voice-sized Tone cards and passive EQ wheel scrolling", vocalstack::toneCardLayoutTests::run},
+                {"Immediate filter redraw and bounded latest-target synth scheduler", [] {
+                    vocalstack::UtilityPanelTests::scheduling(); vocalstack::UtilityPanelTests::controls();
+                }},
         {"Routing half-width modulator rail in all three themes", vocalstack::updateUiTests::routingModulatorRail},
         {"Routing waveform previews follow modulator controls", vocalstack::updateUiTests::routingWaveformPreviews},
         {"Coherent creative visual models in all three themes", vocalstack::updateUiTests::creativeVisuals},

@@ -4,6 +4,7 @@
 #include "FxVisuals.h"
 #include "ParameterKnob.h"
 #include "ModulationUI.h"
+#include "DoublerPanel.h" // detail::passiveControl
 #include <array>
 #include <chrono>
 #include <condition_variable>
@@ -15,8 +16,11 @@
 
 namespace vocalstack {
 
+struct UtilityPanelTests;
+
 // Presentation only: models use effective targets, edits always address host bases.
 class UtilityEffectPanel final : public juce::Component, private juce::Timer {
+    friend struct UtilityPanelTests;
     class EditSlider final : public ModulationSlider {
     public:
         std::function<void()> beginEdit, endEdit;
@@ -31,6 +35,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             if (editing && endEdit) endEdit();
             editing = false;
         }
+
         void mouseDoubleClick(const juce::MouseEvent& e) override {
             const bool edit = owner && owner->modulationAssignmentId() == 0 && !e.mods.isPopupMenu();
             if (edit && beginEdit) beginEdit();
@@ -102,6 +107,9 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         void mouseUp(const juce::MouseEvent& e) override {
             if (e.eventComponent != &slider && slider.isParentOf(e.eventComponent)) panel.end();
         }
+        void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override {
+            forwardPassiveWheel(*this, e, wheel);
+        }
         void refresh() {
             if (combo.isVisible()) combo.setSelectedId(int(toneui::visualParameter(panel.owner, id)) + 1, juce::dontSendNotification);
             if (toggle.isVisible()) toggle.setToggleState(toneui::visualParameter(panel.owner, id) >= .5f, juce::dontSendNotification);
@@ -109,7 +117,9 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         void resized() override {
             auto b = getLocalBounds().reduced(2, 1);
             label.setJustificationType(juce::Justification::centred);
-                        label.setBounds(b.removeFromTop(17)); slider.setBounds(b); combo.setBounds(b.withHeight(24));
+            label.setBounds(b.removeFromTop(17));
+            slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, juce::jmin(85, b.getWidth()), 21);
+            slider.setBounds(b); combo.setBounds(b.withHeight(24));
             toggle.setBounds(getLocalBounds().reduced(2, 8));
         }
         void setNeon(bool neon) {
@@ -139,9 +149,29 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> link;
     };
     class Visual final : public toneui::FxMonitorView, public juce::SettableTooltipClient {
+        friend struct UtilityPanelTests;
+        struct Target {
+            juce::RangedAudioParameter* parameter = nullptr;
+            size_t index = 0;
+            float read(const ModulationSnapshot& snapshot, float fallback) {
+                if (!parameter) return fallback;
+                if (index >= snapshot.targets.size() || snapshot.targets[index].parameterId != parameter->paramID) {
+                    index = 0;
+                    while (index < snapshot.targets.size() && snapshot.targets[index].parameterId != parameter->paramID) ++index;
+                }
+                if (index < snapshot.targets.size() && std::isfinite(snapshot.targets[index].effectiveNormalized))
+                    return parameter->convertFrom0to1(std::clamp(snapshot.targets[index].effectiveNormalized, 0.f, 1.f));
+                return parameter->convertFrom0to1(parameter->getValue());
+            }
+        };
     public:
         explicit Visual(UtilityEffectPanel& p) : FxMonitorView(p.owner, p.slot, p.isFilter()), panel(p) {
             setComponentID("utilityVisual"); setName("Utility response and live pre/post monitor");
+            for (size_t i = 0; i < utilityParameterCount; ++i)
+                if (utilityParameters[i].kind == panel.kind)
+                    targets[i].parameter = monitorOwner.parameters.getParameter(utilityParameterId(monitorSlot, i));
+            onTarget.parameter = monitorOwner.parameters.getParameter(fxParameterId(monitorSlot, "On"));
+            mixTarget.parameter = monitorOwner.parameters.getParameter(fxParameterId(monitorSlot, "Mix"));
             setTooltip("Filter: drag horizontally for cutoff, vertically for resonance. Curve uses effective modulation targets, not live smoothed DSP state. PRE/POST FFT is stereo power, Hann-normalized peak dBFS; it is not the response curve. Synth curves are cached, finite-impulse small-signal estimates, not exact nonlinear transfer functions. Comb delay is frozen.");
         }
         ~Visual() override {
@@ -157,10 +187,11 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             if (next.consistent) {
                 for (size_t i = 0; i < utilityParameterCount; ++i) {
                     const auto& d = utilityParameters[i];
-                    settings.values[i] = std::clamp(toneui::visualParameter(monitorOwner, utilityParameterId(monitorSlot, i), d.initial, &next), d.min, d.max);
+                    if (d.kind == panel.kind)
+                        settings.values[i] = std::clamp(targets[i].read(next, d.initial), d.min, d.max);
                 }
-                enabled = toneui::visualParameter(monitorOwner, fxParameterId(monitorSlot, "On"), 1, &next) >= .5f;
-                mix = toneui::visualParameter(monitorOwner, fxParameterId(monitorSlot, "Mix"), 100, &next);
+                enabled = onTarget.read(next, 1) >= .5f;
+                mix = mixTarget.read(next, 100);
                 ready = true;
             }
             if (panel.kind == UtilityKind::synthFilter && ready) updateSynthCurve();
@@ -206,19 +237,23 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                 g.drawText(juce::String(db), int(plot.getRight()) + 2, int(y) - 6, 26, 12, juce::Justification::centredLeft);
             }
             if (ready) {
-                juce::Path curve;
-                const int steps = juce::jlimit(64, 1600, int(plot.getWidth()) * 3);
-                for (int i = 0; i <= steps; ++i) {
-                    const double hz = 20 * std::pow(1000., double(i) / steps);
-                    if (hz >= rate * .5) break;
-                    if (!cached) break;
-                    const double magnitude = synth ? synthMagnitude(hz)
-                        : UtilityEffect::response(rate, UtilityKind::xpFilter, hz, settings).magnitude;
-                    const double db = 20 * std::log10(std::max(1.e-12, magnitude));
-                    const float x = plot.getX() + plot.getWidth() * float(i) / float(steps), y = responseY(plot, db);
-                    if (i == 0) curve.startNewSubPath(x, y); else curve.lineTo(x, y);
+                // Live FFT repaints must not rebuild an unchanged response path.
+                if (pathSettings.values != settings.values || pathRate != rate || pathBounds != plot
+                    || pathRevision != curveRevision) {
+                    responsePath.clear();
+                    const int steps = juce::jlimit(64, 1600, int(plot.getWidth()) * 3);
+                    for (int i = 0; i <= steps; ++i) {
+                        const double hz = 20 * std::pow(1000., double(i) / steps);
+                        if (hz >= rate * .5 || !cached) break;
+                        const double magnitude = synth ? synthMagnitude(hz)
+                            : UtilityEffect::response(rate, UtilityKind::xpFilter, hz, settings).magnitude;
+                        const double db = 20 * std::log10(std::max(1.e-12, magnitude));
+                        const float x = plot.getX() + plot.getWidth() * float(i) / float(steps), y = responseY(plot, db);
+                        if (i == 0) responsePath.startNewSubPath(x, y); else responsePath.lineTo(x, y);
+                    }
+                    pathSettings = settings; pathRate = rate; pathBounds = plot; pathRevision = curveRevision;
                 }
-                g.setColour(c.accent.withAlpha(enabled ? 1.f : .45f)); g.strokePath(curve, juce::PathStrokeType(1.8f));
+                g.setColour(c.accent.withAlpha(enabled ? 1.f : .45f)); g.strokePath(responsePath, juce::PathStrokeType(1.8f));
                 const float cutoff = settings.values[panel.cutoffField()];
                 const float x = plot.getX() + plot.getWidth() * float(std::log(cutoff / 20) / std::log(1000.0));
                 const float y = plot.getBottom() - settings.values[panel.resonanceField()] * .01f * plot.getHeight();
@@ -227,6 +262,9 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             g.setColour(c.muted);
             g.drawText("L: response dB | R: FFT dBFS | Mix " + juce::String(mix, 0) + "%", 7, getHeight() - 30, getWidth() - 14, 13, juce::Justification::centredLeft);
             g.drawText(hasLiveFrame() ? (isStreamStalled() ? "PRE / POST FFT (stalled / fading)" : "PRE dim / POST teal FFT | drag cutoff / resonance") : "No live FFT | drag cutoff / resonance", 7, getHeight() - 16, getWidth() - 14, 13, juce::Justification::centredLeft);
+        }
+        void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override {
+            forwardPassiveWheel(*this, e, wheel);
         }
         void mouseDown(const juce::MouseEvent& e) override {
             if (!panel.isFilter() || !plotBounds().contains(e.position) || !e.mods.isLeftButtonDown()
@@ -247,7 +285,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             const float r = 100 * juce::jlimit(0.f, 1.f, (b.getBottom() - e.position.y) / b.getHeight());
             cutoff->setValueNotifyingHost(cutoff->convertTo0to1(float(20 * std::pow(1000., x))));
             resonance->setValueNotifyingHost(resonance->convertTo0to1(r));
-            panel.changed(); refresh();
+            panel.changed();
         }
         void mouseUp(const juce::MouseEvent&) override { finishDrag(); }
     private:
@@ -265,6 +303,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         // Shared by all Synth visuals (including different editors). Tickets contain only
         // snapshots/results; neither the worker nor its queue can access UI or processors.
         class CurveScheduler final {
+            friend struct UtilityPanelTests;
         public:
             struct Ticket {
                 CurveRequest pending, active;
@@ -278,7 +317,10 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                 static auto scheduler = std::make_shared<CurveScheduler>();
                 return scheduler;
             }
-            CurveScheduler() : worker([this] { run(); }) {}
+            using Render = std::function<std::vector<UtilityResponse>(double, const UtilitySettings&)>;
+            explicit CurveScheduler(Render renderCurve = [](double rate, const UtilitySettings& targets) {
+                return UtilityEffect::synthResponseCurve(rate, targets, 32768);
+            }) : render(std::move(renderCurve)), worker([this] { run(); }) {}
             ~CurveScheduler() {
                 {
                     std::lock_guard<std::mutex> lock(mutex);
@@ -300,7 +342,8 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             bool submit(const std::shared_ptr<Ticket>& ticket, const CurveRequest& request) {
                 std::lock_guard<std::mutex> lock(mutex);
                 if (stopping || ticket->cancelled) return false;
-                if (ticket->running && ticket->active == request) {
+                if ((ticket->running && ticket->active == request)
+                    || (ticket->completed && !ticket->failed && ticket->result.request == request)) {
                     // Targets may have returned to the in-flight snapshot.
                     removePending(ticket);
                     return true;
@@ -358,7 +401,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                     SynthCurve result;
                     bool failed = false;
                     try {
-                        result = {request, UtilityEffect::synthResponseCurve(request.rate, request.targets, 32768)};
+                        result = {request, render(request.rate, request.targets)};
                     } catch (...) { failed = true; }
                     {
                         std::lock_guard<std::mutex> lock(mutex);
@@ -378,6 +421,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             std::array<std::shared_ptr<Ticket>, 17> pending{};
             size_t pendingCount = 0;
             bool stopping = false;
+            const Render render;
             std::thread worker;
         };
         double responseSampleRate() const {
@@ -397,16 +441,26 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             return request;
         }
         void updateSynthCurve() {
-            // Message-thread polling only; cached curves remain local to this visual.
-            if (curveTicket) curveScheduler->poll(curveTicket, synthCurve, curveFailed);
+            // Never replace a current cache with an older in-flight completion (A/B/A).
             const auto request = curveRequest();
+            if (curveTicket) {
+                SynthCurve completed;
+                if (curveScheduler->poll(curveTicket, completed, curveFailed) && !curveFailed
+                    && (completed.request == request || synthCurve.bins.empty() || !(synthCurve.request == request))) {
+                    synthCurve = std::move(completed);
+                    ++curveRevision;
+                }
+            }
             if (!synthCurve.bins.empty() && synthCurve.request == request) {
                 if (curveTicket) curveScheduler->discardPending(curveTicket);
                 return;
             }
             const auto now = std::chrono::steady_clock::now();
-            if (now < nextCurveUpdate) return;
-            nextCurveUpdate = now + std::chrono::milliseconds(100);
+            // Coalesce every UI tick, not every 100 ms. A queued ticket keeps its
+            // FIFO position and an active render is never cancelled by new targets.
+            // Only failures back off; ordinary edits must not reset a debounce clock.
+            if (curveFailed && now < nextCurveUpdate) return;
+            if (curveFailed) nextCurveUpdate = now + std::chrono::milliseconds(250);
             try {
                 if (!curveScheduler) curveScheduler = CurveScheduler::shared();
                 if (!curveTicket) curveTicket = std::make_shared<CurveScheduler::Ticket>();
@@ -458,7 +512,14 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         }
         UtilityEffectPanel& panel;
         UtilitySettings settings;
+        std::array<Target, utilityParameterCount> targets;
+        Target onTarget, mixTarget;
         SynthCurve synthCurve;
+        juce::Path responsePath;
+        UtilitySettings pathSettings;
+        juce::Rectangle<float> pathBounds;
+        double pathRate = 0;
+        size_t curveRevision = 0, pathRevision = 0;
         bool curveFailed = false;
         std::chrono::steady_clock::time_point nextCurveUpdate{};
         std::shared_ptr<CurveScheduler> curveScheduler;
@@ -483,7 +544,7 @@ public:
                 i == size_t(UtilityParameter::xpMode) || i == size_t(UtilityParameter::synthMode), i);
         }
         viewport.setViewedComponent(&content, false); viewport.setScrollBarsShown(true, false); addAndMakeVisible(viewport);
-        detail::passiveControl(*this); setNeon(false); timerCallback(); startTimerHz(20);
+        detail::passiveControl(*this); setNeon(false); timerCallback(); startTimerHz(60);
     }
     ~UtilityEffectPanel() override { stopTimer(); viewport.setViewedComponent(nullptr, false); }
     bool responseReady() const { return visual.responseReady(); }
@@ -526,13 +587,23 @@ public:
         int y = 8;
         const int visualHeight = isFilter() ? 238 : kind == UtilityKind::gate ? 110 : 72;
         visual.setBounds(8, y, inner, visualHeight); y += visualHeight + 8;
-        overview.setBounds(8, y, inner, 54); y += 60;
-        const int columns = juce::jmax(1, inner / 130);
-                const int cell = inner / columns;
-                for (size_t i = 0; i < rows.size(); ++i)
-                    rows[i]->setBounds(8 + int(i % size_t(columns)) * cell,
-                        y + int(i / size_t(columns)) * 100, cell, 98);
-                y += int((rows.size() + size_t(columns) - 1) / size_t(columns)) * 100;
+        const int overviewHeight = juce::jmax(54, int(std::ceil(
+            juce::GlyphArrangement::getStringWidth(overview.getFont(), overview.getText())
+                / double(juce::jmax(1, inner - 8)))) * 16 + 8);
+        overview.setBounds(8, y, inner, overviewHeight); y += overviewHeight + 6;
+        const int columns = juce::jmax(1, inner / 76);
+        const int cell = inner / columns;
+        int column = 0;
+        for (const auto& row : rows) {
+            if (row->combo.isVisible()) {
+                if (column != 0) { y += 100; column = 0; }
+                row->setBounds(8, y, inner, 46); y += 48;
+            } else {
+                row->setBounds(8 + column * cell, y, cell, 98);
+                if (++column == columns) { y += 100; column = 0; }
+            }
+        }
+        if (column != 0) y += 100;
         content.setSize(width, juce::jmax(getHeight(), y + 8));
     }
 private:
@@ -550,7 +621,13 @@ private:
         if (!editing) return;
         editing = false; if (onEndEdit) onEndEdit(); visual.refresh();
     }
-    void changed() { if (onValueChanged) onValueChanged(); }
+    void changed() {
+        // SliderAttachment has delivered the host value before this callback.
+        // Use one coherent target snapshot, just as graph drags do, without waiting
+        // for the automation timer or replacing modulation with an unmodulated preview.
+        visual.refresh();
+        if (onValueChanged) onValueChanged();
+    }
     void editValue(const juce::String& id, float value) {
         if (owner.modulationAssignmentId() != 0) return;
         if (auto* p = owner.parameters.getParameter(id)) {
@@ -564,7 +641,7 @@ private:
     bool neon = false, editing = false;
     Visual visual;
     juce::Component content;
-    juce::Viewport viewport;
+    PassiveViewport viewport;
     juce::Label overview;
     std::vector<std::unique_ptr<Row>> rows;
 };

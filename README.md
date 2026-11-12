@@ -1,9 +1,17 @@
-# Vocal Stack 1.9.0
+# Vocal Stack 1.9.1
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-1.9.0 is **built, packaged, validated and installed**. Both per-user CLAP and
+**1.9.1 is built, validated and packaged; installation is pending.** The coordinator
+reports all 34 focused CTests passed, followed by a successful full Release rebuild
+and four targeted passes after the final duplicate WaveMix control fix. Packaged
+CLAP/VST3 hashes match Release artifacts. Installation was blocked by the installed
+CLAP being in use; no installed files changed, so 1.9.0 remains installed.
+Commit/push is pending with the coordinator. See the
+[1.9.1 validation record](docs/Release-1.9.1-Validation.md).
+
+**Previous release 1.9.0** was built, packaged, validated and installed. Both per-user CLAP and
 VST3 installations were SHA256-verified after the user closed Bitwig.
 Release commit `531045b` is pushed to `origin/main`.
 It adds two-dimensional expanded-node packing, a compact modulation rail with
@@ -27,18 +35,17 @@ actual GPL-covered, upstream-derived filter equations—not category stand-ins.
 Delay, Reverb, Compressor, Bitcrusher, Granular and whole-patch presets remain;
 eight factory patches now provide starting points for routing and modulation.
 
-Release CLAP/VST3 builds and all **34 focused CTests passed in 146.69 s**,
+For **1.9.0**, Release CLAP/VST3 builds and all **34 focused CTests passed in 146.69 s**,
 including eight factory-audio shards and **63 editor groups**. Separate legacy
 DSP passed in **81.8347 s**. Tracked packages match Release artifacts by SHA256;
 packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperformed.**
 
 ## Install
 
-**Current installation status: complete for 1.9.0.** After the user closed
-Bitwig, the coordinator reran `source/build/install-release.ps1`; both per-user
-CLAP and VST3 reported **Installed** and **SHA256 verified**. Actual Bitwig
-listening/transport remains unperformed. For future updates, close the host first;
-do not terminate Bitwig or overwrite a loaded plugin to force installation.
+**1.9.1 installation is blocked:** the installed CLAP is in use by a process.
+No installed files changed; **1.9.0 remains installed**. Close the host before
+retrying installation; do not terminate Bitwig or overwrite a loaded plugin to
+force replacement. Actual Bitwig listening/transport remains unchecked.
 
 1. Extract the ZIP.
 2. Copy `Windows-x64/CLAP/Vocal Stack.clap` to
@@ -108,10 +115,10 @@ The preview uses synthetic readings to demonstrate peak hold and clip indication
 
 ### Window and control layout
 
-Drag the window corner to resize (940x560 minimum, 2400x2200 maximum). Stack
-fits its complete design proportionally up to native size; unmatched space
-is letterboxed, never stretched or enlarged vertically. Routing expands the
-canvas and inspector height; expanded node controls scale with canvas zoom.
+Drag the window corner to resize (940x560 minimum, 2400x2200 maximum;
+default 940x1104). Stack keeps its native 940x1148 body unscaled in a vertical
+viewport, with the preset footer fixed outside the scrolling body. Routing expands
+the canvas and inspector height; expanded node controls scale with canvas zoom.
 The inspector defaults to 320 px wide; drag its left divider to resize between 320 and 480 px. Width is saved, and dragging neither
 refits the graph nor rebuilds the selected effect. Small inspectors scroll. Window size and graph
 pan/zoom are saved; tab changes do not resize the window or refit the graph.
@@ -336,13 +343,35 @@ on migration. The default Basic signal path remains regression-tested unchanged.
 
 ![Native routing with independent multiband outputs](VocalStack-Routing.png)
 
-### Main Bus FX rack (1.9.0)
+### Main Bus FX rack (1.9.1)
 
 Stack's **+ FX** rack replaces the fixed Chorale strip. Its compact cards are the
 actual Routing nodes, not duplicate processors: enable, edit, remove, and reorder
 with the dedicated drag handle. Duplicate FX have independent parameters and
-share Routing's existing 16-effect/48-node capacity. Expanded panels reuse the
-same controls, modulation bindings and visuals, including live granular snapshots.
+share Routing's existing 16-effect/48-node capacity. FX cards run horizontally at
+204 px wide, close to the 172 px voice cards. Every card exposes its full parameter
+UI with internal vertical scrolling and a fixed header; there is no **Details**
+step. Drag the handle horizontally to reorder. Controls, modulation bindings and
+visuals are shared with Routing.
+
+Hover-wheel navigation uses shared `PassiveViewport` handling: plain wheel scrolls
+the nearest vertical ancestor that can move, continuing outward at an edge. It
+falls back to horizontal scrolling only when no vertical range exists; Shift-wheel
+requests horizontal scrolling. Knobs and numeric value labels, including the top
+main controls, forward wheel events without changing parameters or taking focus.
+In embedded EQ graphs, plain wheel scrolls; **Alt-wheel** edits Q (or Q assignment
+depth), retaining host gesture boundaries.
+
+Granular displays a real snapshot-derived cloud zoomed to valid capture/read
+positions, not 32 fixed rows: sparse/dense grains retain stable slot identities,
+envelopes and direction markers. Delay shows a parameter-timed animated schematic,
+not measured echoes; its clock pauses while hidden, clipped or bypassed. Sync still
+updates Time/Beats enablement when the visual is offscreen.
+
+XP cutoff/resonance knob edits refresh the response immediately from one coherent
+snapshot; utility refresh runs at 60 Hz rather than 20 Hz. Synth removes the 100 ms
+request throttle while retaining the shared bounded worker and actual 32768-sample
+DSP response calculation—no alternate preview model or audio DSP change.
 
 Topology edits use Routing's shared one-step Undo/Redo bridge, restoring lifecycle
 parameters/modulation while preserving unrelated live mappings and sources.
@@ -532,7 +561,7 @@ not exact/full Bitwig device parity.
 1. Select a source and click **Assign**.
 2. Select any voice/FX or switch to Stack; Assign remains active.
 3. Drag a highlighted knob to set signed depth, not its base setting.
-4. In EQ, drag an existing handle for frequency/gain depth; wheel assigns Q.
+4. In EQ, drag an existing handle for frequency/gain depth; Alt-wheel assigns Q.
 5. Escape or **Done** exits. In Assign, click a sound switch/choice for an explicit
    stepped-depth menu; right-click also offers assignments outside Assign.
 
@@ -561,8 +590,9 @@ intervals independent of host block boundaries.
 Eight stable bands with 14 independently implemented modes: bell, two shelf slopes
 per side, 6/12/24/48 dB cuts per side, and notch. Graph editing follows EQ+-style
 interaction: a **single click** on empty graph space creates a bell (not a
-double-click), drag a point for frequency/gain, wheel
+double-click), drag a point for frequency/gain, Alt-wheel
 on a point for Q, drag curve ends for shelves, side edges for cuts, bottom for notch.
+Plain wheel scrolls embedded cards/inspectors; standalone graphs also retain plain-wheel Q.
 Select a band for exact values/type, enable or remove it. Global frequency Shift,
 output Gain and Adaptive Q are available. **Expand EQ** opens a larger editor.
 
@@ -731,6 +761,28 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.9.1 — built, validated and packaged (coordinator-reported):** all **34 focused
+CTests passed in 154.15 s**, including **66 editor groups and eight factory-audio
+shards**. After removing a duplicate WaveMix control, the full Release rebuild
+succeeded and targeted Editor/rack/grain UI/CLAP checks passed **4/4 in 81.50 s**;
+Editor passed all 66 groups in **81.27 s**. Coverage includes hover wheel, narrow
+Tone cards, filter scheduling and 354 real-hit-tested rack wheel cases.
+
+Packaged CLAP smoke passed **2087 parameters, latency, bypass and automation**;
+CLAP/VST3 packages SHA256-match Release artifacts. Rendered 33 screenshots plus
+rack-row views in three themes; row and grain/Delay views were inspected and root
+images updated. UI profile (26 nodes, 120 frames) median/p95/max:
+**9.081/13.008/49.161 ms compact**, **14.755/22.607/37.176 ms expanded**, at most
+12 mounted cards. These are informational timings, not a native FPS guarantee.
+No audio DSP changed; legacy DSP was not rerun (1.9.0's pass is historical).
+
+**Installation remains blocked; no installed files changed and 1.9.0 remains
+installed.** Commit/push awaits the coordinator. Actual Bitwig listening and native
+FPS remain unchecked. Hashes, test corrections and delivery boundaries are in the
+[1.9.1 record](docs/Release-1.9.1-Validation.md).
+
+### Historical 1.9.0 verification
 
 **1.9.0:** Release CLAP/VST3 builds and all **34 focused CTests passed in
 146.69 s**, including **eight factory-audio shards and 63 editor groups**. Separate

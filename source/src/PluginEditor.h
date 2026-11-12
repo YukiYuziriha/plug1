@@ -22,6 +22,9 @@ private:
     class Style final : public juce::LookAndFeel_V4 {
     public:
         bool flash = false;
+        juce::Label* createSliderTextBox(juce::Slider& slider) override {
+            return createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
+        }
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float, float, float, juce::Slider&) override;
         void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
         juce::Font getTextButtonFont(juce::TextButton&, int) override;
@@ -42,9 +45,14 @@ private:
     Processor& owner;
     PresetBar presets;
     Style style;
-    juce::Component layoutCanvas;
-    float layoutScale = 1.0f;
-    juce::Point<float> layoutOffset;
+    class LayoutCanvas final : public juce::Component {
+    public:
+        std::function<void(juce::Graphics&)> draw;
+        void paint(juce::Graphics& g) override { if (draw) draw(g); }
+    };
+    LayoutCanvas layoutCanvas;
+    PassiveViewport stackViewport;
+
     bool restoringWindow = true;
     int selectedVoiceSlot = -1;
     std::array<ModulationSlider, knobParameterIds.size()> knobs;

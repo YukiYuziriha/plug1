@@ -81,7 +81,7 @@ void eqModulationGestures() {
         expect(parameterValue(owner, "fx1EqBand1Frequency") == baseFrequency, "EQ Assign changed base frequency");
         expect(parameterValue(owner, "fx1EqBand1Gain") == baseGain, "EQ Assign changed base gain");
         juce::MouseWheelDetails wheel; wheel.deltaY = .2f;
-        graph.mouseWheelMove(ui::mouse(graph, from, from, false, 0), wheel);
+        graph.mouseWheelMove(ui::mouse(graph, from, from, false, juce::ModifierKeys::altModifier), wheel);
         expect(owner.getModulationState().assignments.size() == 3, "EQ wheel did not assign Q");
         ui::drag(graph, ui::eqPoint(graph, 3000, -6), ui::eqPoint(graph, 5000, -8));
         expect(ui::enabledBands(owner) == 1, "Assign created an EQ band");
@@ -169,39 +169,51 @@ void resizeTabs() {
         expect(editor->isShowing() && editor->getPeer(), "Resize fixture has no showing native peer");
         auto& canvas = *ui::slider(*editor, "outputGain").getParentComponent();
         auto& routing = component<vocalstack::RoutingPanel>(*editor);
-        // Cover minimum height, a scaled larger window, and surplus space without upscaling.
+        auto* viewport = canvas.findParentComponentOfClass<juce::Viewport>();
+        expect(viewport != nullptr && viewport->getComponentID() == "stackViewport", "Stack requires a viewport");
         for (const auto size : {juce::Point<int>(940, 560), juce::Point<int>(1480, 1040), juce::Point<int>(1480, 1400)}) {
             editor->setSize(size.x, size.y);
-            const int contentHeight = size.y - 52; // Preset toolbar has its own unscaled footer.
-            const float scale = std::min(1.0f, std::min(float(size.x) / 940, float(contentHeight) / 1052));
-            const auto transform = canvas.getTransform();
-            expect(canvas.getBounds() == juce::Rectangle<int>(0, 0, 940, 1052),
-                   "Stack must retain its fixed 940x1052 design canvas including the Main Bus rack");
-            expectNear(transform.mat00, scale, "Stack horizontal scale must never exceed one");
-            expectNear(transform.mat11, scale, "Stack vertical scale must never exceed one");
-            expectNear(transform.mat02, (size.x - 940 * scale) * .5f, "Stack horizontal centering");
-            expectNear(transform.mat12, (contentHeight - 1052 * scale) * .5f, "Stack vertical centering above preset toolbar");
+            viewport->setViewPosition(0, 0);
+            const int contentHeight = size.y - 52;
+            expect(canvas.getWidth() == 940 && canvas.getHeight() == 1148 && canvas.getTransform().isIdentity(),
+                   "Stack retains native-size controls rather than shrinking to fit height");
+            expect(viewport->getHeight() == contentHeight, "Stack scrolling excludes fixed preset footer");
+            expect(viewport->getVerticalScrollBar().isVisible() == (contentHeight < canvas.getHeight()),
+                   "Stack vertical scrollbar follows overflow");
             auto& rack = component<vocalstack::MainBusFxRackPanel>(*editor);
             auto& stack = component<vocalstack::DoublerPanel>(*editor);
-            expect(rack.getBounds() == juce::Rectangle<int>(18, 344, 904, 244)
-                       && stack.getBounds() == juce::Rectangle<int>(18, 610, 904, 430)
-                       && canvas.getLocalBounds().contains(rack.getBounds())
+            expect(rack.getBounds() == juce::Rectangle<int>(18, 344, 904, 340)
+                       && stack.getBounds() == juce::Rectangle<int>(18, 706, 904, 430)
                        && canvas.getLocalBounds().contains(stack.getBounds())
                        && !rack.getBounds().intersects(stack.getBounds()),
-                   "Resizing must preserve the complete rack and Stack design regions without overlap");
-            auto& output = ui::slider(*editor, "outputGain");
-            expect(editor->getLocalBounds().contains(editor->getLocalArea(&output, output.getLocalBounds())),
-                   "Scaled Stack output is outside the window");
+                   "Full FX row and voice cards retain non-overlapping native layout");
+            if (contentHeight < canvas.getHeight()) {
+                auto& output = ui::slider(*editor, "outputGain");
+                const auto point = editor->getLocalPoint(&output, output.getLocalBounds().getCentre());
+                auto* hovered = editor->getComponentAt(point);
+                expect(hovered != nullptr, "Stack wheel position hits a visible control");
+                const auto local = hovered->getLocalPoint(editor.get(), point).toFloat();
+                const auto now = juce::Time::getCurrentTime();
+                auto* focus = juce::Component::getCurrentlyFocusedComponent();
+                const juce::MouseEvent event{juce::Desktop::getInstance().getMainMouseSource(), local, {}, 0, 0, 0, 0, 0,
+                    hovered, hovered, now, local, now, 0, false};
+                juce::MouseWheelDetails wheel; wheel.deltaY = -.5f;
+                hovered->mouseWheelMove(event, wheel);
+                pumpTimers();
+                expect(viewport->getViewPositionY() > 0, "Hover wheel over main knob scrolls Stack without clicking");
+                expect(juce::Component::getCurrentlyFocusedComponent() == focus, "Stack wheel must not steal host focus");
+                viewport->setViewPosition(0, canvas.getHeight());
+                expect(viewport->getViewArea().contains(stack.getBounds().getBottomLeft()), "Stack bottom remains reachable");
+            }
             action(*editor, "Routing");
-            expect(canvas.getTransform().isIdentity() && canvas.getBounds() == juce::Rectangle<int>(0, 0, size.x, contentHeight),
-                   "Routing header must use unscaled content coordinates above preset toolbar");
+            expect(canvas.getTransform().isIdentity() && canvas.getWidth() == size.x && canvas.getHeight() == contentHeight,
+                   "Routing header uses unscaled window coordinates");
             expect(routing.getBounds() == juce::Rectangle<int>(18, 100, size.x - 36, contentHeight - 118),
-                   "Routing did not grow with available space");
+                   "Routing grows with available space");
             action(*editor, "Stack");
             owner.setAdvancedVisible(false); pumpTimers();
-            expect(canvas.getHeight() == 1052 && component<vocalstack::DoublerPanel>(*editor).isShowing()
-                       && editor->getWidth() == size.x && editor->getHeight() == size.y,
-                   "Legacy drawer state changed fixed Stack layout or window dimensions");
+            expect(canvas.getHeight() == 1148 && stack.isShowing() && editor->getWidth() == size.x && editor->getHeight() == size.y,
+                   "Legacy drawer state cannot change Stack layout or window dimensions");
         }
         editor.reset();
         editor.reset(owner.createEditor());

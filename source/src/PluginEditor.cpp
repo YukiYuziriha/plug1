@@ -61,7 +61,15 @@ Editor::Editor(Processor& processor)
     : AudioProcessorEditor(processor), owner(processor), presets(processor), globalMix(processor, "globalMix", "Mix", "%"), routingPanel(processor),
       advancedPanel(processor), mainBusFxRack(processor) {
     setLookAndFeel(&style);
-    addAndMakeVisible(layoutCanvas);
+    addAndMakeVisible(stackViewport);
+    stackViewport.setComponentID("stackViewport");
+    stackViewport.setViewedComponent(&layoutCanvas, false);
+    stackViewport.setScrollBarsShown(true, false);
+    layoutCanvas.draw = [this](Graphics& g) {
+        if (componentTheme(*this) == Theme::spectral) drawSpectral(g);
+        else if (style.flash) drawFlash(g);
+        else drawDevice(g);
+    };
     addAndMakeVisible(presets);
     presets.onPatchLoaded = [this] {
 
@@ -250,15 +258,16 @@ void Editor::applyTheme() {
 
 void Editor::resized() {
     if (getWidth() <= 0 || getHeight() <= 0) return;
-    const int designHeight = editorHeight + drawerHeight;
+    const int rackExtraHeight = MainBusFxRackPanel::preferredHeight - 244;
+    const int designHeight = editorHeight + drawerHeight + rackExtraHeight;
     const int contentHeight = jmax(1, getHeight() - 52);
     presets.setBounds(18, getHeight() - 48, jmax(0, getWidth() - 36), 44);
-    layoutScale = routingVisible ? 1.0f : jmin(1.0f, jmin(float(getWidth()) / float(editorWidth), float(contentHeight) / float(designHeight)));
-    layoutOffset = routingVisible ? Point<float>() : Point<float>((float(getWidth()) - editorWidth * layoutScale) * 0.5f,
-        (float(contentHeight) - designHeight * layoutScale) * 0.5f);
+    const int viewportWidth = routingVisible ? getWidth() : jmin(getWidth(), editorWidth + stackViewport.getScrollBarThickness());
+    stackViewport.setBounds((getWidth() - viewportWidth) / 2, 0, viewportWidth, contentHeight);
+    stackViewport.setScrollBarsShown(!routingVisible, false);
     layoutCanvas.setTransform(AffineTransform());
-    layoutCanvas.setBounds(0, 0, routingVisible ? getWidth() : editorWidth, routingVisible ? contentHeight : designHeight);
-    layoutCanvas.setTransform(AffineTransform::scale(layoutScale).translated(layoutOffset.x, layoutOffset.y));
+    layoutCanvas.setSize(routingVisible ? getWidth() : editorWidth, routingVisible ? contentHeight : designHeight);
+    if (routingVisible) stackViewport.setViewPosition(0, 0);
     constexpr std::array<int, 6> centers{70, 183, 285, 387, 500, 614};
     for (size_t i = 0; i < knobs.size(); ++i) {
         labels[i].setBounds(centers[i] - 44, 121, 88, 20);
@@ -279,10 +288,10 @@ void Editor::resized() {
     stackTab.setBounds(382, 26, 70, 26);
     routingTab.setBounds(458, 26, 78, 26);
     routingPanel.setBounds(18, 100, jmax(0, getWidth() - 36), jmax(0, contentHeight - 118));
-    assignmentBanner.setBounds(24, routingVisible ? 70 : 588, routingVisible ? jmax(0, getWidth() - 118) : 760, 22);
-    endAssignment.setBounds(routingVisible ? getWidth() - 88 : 790, routingVisible ? 70 : 588, 64, 22);
-    mainBusFxRack.setBounds(18, 344, 904, 244);
-    advancedPanel.setBounds(18, editorHeight, 904, drawerHeight - 12);
+    assignmentBanner.setBounds(24, routingVisible ? 70 : 588 + rackExtraHeight, routingVisible ? jmax(0, getWidth() - 118) : 760, 22);
+    endAssignment.setBounds(routingVisible ? getWidth() - 88 : 790, routingVisible ? 70 : 588 + rackExtraHeight, 64, 22);
+    mainBusFxRack.setBounds(18, 344, 904, MainBusFxRackPanel::preferredHeight);
+    advancedPanel.setBounds(18, editorHeight + rackExtraHeight, 904, drawerHeight - 12);
     if (!restoringWindow) rememberWindow();
 }
 
@@ -386,13 +395,6 @@ bool Editor::keyPressed(const KeyPress& key) {
 
 void Editor::paint(Graphics& g) {
     g.fillAll(themePalette(*this).background);
-    g.addTransform(AffineTransform::scale(layoutScale).translated(layoutOffset.x, layoutOffset.y));
-    if (componentTheme(*this) == Theme::spectral)
-        drawSpectral(g);
-    else if (style.flash)
-        drawFlash(g);
-    else
-        drawDevice(g);
 }
 
 void Editor::drawDevice(Graphics& g) {

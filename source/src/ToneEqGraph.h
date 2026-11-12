@@ -4,6 +4,7 @@
 #include "Equalizer.h"
 #include "FxVisuals.h"
 #include "ModulationUI.h"
+#include "ParameterKnob.h"
 #include "VisualTheme.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
@@ -61,7 +62,7 @@ class EqGraph final : public FxMonitorView, public juce::SettableTooltipClient {
 public:
     EqGraph(Processor& processor, size_t fxSlot) : FxMonitorView(processor, fxSlot, true), owner(processor), slot(fxSlot) {
         setName("EQ response graph");
-        setTitle("EQ response and live stereo spectrum: click to add, drag bands, wheel for Q");
+        setTitle("EQ response and live stereo spectrum: click to add, drag bands, Alt-wheel for Q");
         setWantsKeyboardFocus(false);
         setMouseClickGrabsKeyboardFocus(false);
         setTooltipText();
@@ -127,7 +128,9 @@ public:
             const auto x = xFor(hz);
             g.setColour(device ? juce::Colour(0xff809398).withAlpha(0.13f) : palette.border.withAlpha(0.65f));
             g.drawVerticalLine(int(x), area.getY(), area.getBottom());
-            if (hz == 20 || hz == 100 || hz == 1000 || hz == 10000) {
+            const bool narrow = getWidth() < 260;
+            if (narrow ? (hz == 100 || hz == 10000)
+                       : (hz == 20 || hz == 100 || hz == 1000 || hz == 10000)) {
                 g.setColour(device ? juce::Colour(0xffa8b3bb) : palette.muted);
                 g.drawText(hz < 1000 ? juce::String(int(hz)) : juce::String(int(hz / 1000)) + "k",
                            int(x) - 12, int(area.getBottom()) + 3, 30, 14, juce::Justification::centred);
@@ -173,18 +176,19 @@ public:
         g.setColour(device ? juce::Colour(0xffa8b3bb) : palette.muted);
         auto title = getLocalBounds().removeFromTop(18).reduced(7, 0);
         g.drawText("FFT dBFS", title.removeFromRight(62), juce::Justification::centredRight);
-        g.drawText(!settings.enabled ? "EQ dB | BYPASS | IN / OUT FFT"
-                       : isStreamStalled() ? "EQ dB | fading last FFT"
-                                              : hasLiveFrame() ? "EQ dB | IN dim / OUT bright FFT"
-                                        : "EQ dB | no live audio", title, juce::Justification::centredLeft);
+        const juce::String status = getWidth() < 260 ? (!settings.enabled ? "BYPASS" : "EQ dB")
+            : !settings.enabled ? "EQ dB | BYPASS | IN / OUT FFT"
+            : isStreamStalled() ? "EQ dB | fading last FFT"
+            : hasLiveFrame() ? "EQ dB | IN dim / OUT bright FFT" : "EQ dB | no live audio";
+        g.drawText(status, title, juce::Justification::centredLeft);
     }
     void mouseMove(const juce::MouseEvent& e) override {
         const bool onBand = hit(e.position) >= 0;
         const int mode = edgeMode(e.position);
         const juce::String next = owner.modulationAssignmentId() != 0
-            ? (onBand ? "Assign: drag X = frequency depth, Y = gain depth (bell/shelves); wheel = Q depth. Signed normalized range; base unchanged."
-                      : "Assign: drag an existing band or wheel over it for Q depth. Adding bands is disabled.")
-            : onBand ? "Drag: frequency / gain | wheel: Q"
+            ? (onBand ? "Assign: drag X = frequency depth, Y = gain depth (bell/shelves); Alt-wheel = Q depth. Signed normalized range; base unchanged."
+                      : "Assign: drag an existing band or Alt-wheel over it for Q depth. Adding bands is disabled.")
+            : onBand ? "Drag: frequency / gain | Alt-wheel: Q"
             : mode == 13 ? "Click: bell | drag inward: notch"
             : mode == 1 || mode == 2 ? "Click: bell | drag curve end: shelf"
             : mode >= 0 ? "Click: bell | drag edge: cut" : "Click empty space: add bell";
@@ -260,6 +264,16 @@ public:
     // the second click, even when the first click filled the last free slot.
     void mouseDoubleClick(const juce::MouseEvent&) override { pendingClick = false; }
     void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override {
+        // In cards/inspectors an unmodified wheel is navigation, even over a
+        // handle or at a scroll boundary. Keep standalone graph Q compatibility.
+        if (!e.mods.isAltDown()) {
+            for (auto* parent = getParentComponent(); parent != nullptr; parent = parent->getParentComponent()) {
+                if (dynamic_cast<juce::Viewport*>(parent) != nullptr) {
+                    forwardPassiveWheel(*this, e, wheel);
+                    return;
+                }
+            }
+        }
         const int found = hit(e.position);
         if (found < 0 || wheel.deltaY == 0 || !gestures.empty()) return;
         choose(size_t(found));
@@ -280,9 +294,9 @@ private:
     void setTooltipText() {
         // Component is deliberately not a keyboard command target.
         const juce::String instructions = "Single-click empty space: bell. Click a band: select. Drag a curve end: shelf. "
-            "Drag a side edge: cut. Drag bottom edge: notch. Wheel on a band: Q. "
+            "Drag a side edge: cut. Drag bottom edge: notch. Wheel: scroll enclosing card. Alt-wheel on a band: Q (plain wheel also edits Q in standalone graphs). "
             "Assign mode: drag an existing band horizontally for frequency depth, vertically for gain depth (bell/shelves); "
-            "wheel over a band for Q depth. Depth is signed normalized target range; base values stay unchanged. "
+            "Alt-wheel over a band for Q depth. Depth is signed normalized target range; base values stay unchanged. "
             "No bands are added in Assign mode. Solid numbered handle: requested; outlined dot: effective; purple/pink lines: selected source range. "
             "Left scale: requested EQ gain dB. Right: live FFT peak dBFS, Hann window, stereo power. "
             "Input dim, output bright; FFT is independent of the +/-24 dB response scale.";

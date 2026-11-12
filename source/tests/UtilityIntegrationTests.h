@@ -3,13 +3,14 @@
 #include "PluginProcessor.h"
 #include "ProcessorRoutingState.h"
 #include "PresetManager.h"
+#include "UtilityPanelTests.h"
 #include <cmath>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 
 // Call utilityIntegrationTests::run() on the message thread after JUCE init.
-// No editor/UI dependency: exercises the real processor parameter/audio bridge.
+// Exercises the real processor parameter/audio bridge and isolated utility controls.
 namespace vocalstack::utilityIntegrationTests {
 inline void require(bool ok, const juce::String& message) {
     if (!ok) throw std::runtime_error(message.toStdString());
@@ -270,6 +271,7 @@ inline bool run() {
     test("comb automation history and high-index modulation", [] { automationAndModulation(); });
     test("routed mono/stereo/sample rates and gate metering", [] { routedAudio(); });
     test("factory and undo skin retention", [] { presetSkin(); });
+    test("panel scheduling, immediate redraw and narrow cards", [] { UtilityPanelTests::run(); });
     return passed;
 }
 } // namespace vocalstack::utilityIntegrationTests

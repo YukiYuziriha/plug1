@@ -69,6 +69,9 @@ public:
         passiveControl(*this);
     }
     ~ParameterSlider() override { slider.setLookAndFeel(nullptr); }
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+        forwardPassiveWheel(*this, event, wheel);
+    }
     void resized() override {
         auto area = getLocalBounds();
         label.setBounds(area.removeFromLeft(70));
@@ -136,6 +139,9 @@ class VoiceControls final : public juce::Component {
             detail::passiveControl(*this);
         }
         ~VoiceControls() override { removeMouseListener(&selectionClicks); }
+        void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+            forwardPassiveWheel(*this, event, wheel);
+        }
         void resized() override {
             auto area = getLocalBounds().reduced(8);
             auto header = area.removeFromTop(25);
@@ -296,6 +302,9 @@ public:
         for (auto& card : cards) card->setNeon(neon);
     }
 
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+        forwardPassiveWheel(*this, event, wheel);
+    }
     std::function<void(int)> onVoiceSelected;
     // Mirroring Routing selection must not emit another selection request.
     void selectVoice(int slot, bool reveal = true, bool notify = true) {
@@ -341,13 +350,16 @@ private:
     juce::TextButton reset, add;
     VoiceMonitor monitor;
     juce::Component cardArea;
-    juce::Viewport viewport;
+    PassiveViewport viewport;
     VoiceControls lead;
     std::array<std::unique_ptr<VoiceControls>, 8> cards;
 };
 
 class ChoralePanel final : public juce::Component {
 public:
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+        forwardPassiveWheel(*this, event, wheel);
+    }
     explicit ChoralePanel(Processor& owner)
         : mix(owner, "choraleMix", "Mix", "%"), motion(owner, "choraleMotion", "Motion", "%") {
         setName("Chorale section");

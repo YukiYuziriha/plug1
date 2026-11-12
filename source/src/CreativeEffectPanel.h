@@ -60,6 +60,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
                         slider.addMouseListener(this, true);
             label.setText(name, juce::dontSendNotification);
             label.setFont(juce::Font(juce::FontOptions(11.5f)));
+            label.setMinimumHorizontalScale(1.f);
             label.setInterceptsMouseClicks(false, false);
             addAndMakeVisible(label);
             if (discrete) {
@@ -82,7 +83,9 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
                 const juce::String suffix(unit);
                 slider.textFromValueFunction = [suffix](double v) {
                     if (suffix == "Hz" && v >= 1000) return juce::String(v / 1000, 2) + " kHz";
-                    const int decimals = suffix == "%" || suffix == "Hz" ? 0 : suffix == "beats" ? 4 : 2;
+                    if (suffix == "beats")
+                        return juce::String(v, 4).trimCharactersAtEnd("0").trimCharactersAtEnd(".") + " beats";
+                    const int decimals = suffix == "%" || suffix == "Hz" ? 0 : 2;
                     return juce::String(v, decimals) + (suffix == ":1" ? suffix : " " + suffix);
                 };
                 slider.valueFromTextFunction = [suffix](const juce::String& text) {
@@ -104,7 +107,10 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
         void resized() override {
             auto area = getLocalBounds().reduced(2, 1);
             label.setJustificationType(juce::Justification::centred);
-                        label.setBounds(area.removeFromTop(17)); slider.setBounds(area);
+            label.setFont(juce::Font(juce::FontOptions(getWidth() < 100 ? 11.f : 11.5f)));
+            label.setBounds(area.removeFromTop(26));
+            slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, juce::jmin(82, area.getWidth()), 20);
+            slider.setBounds(area);
             toggle.setBounds(getLocalBounds().reduced(2, 8));
         }
         void setNeon(bool neon) {
@@ -212,11 +218,14 @@ public:
         // Reserve scrollbar width consistently so crossing the height threshold
         // cannot reflow the grid back and forth.
         const int width = juce::jmax(1, getWidth() - viewport.getScrollBarThickness());
-        const int columns = juce::jmax(1, (width - 16) / 130);
+        const int columns = juce::jlimit(1, 6, (width - 16) / 76);
         const int cell = juce::jmax(1, (width - 16) / columns);
         int y = 8;
-        visual.setBounds(8, y, juce::jmax(1, width - 16), 238); y += 246;
-        overview.setBounds(8, y, juce::jmax(1, width - 16), 44); y += 50;
+        const bool compact = width < 280;
+        const int visualHeight = compact ? 216 : 238;
+        visual.setBounds(8, y, juce::jmax(1, width - 16), visualHeight); y += visualHeight + 8;
+        const int overviewHeight = compact ? 76 : 44;
+        overview.setBounds(8, y, juce::jmax(1, width - 16), overviewHeight); y += overviewHeight + 6;
         if (kind == CreativeKind::compressor) { meter.setBounds(8, y, width - 16, 28); y += 34; }
         for (auto& group : groups) {
             group.heading->setBounds(8, y, width - 16, 23); y += 25;
@@ -290,9 +299,16 @@ private:
     void updateState() {
         visual.refresh();
         if (kind == CreativeKind::delay) {
-            const bool synced = visual.delaySynced();
-            if (timeRow) timeRow->setEnabled(!synced);
-            if (beatsRow) beatsRow->setEnabled(synced);
+            // Control dependencies must update even when the visual is scrolled
+            // out of view. Keep its heavy model/animation refresh visibility-gated.
+            const auto snapshot = owner.getModulationSnapshot();
+            if (snapshot.consistent) {
+                const auto index = size_t(CreativeParameter::delaySync);
+                const bool synced = toneui::visualParameter(owner, creativeParameterId(slot, index),
+                    creativeParameters[index].initial, &snapshot) >= .5f;
+                if (timeRow) timeRow->setEnabled(!synced);
+                if (beatsRow) beatsRow->setEnabled(synced);
+            }
         }
         if (kind == CreativeKind::compressor) {
             const float reduction = owner.getCreativeGainReduction(slot);
@@ -300,15 +316,18 @@ private:
         }
     }
     void timerCallback() override {
-            if (isShowing()) updateState();
-        }
+        // refresh() also resets the schematic clock while viewport-clipped or
+        // hidden; resuming must not integrate time spent outside the view.
+        if (isShowing()) updateState();
+        else visual.refresh();
+    }
     Processor& owner;
     size_t slot;
     CreativeKind kind;
     bool neon = false;
     CreativeEffectVisual visual;
     juce::Component content;
-    juce::Viewport viewport;
+    PassiveViewport viewport;
     juce::Label overview, meter;
     std::vector<Group> groups;
     Row* timeRow = nullptr;

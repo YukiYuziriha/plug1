@@ -6,6 +6,76 @@
 
 namespace vocalstack {
 
+// Route directly to viewports: an intermediate control may swallow wheel events,
+// and JUCE reports consumption even when a viewport is clamped at its edge.
+inline void forwardPassiveWheel(juce::Component& component, const juce::MouseEvent& event,
+                                const juce::MouseWheelDetails& wheel) {
+    const bool vertical = wheel.deltaY != 0 && !event.mods.isShiftDown();
+    bool hasVerticalRange = false;
+    if (vertical) {
+        auto verticalWheel = wheel;
+        verticalWheel.deltaX = 0;
+        for (auto* parent = &component; parent != nullptr; parent = parent->getParentComponent()) {
+            auto* viewport = dynamic_cast<juce::Viewport*>(parent);
+            if (viewport == nullptr || !viewport->isEnabled()) continue;
+            auto* content = viewport->getViewedComponent();
+            if (content == nullptr || content->getHeight() <= viewport->getViewArea().getHeight()) continue;
+            hasVerticalRange = true;
+            const auto before = viewport->getViewPosition();
+            viewport->useMouseWheelMoveIfNeeded(event.getEventRelativeTo(viewport), verticalWheel);
+            if (viewport->getViewPosition() != before) return;
+        }
+        // Do not turn a vertical edge gesture into horizontal scrolling.
+        if (hasVerticalRange) return;
+    }
+    auto fallbackWheel = wheel;
+    if (!vertical) {
+        // JUCE otherwise turns Shift-wheel into vertical motion when an
+        // ancestor has no horizontal scrollbar. Keep the requested axis at edges.
+        fallbackWheel.deltaX = wheel.deltaX != 0 ? wheel.deltaX : wheel.deltaY;
+        fallbackWheel.deltaY = 0;
+    }
+    for (auto* parent = &component; parent != nullptr; parent = parent->getParentComponent()) {
+        if (auto* viewport = dynamic_cast<juce::Viewport*>(parent); viewport != nullptr && viewport->isEnabled()) {
+            const auto before = viewport->getViewPosition();
+            viewport->useMouseWheelMoveIfNeeded(event.getEventRelativeTo(viewport), fallbackWheel);
+            if (viewport->getViewPosition() != before) return;
+        }
+    }
+}
+
+// Use for viewport backgrounds and ordinary child components too, not just
+// parameter controls: native Viewport wheel handling consumes clamped edges.
+class PassiveViewport : public juce::Viewport {
+public:
+    using juce::Viewport::Viewport;
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+        forwardPassiveWheel(*this, event, wheel);
+    }
+};
+
+// Takes ownership of the base look-and-feel's label and returns a replacement
+// owned by JUCE's Slider. Calling the base factory at the call site avoids
+// virtual recursion and preserves the caller's look-and-feel defaults.
+inline juce::Label* createPassiveSliderTextBox(juce::Label* originalTextBox) {
+    class ValueLabel final : public juce::Label {
+    public:
+        void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+            forwardPassiveWheel(*this, event, wheel);
+        }
+        std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override {
+            return createIgnoredAccessibilityHandler(*this);
+        }
+    };
+    std::unique_ptr<juce::Label> original(originalTextBox);
+    auto label = std::make_unique<ValueLabel>();
+    original->copyAllExplicitColoursTo(*label);
+    label->setJustificationType(original->getJustificationType());
+    label->setFont(original->getFont());
+    label->setKeyboardType(juce::TextInputTarget::decimalKeyboard);
+    return label.release();
+}
+
 // Refresh from a single message-thread snapshot for the complete editor tree.
 // Ordinary gestures never take keyboard focus; only explicit numeric entry does.
 class ModulationSlider : public juce::Slider {
@@ -100,7 +170,9 @@ public:
     void mouseDoubleClick(const juce::MouseEvent& e) override {
         if (!owner || owner->modulationAssignmentId() == 0) juce::Slider::mouseDoubleClick(e);
     }
-    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override {}
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+        forwardPassiveWheel(*this, event, wheel);
+    }
     void drawLinearModulation(juce::Graphics& g, juce::Rectangle<float> track) {
         const auto x = [&](float value) { return track.getX() + juce::jlimit(0.0f, 1.0f, value) * track.getWidth(); };
         const float base = float(valueToProportionOfLength(getValue())), y = track.getCentreY();
@@ -172,6 +244,9 @@ class ParameterKnob final : public juce::Component {
 public:
     class Style final : public juce::LookAndFeel_V4 {
     public:
+        juce::Label* createSliderTextBox(juce::Slider& slider) override {
+            return createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
+        }
         void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h,
                               float position, float, float, juce::Slider::SliderStyle,
                               juce::Slider& slider) override {
@@ -273,6 +348,9 @@ public:
         resized();
     }
     ~ParameterKnob() override { slider.setLookAndFeel(nullptr); }
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+        forwardPassiveWheel(*this, event, wheel);
+    }
     void resized() override {
         auto area = getLocalBounds(); label.setBounds(area.removeFromTop(17)); slider.setBounds(area);
     }

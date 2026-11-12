@@ -318,7 +318,7 @@ inline void eqPanel(bool neon) {
     const auto qGestures = gestures.count(parameter(owner, qId));
     juce::MouseWheelDetails wheel{};
     wheel.deltaY = 0.2f;
-    graph->mouseWheelMove(mouse(*graph, moved.translated(2, 0), moved, false, 0), wheel);
+    graph->mouseWheelMove(mouse(*graph, moved.translated(2, 0), moved, false, juce::ModifierKeys::altModifier), wheel);
     near(read(owner, qId), qBefore * std::exp(0.4f), "wheel Q", 0.002f);
     require(gestures.count(parameter(owner, qId)).begins == qGestures.begins + 1,
             "Q wheel missing complete host gesture");

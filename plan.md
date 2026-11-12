@@ -1,12 +1,55 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.0 built, packaged, validated and installed
+## Current status — 1.9.1 built, validated and packaged; installation pending
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
 list. When requirements conflict, the latest release record takes precedence.
 
-### Delivered
+### 1.9.1 — UI fixes validated; installation blocked
+
+- [x] Horizontal 204 px Main Bus FX cards beside the roughly 172 px voice-card
+  scale; full parameter UIs with internal vertical scroll, fixed headers and no
+  Details step. Stack uses an unscaled 940x1148 body viewport, fixed preset footer
+  and unchanged 940x1104 default window.
+- [x] Shared `PassiveViewport` hover-wheel routing: nearest movable vertical
+  ancestor first, outward edge propagation, horizontal fallback only without a
+  vertical range, and Shift-wheel for horizontal navigation. Main numeric labels
+  forward wheel events without parameter edits or focus capture. Embedded EQ uses
+  plain wheel for scrolling and Alt-wheel for Q/depth with complete gestures.
+- [x] Actual granular cloud framed by valid capture/read positions rather than
+  32 fixed rows; sparse/dense envelopes retain slot identity and direction. Delay
+  is a parameter-timed animated schematic, not measured echoes; hidden/clipped or
+  bypassed clocks pause. Offscreen Sync still updates Time/Beats enablement.
+- [x] Immediate coherent-snapshot XP cutoff/resonance response; utility timer
+  60 Hz, formerly 20 Hz. Synth drops the 100 ms request throttle but retains the
+  actual 32768-sample DSP curve on the shared bounded worker, not a fake preview.
+- [x] CMake version already 1.9.1; no audio DSP changes in this patch.
+- [x] Add three editor groups (66 total): hover-wheel regression, narrow Tone-card
+  layout and filter-response/scheduler coverage; rack coverage includes 354
+  real-hit-tested wheel cases.
+- [x] Correct test assumptions: oversized Tone text checked in scroll slices,
+  Delay `refreshAt` deterministic animation/exact snapshot comparison, EQ Alt-wheel
+  assignment. Coordinator reports all 34 focused CTests passed in 154.15 s,
+  including 66 editor groups and eight factory-audio shards.
+- [x] Remove duplicate WaveMix control; full Release rebuild succeeds, followed by
+  targeted Editor/rack/grain UI/CLAP 4/4 passes in 81.50 s (Editor 66/66, 81.27 s).
+- [x] Refresh tracked CLAP/VST3 packages and SHA256-match Release artifacts;
+  packaged CLAP smoke passes 2087 parameters, latency, bypass and automation.
+- [x] Render 33 screenshots plus rack-row views in three themes; inspect row and
+  grain/Delay views and update root images. Informational 26-node/120-frame UI
+  profile median/p95/max: compact 9.081/13.008/49.161 ms, expanded
+  14.755/22.607/37.176 ms, at most 12 mounted cards—not a native FPS guarantee.
+- [ ] Retry installation after the host closes: installed CLAP is in use by a
+  process; no installed files changed and 1.9.0 remains installed.
+- [ ] Coordinator commit/push; not yet claimed complete.
+- [ ] Actual Bitwig listening/transport/automation/recall and native FPS checks.
+  No audio DSP changes; legacy DSP was not rerun (1.9.0 pass remains historical).
+
+See [Release 1.9.1 validation](docs/Release-1.9.1-Validation.md) for evidence and
+pending work. The completed 1.9.0 results below are historical, not 1.9.1 approval.
+
+### Previously delivered
 
 - [x] Editable Lead and up to eight generated voices; independent pitch, formant,
   gain, pan, delay and motion controls, plus the measured Voice Motion monitor.

@@ -86,6 +86,12 @@ public:
     }
     static constexpr int preferredWidth = 400;
     static constexpr int preferredHeight = 650;
+    // Outer card viewports can size us to this height (including their Mix strip
+    // separately) to keep a single vertical scroll owner. Width excludes their bar.
+    int preferredContentHeight(int width) const {
+        if (width >= compactWidth) return preferredHeight;
+        return isEq() ? 880 : isWave() ? 800 : preferredHeight;
+    }
     void setNeon(bool enabled) {
         neon = enabled;
         const auto selectedTheme = componentTheme(*this, neon);
@@ -132,13 +138,75 @@ public:
     }
     void resized() override {
         contentViewport.setBounds(getLocalBounds());
-        const int height = juce::jmax(preferredHeight, getHeight());
+        int height = juce::jmax(preferredContentHeight(getWidth()), getHeight());
         const int scrollbar = height > getHeight() ? contentViewport.getScrollBarThickness() : 0;
-        content.setSize(juce::jmax(1, getWidth() - scrollbar), height);
+        const int width = juce::jmax(1, getWidth() - scrollbar);
+        height = juce::jmax(preferredContentHeight(width), getHeight());
+        content.setSize(width, height);
         layoutContent();
     }
 private:
+    static constexpr int compactWidth = 320;
+    void layoutCompactContent() {
+        auto area = content.getLocalBounds().reduced(8);
+        auto top = area.removeFromTop(23);
+        if (isEq()) expand.setBounds(top.removeFromRight(91));
+        heading.setBounds(top);
+        area.removeFromTop(5);
+        const auto knobGrid = [&area](auto& knobs) {
+            const int width = area.getWidth() / 2;
+            const int y = area.getY();
+            for (size_t i = 0; i < knobs.size(); ++i)
+                knobs[i]->setBounds(area.getX() + int(i % 2) * width,
+                                    y + int(i / 2) * 104, width, 100);
+            area.removeFromTop(int((knobs.size() + 1) / 2) * 104);
+        };
+        if (graph) {
+            graph->setBounds(area.removeFromTop(200));
+            area.removeFromTop(5);
+            for (size_t row = 0; row < 2; ++row) {
+                auto chips = area.removeFromTop(24);
+                for (size_t col = 0; col < 4; ++col)
+                    bandButtons[row * 4 + col].setBounds(chips.removeFromLeft(chips.getWidth() / int(4 - col)).reduced(1));
+            }
+            area.removeFromTop(4);
+            auto actions = area.removeFromTop(24);
+            bandOn.setBounds(actions.removeFromLeft(actions.getWidth() / 2).withTrimmedRight(2));
+            remove.setBounds(actions.withTrimmedLeft(2));
+            area.removeFromTop(4);
+            mode.setBounds(area.removeFromTop(29));
+            area.removeFromTop(3);
+            knobGrid(bandControls);
+            area.removeFromTop(3);
+            knobGrid(controls);
+            adaptive.setBounds(area.removeFromTop(23));
+        } else {
+            if (mode.getNumItems() > 0) {
+                mode.setBounds(area.removeFromTop(29));
+                area.removeFromTop(10);
+            }
+            if (visual) {
+                visual->setBounds(area.removeFromTop(180));
+                area.removeFromTop(6);
+            }
+            if (isWave()) {
+                raw.setButtonText("Raw / project rate");
+                raw.setBounds(area.removeFromTop(25));
+                area.removeFromTop(4);
+                levelMatch.setBounds(area.removeFromTop(25));
+                area.removeFromTop(4);
+                qualityLabel.setBounds(area.removeFromTop(18));
+                quality.setBounds(area.removeFromTop(29));
+                area.removeFromTop(4);
+            }
+            knobGrid(controls);
+        }
+        area.removeFromTop(8);
+        hint.setBounds(area);
+    }
     void layoutContent() {
+        if (content.getWidth() < compactWidth) { layoutCompactContent(); return; }
+        if (isWave()) raw.setButtonText("Raw / project-rate nonlinearity");
         auto area = content.getLocalBounds().reduced(8);
         auto top = area.removeFromTop(23);
         if (isEq()) expand.setBounds(top.removeFromRight(91));
@@ -357,7 +425,7 @@ private:
         if (owner.parameters.getParameter(id))
             adaptiveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner.parameters, id, adaptive);
         else adaptive.setEnabled(false);
-        hint.setText("Click: bell | drag ends: shelf / sides: cut\nBottom: notch | wheel: Q | FFT: right dBFS scale", juce::dontSendNotification);
+        hint.setText("Click: bell | drag ends: shelf / sides: cut\nBottom: notch | Alt-wheel: Q | FFT: right dBFS scale", juce::dontSendNotification);
         selectBand(0);
     }
     void setupBands() {
@@ -464,7 +532,7 @@ private:
     NodeType type;
     bool neon = false, expandedView = false;
     juce::Component content;
-    juce::Viewport contentViewport;
+    PassiveViewport contentViewport;
     juce::Label heading, hint, qualityLabel;
     toneui::PassiveComboBox mode, quality;
     juce::TextButton expand, remove;
