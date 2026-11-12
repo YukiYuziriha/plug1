@@ -1,4 +1,4 @@
-# Release 1.9.5 — built, tested and packaged; installation blocked
+# Release 1.9.5 — built, tested, packaged and installed
 
 ## Status and evidence boundary
 
@@ -9,12 +9,12 @@ static review found **no blockers**.
 
 These results and the screenshot observations below are the supplied release
 validation evidence; this documentation update did not rerun builds or tests.
-**Package refresh and packaged CLAP smoke are complete. Installation is blocked:**
-`source/build/install-release.ps1` preflight found the installed CLAP in use and
-changed **no installed files in either format**. **1.9.4 remains installed.**
-The user has been asked to close Bitwig before retrying. Release source and
-matching packages were committed as **`e9f2b48`** and successfully pushed to
-**`origin/main`**; packaged artifacts are not evidence of a successful 1.9.5 installation.
+**Package refresh, packaged CLAP smoke and installation are complete.** On retry,
+`source/build/install-release.ps1` reported **Installed and SHA256 verified for
+both per-user CLAP and VST3**, resolving the initial installed-CLAP file lock.
+Release source and matching packages were committed as **`e9f2b48`** and
+successfully pushed to **`origin/main`**. Installation success is not actual DAW
+listening or performance approval.
 
 ## Implemented UI scope
 
@@ -75,10 +75,10 @@ Release CLAP/VST3 artifacts were copied to tracked `Windows-x64`, and
 - Mono at **96 kHz** with **2688-sample latency**.
 - State, latency, bypass, automation and offline-layout checks.
 
-**Installation preflight was blocked**, not successful: the installed CLAP was
-in use. The installer changed no installed files in either format, so **1.9.4
-remains installed**. The user has been asked to close Bitwig before retrying;
-there is no successful 1.9.5 installation or installed-hash verification yet.
+**Installation retry succeeded:** `source/build/install-release.ps1` reported
+**Installed and SHA256 verified for both per-user CLAP and VST3**. **1.9.5 is now
+installed.** The initial preflight block is **resolved**: the installed CLAP had
+been in use, and that first attempt changed no installed files in either format.
 
 ## Delivery checklist
 
@@ -87,15 +87,14 @@ there is no successful 1.9.5 installation or installed-hash verification yet.
 - [x] Refresh tracked Release CLAP/VST3 packages and record SHA256 identities.
 - [x] Refresh `VocalStack-FX-Tabs.png`.
 - [x] Run packaged CLAP smoke against the refreshed artifact.
-- [ ] **Blocked:** install both per-user formats and verify their SHA256 identities;
-  close Bitwig before retrying. Preflight changed neither installed format.
+- [x] Install both per-user formats and verify their SHA256 identities: retry
+  reported **Installed and SHA256 verified** for CLAP and VST3; initial lock resolved.
 - [x] Commit and push the release with matching packaged binaries: `e9f2b48` on
   `origin/main`.
 - [ ] Actual DAW visual/listening, transport, automation/session recall and
   native FPS checks.
 
-Packaging, smoke and commit/push are complete (`e9f2b48` on `origin/main`).
-Installation remains blocked with no installed files changed in either format;
-1.9.4 remains installed, and retry awaits Bitwig being closed. No successful
-1.9.5 installation is recorded yet. Do not terminate Bitwig or overwrite a loaded
-plugin to force installation.
+Packaging, smoke, both SHA256-verified per-user installations and commit/push are
+complete (`e9f2b48` on `origin/main`). The initial installation lock is resolved;
+1.9.5 is installed. Actual DAW checks remain unverified. Do not terminate Bitwig
+or overwrite a loaded plugin to force installation.

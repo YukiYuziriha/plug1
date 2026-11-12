@@ -1,6 +1,6 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.5 built, tested and packaged; installation blocked
+## Current status — 1.9.5 built, tested, packaged and installed
 
 UI-only: no DSP or host parameter changes. Release source and matching packages
 are committed as `e9f2b48` and pushed to `origin/main`.
@@ -27,16 +27,15 @@ are committed as `e9f2b48` and pushed to `origin/main`.
 - [x] Packaged CLAP smoke: 2087 automatable parameters at original indices;
   stereo 48 kHz, mono-to-stereo 44.1 kHz, 1344-sample latency; mono 96 kHz with
   2688-sample latency; state/latency/bypass/automation/offline-layout checks passed.
-- [ ] **Installation blocked:** `install-release.ps1` preflight found the installed
-  CLAP in use. No installed files changed in either format; **1.9.4 remains
-  installed**. User asked to close Bitwig before retrying installation/verification.
+- [x] Installation retry succeeded: `install-release.ps1` reported **Installed and
+  SHA256 verified** for both per-user CLAP and VST3. Initial CLAP file lock resolved.
 - [x] Commit and push the release with matching packages: `e9f2b48` on `origin/main`.
 - [ ] Actual DAW visual/listening/transport/automation/recall and native FPS checks.
 
 The long legacy DSP suite was not rerun. Screenshot review is not a real-DAW
-listening or FPS result. Packaging and smoke are complete; installation is blocked,
-not completed. Release commit `e9f2b48` is pushed to `origin/main`; installation
-retry awaits Bitwig being closed. See [1.9.5 validation](docs/Release-1.9.5-Validation.md).
+listening or FPS result. Packaging, smoke and both SHA256-verified per-user
+installations are complete. Release commit `e9f2b48` is pushed to `origin/main`.
+See [1.9.5 validation](docs/Release-1.9.5-Validation.md).
 
 ### Historical 1.9.4 — built, validated, packaged and installed
 

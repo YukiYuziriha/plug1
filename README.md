@@ -3,7 +3,7 @@
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.5 is built, tested and packaged; installation is blocked.**
+**1.9.5 is built, tested, packaged and installed.**
 Long FX Mix controls now use flat **25 px textured bars**, with theme-colored,
 coarse mineral noise, an exact value marker and a separate upper modulation lane.
 Subtle, low-saturation fluid backgrounds extend across the editor and FX surfaces;
@@ -14,10 +14,10 @@ The full Release build succeeded and **34 focused CTests passed in 225.47 s**,
 including **68 editor groups**. Independent static review found no blockers;
 Neon/Spectral screenshots were reviewed. No DSP or host parameters change.
 Release artifacts were copied to tracked `Windows-x64`, the FX-tabs screenshot
-was refreshed, and packaged CLAP smoke passed. Installation preflight was blocked
-by the installed CLAP being in use: neither installed format changed, so **1.9.4
-remains installed**. Close Bitwig before retrying. Release source and matching
-packages were committed as `e9f2b48` and pushed to `origin/main`;
+was refreshed, and packaged CLAP smoke passed. Installation retry succeeded:
+**both per-user CLAP and VST3 reported Installed and SHA256 verified**. The initial
+CLAP file lock is resolved. Release source and matching packages were committed
+as `e9f2b48` and pushed to `origin/main`;
 no actual DAW listening or native FPS result is claimed. See the
 [1.9.5 validation record](docs/Release-1.9.5-Validation.md).
 
@@ -83,12 +83,11 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.5 installation is blocked; packaging and packaged CLAP smoke are complete.**
-`source/build/install-release.ps1` preflight found the installed CLAP in use and
-changed **no installed files in either format**. **1.9.4 remains installed.**
-The user has been asked to close Bitwig before installation is retried. Do not
-terminate Bitwig or overwrite a loaded plugin to force replacement. Actual Bitwig
-listening/transport and native FPS remain unchecked.
+**1.9.5 installation succeeded:** `source/build/install-release.ps1` reported
+**Installed and SHA256 verified for both per-user CLAP and VST3** on retry.
+The initial installed-CLAP file lock is resolved. Packaging and packaged CLAP
+smoke are complete. Do not terminate Bitwig or overwrite a loaded plugin to force
+replacement. Actual Bitwig listening/transport and native FPS remain unchecked.
 
 1. Extract the ZIP.
 2. Copy `Windows-x64/CLAP/Vocal Stack.clap` to
@@ -833,9 +832,9 @@ rerun. Tracked Release CLAP/VST3 packages and `VocalStack-FX-Tabs.png` were refr
 Packaged CLAP smoke passed: 2087 automatable parameters at original indices,
 stereo 48 kHz, mono-to-stereo 44.1 kHz, 1344-sample latency, mono 96 kHz with
 2688-sample latency, and state/latency/bypass/automation/offline-layout checks.
-Installation preflight was blocked by the installed CLAP being in use; neither
-format changed and 1.9.4 remains installed. Release source and matching packages
-were committed as `e9f2b48` and pushed to `origin/main`;
+Installation retry succeeded: both per-user CLAP and VST3 reported **Installed
+and SHA256 verified**, resolving the initial CLAP file lock. Release source and
+matching packages were committed as `e9f2b48` and pushed to `origin/main`;
 package hashes and details are in the [validation report](docs/Release-1.9.5-Validation.md).
 
 **Historical 1.9.4:** full Release build, all **34 focused CTests (209.76 s)**, 67 editor
