@@ -37,6 +37,7 @@ public:
         }
         slider.updateText();
     }
+    void setLinear(bool linear) { knob.setLinear(linear); }
     void resized() override { knob.setBounds(getLocalBounds()); }
     void setNeon(bool neon) { knob.setNeon(neon); }
     ModulationSlider& slider;
@@ -89,8 +90,24 @@ public:
     // Outer card viewports can size us to this height (including their Mix strip
     // separately) to keep a single vertical scroll owner. Width excludes their bar.
     int preferredContentHeight(int width) const {
-        if (width >= compactWidth) return preferredHeight;
-        return isEq() ? 880 : isWave() ? 800 : preferredHeight;
+        if (width >= 620) {
+            // Reserve the scrollbar before measuring so the breakpoint cannot oscillate.
+            const int inner = juce::jmax(1, width - contentViewport.getScrollBarThickness() - 16);
+            const int controlWidth = inner - inner * 44 / 100 - 12;
+            const int columns = juce::jmax(1, (controlWidth + knobGap) / (knobWidth + knobGap));
+            const int count = isEq() ? 5 : isWave() ? 3 : 2;
+            const int gridHeight = ((count + columns - 1) / columns) * (knobHeight + knobGap);
+            return juce::jmax(280, (isEq() ? 161 : isWave() ? 172 : 83) + gridHeight);
+        }
+        const int inner = juce::jmax(1, width - 16);
+        const int columns = juce::jmax(1, (inner + knobGap) / (knobWidth + knobGap));
+        const int count = isEq() ? 5 : isWave() ? 3 : 2;
+        const int gridHeight = ((count + columns - 1) / columns) * (knobHeight + knobGap);
+        // Match the fixed rows in layoutContent; short inspectors scroll without shrinking plots.
+        const bool compact = width < compactWidth;
+        const int fixedHeight = isEq() ? (compact ? 450 : 490)
+                                      : isWave() ? (compact ? 480 : 540) : (compact ? 320 : 400);
+        return juce::jmax(preferredHeight, fixedHeight + gridHeight);
     }
     void setNeon(bool enabled) {
         neon = enabled;
@@ -137,138 +154,126 @@ public:
         g.fillRoundedRectangle(getLocalBounds().toFloat(), componentTheme(*this, neon) == Theme::device ? 5.0f : 0.0f);
     }
     void resized() override {
+        const auto position = contentViewport.getViewPosition();
         contentViewport.setBounds(getLocalBounds());
         int height = juce::jmax(preferredContentHeight(getWidth()), getHeight());
         const int scrollbar = height > getHeight() ? contentViewport.getScrollBarThickness() : 0;
         const int width = juce::jmax(1, getWidth() - scrollbar);
-        height = juce::jmax(preferredContentHeight(width), getHeight());
+        height = juce::jmax(preferredContentHeight(getWidth() >= 620 ? getWidth() : width), getHeight());
         content.setSize(width, height);
         layoutContent();
+        contentViewport.setViewPosition(position);
     }
 private:
     static constexpr int compactWidth = 320;
-    void layoutCompactContent() {
+    static constexpr int knobWidth = 78, knobHeight = 100, knobGap = 4;
+    void layoutContent() {
+        const bool wide = getWidth() >= 620;
+        const bool compact = !wide && content.getWidth() < compactWidth;
         auto area = content.getLocalBounds().reduced(8);
         auto top = area.removeFromTop(23);
         if (isEq()) expand.setBounds(top.removeFromRight(91));
         heading.setBounds(top);
         area.removeFromTop(5);
-        const auto knobGrid = [&area](auto& knobs) {
-            const int width = area.getWidth() / 2;
+        juce::Rectangle<int> plotArea;
+        if (wide) {
+            plotArea = area.removeFromLeft(area.getWidth() * 44 / 100);
+            area.removeFromLeft(12);
+        }
+        const auto knobGrid = [&] {
+            const int columns = juce::jmax(1, (area.getWidth() + knobGap) / (knobWidth + knobGap));
             const int y = area.getY();
-            for (size_t i = 0; i < knobs.size(); ++i)
-                knobs[i]->setBounds(area.getX() + int(i % 2) * width,
-                                    y + int(i / 2) * 104, width, 100);
-            area.removeFromTop(int((knobs.size() + 1) / 2) * 104);
+            int index = 0;
+            const auto place = [&](auto& knobs) {
+                for (auto& control : knobs) {
+                    if (control->slider.getSliderStyle() == juce::Slider::LinearHorizontal) continue;
+                    control->setBounds(area.getX() + (index % columns) * (knobWidth + knobGap),
+                                       y + (index / columns) * (knobHeight + knobGap),
+                                       juce::jmin(knobWidth, area.getWidth()), knobHeight);
+                    ++index;
+                }
+            };
+            place(bandControls);
+            place(controls);
+            area.removeFromTop(((index + columns - 1) / columns) * (knobHeight + knobGap));
         };
         if (graph) {
-            graph->setBounds(area.removeFromTop(200));
-            area.removeFromTop(5);
-            for (size_t row = 0; row < 2; ++row) {
+            const int columns = juce::jmax(1, (area.getWidth() + knobGap) / (knobWidth + knobGap));
+            const int gridHeight = ((int(bandControls.size() + controls.size()) + columns - 1) / columns)
+                                   * (knobHeight + knobGap);
+            const int graphHeight = wide ? juce::jlimit(200, 480, plotArea.getHeight() - 36)
+                : compact ? 200 : juce::jlimit(260, 480, content.getHeight() - gridHeight - 214);
+            if (wide) {
+                graph->setBounds(plotArea.removeFromTop(graphHeight));
+                plotArea.removeFromTop(6);
+            } else {
+                graph->setBounds(area.removeFromTop(graphHeight));
+                area.removeFromTop(5);
+            }
+            const int chipColumns = compact ? 4 : 8;
+            for (int row = 0; row < 8 / chipColumns; ++row) {
                 auto chips = area.removeFromTop(24);
-                for (size_t col = 0; col < 4; ++col)
-                    bandButtons[row * 4 + col].setBounds(chips.removeFromLeft(chips.getWidth() / int(4 - col)).reduced(1));
+                for (int col = 0; col < chipColumns; ++col)
+                    bandButtons[size_t(row * chipColumns + col)].setBounds(
+                        chips.removeFromLeft(chips.getWidth() / (chipColumns - col)).reduced(1));
             }
             area.removeFromTop(4);
             auto actions = area.removeFromTop(24);
-            bandOn.setBounds(actions.removeFromLeft(actions.getWidth() / 2).withTrimmedRight(2));
-            remove.setBounds(actions.withTrimmedLeft(2));
+            bandOn.setBounds(actions.removeFromLeft(56));
+            actions.removeFromLeft(4);
+            remove.setBounds(actions.removeFromLeft(64));
             area.removeFromTop(4);
             mode.setBounds(area.removeFromTop(29));
             area.removeFromTop(3);
-            knobGrid(bandControls);
-            area.removeFromTop(3);
-            knobGrid(controls);
-            adaptive.setBounds(area.removeFromTop(23));
+            knobGrid();
+            adaptive.setButtonText("Adapt Q");
+            adaptive.setBounds(area.removeFromTop(25).withWidth(64));
         } else {
             if (mode.getNumItems() > 0) {
-                mode.setBounds(area.removeFromTop(29));
-                area.removeFromTop(10);
+                if (wide) {
+                    mode.setBounds(plotArea.removeFromTop(29));
+                    plotArea.removeFromTop(4);
+                } else {
+                    mode.setBounds(area.removeFromTop(29));
+                    area.removeFromTop(10);
+                }
             }
             if (visual) {
-                visual->setBounds(area.removeFromTop(180));
-                area.removeFromTop(6);
-            }
-            if (isWave()) {
-                raw.setButtonText("Raw / project rate");
-                raw.setBounds(area.removeFromTop(25));
-                area.removeFromTop(4);
-                levelMatch.setBounds(area.removeFromTop(25));
-                area.removeFromTop(4);
-                qualityLabel.setBounds(area.removeFromTop(18));
-                quality.setBounds(area.removeFromTop(29));
-                area.removeFromTop(4);
-            }
-            knobGrid(controls);
-        }
-        area.removeFromTop(8);
-        hint.setBounds(area);
-    }
-    void layoutContent() {
-        if (content.getWidth() < compactWidth) { layoutCompactContent(); return; }
-        if (isWave()) raw.setButtonText("Raw / project-rate nonlinearity");
-        auto area = content.getLocalBounds().reduced(8);
-        auto top = area.removeFromTop(23);
-        if (isEq()) expand.setBounds(top.removeFromRight(91));
-        heading.setBounds(top);
-        area.removeFromTop(5);
-        if (graph) {
-            // Keep the response plot generous; short panels scroll the rotary
-            // controls rather than taking their height from the plot.
-            const int graphHeight = juce::jlimit(260, 480, content.getHeight() - 365);
-            graph->setBounds(area.removeFromTop(graphHeight));
-            area.removeFromTop(5);
-            auto selectors = area.removeFromTop(23);
-            for (size_t b = 0; b < bandButtons.size(); ++b) {
-                const int remaining = int(bandButtons.size() - b);
-                bandButtons[b].setBounds(selectors.removeFromLeft(selectors.getWidth() / remaining).reduced(1, 0));
-            }
-            area.removeFromTop(4);
-            auto bandRow = area.removeFromTop(24);
-            bandOn.setBounds(bandRow.removeFromLeft(65));
-            remove.setBounds(bandRow.removeFromRight(58));
-            mode.setBounds(bandRow.reduced(3, 0));
-            area.removeFromTop(3);
-            if (bandControls.size() == 3) {
-                auto row = area.removeFromTop(104);
-                const int width = row.getWidth() / 3;
-                for (auto& control : bandControls) control->setBounds(row.removeFromLeft(width).reduced(2, 0));
-            }
-            area.removeFromTop(3);
-            if (controls.size() >= 2) {
-                auto pair = area.removeFromTop(100);
-                controls[0]->setBounds(pair.removeFromLeft(pair.getWidth() / 2).withTrimmedRight(4));
-                controls[1]->setBounds(pair.withTrimmedLeft(4));
-            }
-            adaptive.setBounds(area.removeFromTop(23));
-            hint.setBounds(area);
-        } else {
-            if (mode.getNumItems() > 0) {
-                mode.setBounds(area.removeFromTop(29));
-                area.removeFromTop(10);
-            }
-            if (visual) {
-                visual->setBounds(area.removeFromTop(isWave() ? 240 : 260));
-                area.removeFromTop(6);
+                if (wide) {
+                    visual->setBounds(plotArea.removeFromTop(juce::jlimit(160, 480, plotArea.getHeight() - 36)));
+                    plotArea.removeFromTop(6);
+                } else {
+                    visual->setBounds(area.removeFromTop(compact ? 180 : isWave() ? 240 : 260));
+                    area.removeFromTop(6);
+                }
             }
             if (isWave()) {
                 auto toggles = area.removeFromTop(25);
-                raw.setBounds(toggles.removeFromLeft(toggles.getWidth() * 3 / 5));
-                levelMatch.setBounds(toggles);
+                raw.setButtonText("Raw");
+                raw.setBounds(toggles.removeFromLeft(56));
+                toggles.removeFromLeft(4);
+                levelMatch.setButtonText("Match");
+                levelMatch.setBounds(toggles.removeFromLeft(64));
                 area.removeFromTop(4);
-                auto qualityRow = area.removeFromTop(29);
-                qualityLabel.setBounds(qualityRow.removeFromLeft(62)); quality.setBounds(qualityRow);
+                if (wide) {
+                    auto qualityRow = area.removeFromTop(29);
+                    qualityLabel.setBounds(qualityRow.removeFromLeft(52));
+                    quality.setBounds(qualityRow);
+                } else {
+                    qualityLabel.setBounds(area.removeFromTop(18));
+                    quality.setBounds(area.removeFromTop(29));
+                }
                 area.removeFromTop(4);
             }
-            const int columns = 2;
-            const int width = area.getWidth() / columns;
-            const int topY = area.getY();
-            for (size_t i = 0; i < controls.size(); ++i)
-                controls[i]->setBounds(area.getX() + int(i % size_t(columns)) * width, topY + int(i / size_t(columns)) * 104, width, 100);
-            area.removeFromTop(int((controls.size() + size_t(columns) - 1) / size_t(columns)) * 104);
-            area.removeFromTop(8);
-            hint.setBounds(area);
+            knobGrid();
+            for (auto& control : controls) {
+                if (control->slider.getSliderStyle() != juce::Slider::LinearHorizontal) continue;
+                control->setBounds(area.removeFromTop(62));
+                area.removeFromTop(4);
+            }
         }
+        area.removeFromTop(8);
+        hint.setBounds(wide ? plotArea : area);
     }
 private:
     class ExpandedWindow final : public juce::DocumentWindow {
@@ -371,6 +376,7 @@ private:
         content.addAndMakeVisible(levelMatch);
         levelMatchAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner.parameters, levelMatch.getComponentID(), levelMatch);
         auto mix = std::make_unique<toneui::Control>(owner, fxParameterId(slot, "Mix"), "Dry / wet", "%");
+        mix->setLinear(true);
         mix->slider.setTooltip("True dry/wet blend; drive can increase level. Output trim is not a limiter.");
         content.addAndMakeVisible(*mix);
         controls.push_back(std::move(mix));

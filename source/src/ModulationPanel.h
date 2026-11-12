@@ -75,7 +75,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             if (name == "Random smoothing") label.setText("Smooth", juce::dontSendNotification);
                         slider.setName(name); slider.setRange(lo, hi, step);
             slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-            slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 46, 16);
+            slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 46, 16);
             slider.setScrollWheelEnabled(false);
             slider.textFromValueFunction = [](double value) { return juce::String(value, 3); };
             slider.valueFromTextFunction = [](const juce::String& text) { return text.getDoubleValue(); };
@@ -84,7 +84,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             detail::passiveControl(*this);
         }
         ~Numeric() override { slider.setLookAndFeel(nullptr); }
-                void resized() override { auto a = getLocalBounds(); label.setBounds(a.removeFromTop(16)); slider.setBounds(a); }
+                void resized() override { auto a = getLocalBounds(); label.setBounds(a.removeFromBottom(16)); slider.setBounds(a); }
     } rate{"Rate / Hz", .001, 100, .001}, division{"Beats / cycle", .015625, 256, 0},
       phase{"Phase / turns", 0, .999, .001}, depth{"Output amount", 0, 1, .001},
       shape{"Phase skew", 0, 1, .001}, smooth{"Random smoothing", 0, 1, .001};

@@ -14,6 +14,18 @@ juce::Component* find(juce::Component& root, const juce::String& id) {
     for (auto* child : root.getChildren()) if (auto* match = find(*child, id)) return match;
     return nullptr;
 }
+juce::Component* selectRackNode(juce::Component& root, uint32_t id) {
+    auto* tab = find(root, "mainBusFxTab" + juce::String(id));
+    expect(tab != nullptr, "routing node has a tab");
+    auto* button = dynamic_cast<juce::TextButton*>(find(*tab, "mainBusFxDrag"));
+    expect(button && button->onClick, "tab has a selection action");
+    const auto focus = juce::Component::getCurrentlyFocusedComponent();
+    button->onClick();
+    auto* body = find(root, "mainBusFx" + juce::String(id));
+    expect(body && body->isVisible() && button->getToggleState(), "selected tab shows its inspector");
+    expect(juce::Component::getCurrentlyFocusedComponent() == focus, "tab selection is passive");
+    return body;
+}
 void set(Processor& owner, const juce::String& id, float value) {
     auto* parameter = owner.parameters.getParameter(id); expect(parameter != nullptr, "host parameter exists");
     parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
@@ -173,18 +185,18 @@ void editorHitTestedWheelRegressions() {
             expect(label->getCurrentTextEditor() == nullptr, "wheel never opens numeric text entry");
         }
         for (size_t effect = 0; effect < creativeTypes.size(); ++effect) {
-            auto* card = find(editor, "mainBusFx" + juce::String(100 + int(effect)));
+            auto* card = selectRackNode(editor, uint32_t(100 + effect));
             expect(card != nullptr, "creative card exists in actual editor");
             auto* body = viewportIn(*card);
             auto* visual = descendant<CreativeEffectVisual>(*card);
             expect(body && visual, "creative card has its full visual and inner viewport");
-            auto* title = descendant<juce::Label>(*card);
-            auto* header = find(*card, "mainBusFxDrag");
-            expect(title && header, "creative card title and drag header exist");
+            auto* tab = find(editor, "mainBusFxTab" + juce::String(100 + int(effect)));
+            auto* header = find(*tab, "mainBusFxDrag");
+            expect(header != nullptr, "creative node has a selectable drag tab");
             const auto prefix = CreativeEffectPanel::effectName(creativeKind(creativeTypes[effect])) + " / ";
             const auto reset = [&](int innerY) {
                 stack->setViewPosition(0, 250);
-                row->setViewPosition(card->getX() - 60, 0);
+                row->setViewPosition(tab->getX() - 60, 0);
                 body->setViewPosition(0, innerY);
                 expect(stack->getViewPositionY() > 0
                            && stack->getViewPositionY() + stack->getViewHeight() < stack->getViewedComponent()->getHeight(),
@@ -213,7 +225,7 @@ void editorHitTestedWheelRegressions() {
                 const auto edgeName = bottom ? "bottom" : "top";
                 reset(edge); background(outward, stack, juce::String("background at ") + edgeName + " bubbles outward to Stack");
                 reset(edge); background(inward, body, juce::String("background at ") + edgeName + " scrolls inward only in body");
-                for (auto* surface : {header, static_cast<juce::Component*>(title)}) {
+                for (auto* surface : {header}) {
                     reset(edge); centre(*surface, outward, stack, prefix + "header/title at inner " + edgeName + " scrolls Stack only");
                     reset(edge); centre(*surface, inward, stack, prefix + "header/title reverse at inner " + edgeName + " scrolls Stack only");
                 }
@@ -230,7 +242,106 @@ void editorHitTestedWheelRegressions() {
         std::cout << "Editor hit-tested wheel regressions: skin " << skin << ", " << cases << " cases passed" << std::endl;
     }
 }
-void compactCardsAndScreenshots(Processor& owner, const juce::File& output) {
+void tabSelectionLifecycleRegressions(Processor& owner) {
+    auto graph = mainBusFx::add(defaultGraph(), NodeType::granular).graph;
+    graph = mainBusFx::add(graph, NodeType::granular).graph;
+    juce::String error;
+    expect(owner.setRoutingGraph(graph, error), "accept tab lifecycle fixture");
+    RoutingPanel routing(owner);
+    MainBusFxRackPanel rack(owner);
+    rack.commitGraph = [&](const Graph& candidate, juce::String& rejection) {
+        return routing.commitExternalGraphEdit(candidate, rejection);
+    };
+    rack.sync(); rack.setBounds(0, 0, 904, MainBusFxRackPanel::preferredHeight);
+    rack.addToDesktop(0); rack.setVisible(true); pump();
+    auto* first = selectRackNode(rack, 100);
+    auto* second = find(rack, "mainBusFx101");
+    auto* body = viewportIn(*first);
+    body->setViewPosition(0, 80);
+    const auto scroll = body->getViewPosition();
+    const auto before = processorRouting::encode(owner.getRoutingGraph(), "Graph").toXmlString();
+    selectRackNode(rack, 101); selectRackNode(rack, 100);
+    expect(body->getViewPosition() == scroll && find(rack, "mainBusFx101") == second,
+           "duplicate tabs preserve independent inspector identity and scroll");
+    expect(processorRouting::encode(owner.getRoutingGraph(), "Graph").toXmlString() == before,
+           "tab clicks never publish topology");
+    auto* bypass = dynamic_cast<juce::TextButton*>(find(*find(rack, "mainBusFxTab101"), fxParameterId(2, "On")));
+    expect(bypass != nullptr, "duplicate tab has a separate host-bound bypass button");
+    bypass->setToggleState(!bypass->getToggleState(), juce::sendNotificationSync);
+    expect(first->isVisible() && !second->isVisible(), "bypassing another instance does not select it");
+    expect(processorRouting::encode(owner.getRoutingGraph(), "Graph").toXmlString() == before,
+           "bypass edits parameters without rewriting graph order");
+
+    struct GestureProbe final : juce::AudioProcessorParameter::Listener {
+        explicit GestureProbe(juce::RangedAudioParameter& p) : parameter(p) { parameter.addListener(this); }
+        ~GestureProbe() override { parameter.removeListener(this); }
+        void parameterValueChanged(int, float) override {}
+        void parameterGestureChanged(int, bool starting) override { starting ? ++begins : ++ends; }
+        juce::RangedAudioParameter& parameter;
+        int begins = 0, ends = 0;
+    } probe(*owner.parameters.getParameter(creativeParameterId(1, size_t(CreativeParameter::granularPitch))));
+    auto* slider = dynamic_cast<juce::Slider*>(find(*first, creativeParameterId(1, size_t(CreativeParameter::granularPitch))));
+    expect(slider != nullptr, "selected inspector has its host-bound pitch knob");
+    const auto now = juce::Time::getCurrentTime();
+    const auto point = slider->getLocalBounds().getCentre().toFloat();
+    const juce::MouseEvent down{juce::Desktop::getInstance().getMainMouseSource(), point,
+        juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
+        slider, slider, now, point, now, 1, false};
+    slider->mouseDown(down);
+    slider->mouseDrag(down.withNewPosition(point.translated(0, -20)));
+    expect(probe.begins == 1 && probe.ends == 0, "fixture opens a real host parameter gesture");
+    selectRackNode(rack, 101);
+    expect(probe.ends == 1, "hiding an inspector closes its active host gesture");
+    selectRackNode(rack, 100);
+    expect(probe.ends == 1, "returning to an inspector does not emit an extra gesture end");
+
+    auto reordered = mainBusFx::move(owner.getRoutingGraph(), 100, 0);
+    expect(owner.setRoutingGraph(reordered.graph, error), "external tab reorder accepted"); rack.sync();
+    expect(first->isVisible() && find(rack, "mainBusFx100") == first,
+           "external reorder retains the selected node and inspector");
+    auto* tab = find(rack, "mainBusFxTab100");
+    auto* handle = find(*tab, "mainBusFxDrag");
+    const auto start = handle->getLocalBounds().getCentre().toFloat();
+    const juce::MouseEvent dragStart{juce::Desktop::getInstance().getMainMouseSource(), start,
+        juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
+        handle, handle, now, start, now, 1, true};
+    handle->mouseDown(dragStart);
+    const auto dragEnd = dragStart.withNewPosition(start.translated(float(MainBusFxRackPanel::tabWidth + MainBusFxRackPanel::tabGap), 0));
+    handle->mouseDrag(dragEnd);
+    auto external = mainBusFx::move(owner.getRoutingGraph(), 101, 0);
+    expect(owner.setRoutingGraph(external.graph, error), "external edit during tab drag accepted");
+    const auto externalState = processorRouting::encode(owner.getRoutingGraph(), "Graph").toXmlString();
+    handle->mouseUp(dragEnd); pump(); rack.sync();
+    expect(processorRouting::encode(owner.getRoutingGraph(), "Graph").toXmlString() == externalState,
+           "stale tab drag never overwrites externally changed order");
+    expect(first->isVisible(), "external order change keeps selection stable");
+
+    const auto removeTab = [&](uint32_t id) {
+        auto* nodeTab = find(rack, "mainBusFxTab" + juce::String(id));
+        auto* button = dynamic_cast<juce::TextButton*>(find(*nodeTab, "mainBusFxRemove"));
+        expect(button && button->isEnabled(), "tab has a separate enabled remove action");
+        button->onClick(); pump(); rack.sync();
+        expect(!find(rack, "mainBusFx" + juce::String(id)) && !find(rack, "mainBusFxTab" + juce::String(id)),
+               "remove deletes both tab and inspector for that real node");
+    };
+    removeTab(101);
+    expect(first->isVisible(), "removing an unselected tab leaves selection unchanged");
+    auto inserted = mainBusFx::add(owner.getRoutingGraph(), NodeType::granular);
+    expect(inserted.changed && owner.setRoutingGraph(inserted.graph, error), "external duplicate insertion accepted"); rack.sync();
+    expect(find(rack, "mainBusFx101")->isVisible() && !first->isVisible(), "new effect automatically selects its own inspector");
+    removeTab(101);
+    expect(find(rack, "mainBusFx12")->isVisible(), "removing the last selected tab selects its previous neighbor");
+    selectRackNode(rack, 100);
+    slider->mouseDown(down); slider->mouseDrag(down.withNewPosition(point.translated(0, -20)));
+    expect(probe.begins == 2 && probe.ends == 1, "fixture opens a gesture before node destruction");
+    removeTab(100);
+    expect(probe.ends == 2, "destroying an inspector closes its active host gesture before attachments die");
+    expect(find(rack, "mainBusFx12")->isVisible(), "removing the first selected tab selects its next neighbor");
+    removeTab(12);
+    expect(mainBusFx::discover(owner.getRoutingGraph()).effects.empty(), "last tab can be removed safely");
+    expect(find(rack, "mainBusAddFx")->isEnabled(), "empty tab strip still permits adding FX");
+}
+void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) {
     auto graph = defaultGraph();
     const std::array types{NodeType::granular, NodeType::reverb, NodeType::delay,
         NodeType::compressor, NodeType::bitcrusher, NodeType::waveshaper, NodeType::equalizer,
@@ -246,10 +357,18 @@ void compactCardsAndScreenshots(Processor& owner, const juce::File& output) {
     rack.addToDesktop(0); rack.setVisible(true); rack.toFront(false); pump();
     auto* row = dynamic_cast<juce::Viewport*>(find(rack, "mainBusFxRowViewport"));
     expect(row && row->getHorizontalScrollBar().isVisible(), "rack has horizontal overflow");
+    expect(row->getHeight() == 42, "tab header includes its overflow scrollbar within 42px");
     const auto before = processorRouting::encode(owner.getRoutingGraph(), "Graph").toXmlString();
     for (const auto& node : graph.nodes) if (mainBusFx::eligible(node.type)) {
-        auto* card = find(rack, "mainBusFx" + juce::String(node.id)); expect(card != nullptr, "effect card exists");
-        expect(card->getWidth() == 204 && card->getHeight() <= 310, "FX cards stay close to 172px voice cards");
+        auto* card = selectRackNode(rack, node.id);
+        expect(card->getWidth() == rack.getWidth() - 12, "selected inspector uses the full rack width");
+        expect(card->getY() >= row->getBottom(), "selected inspector is below the tab strip");
+        for (const auto id : mainBusFx::discover(graph).effects) {
+            auto* other = find(rack, "mainBusFx" + juce::String(id));
+            expect(other && other->isVisible() == (id == node.id), "only the selected body is rendered");
+        }
+        auto* tab = find(rack, "mainBusFxTab" + juce::String(node.id));
+        expect(row->getViewArea().contains(tab->getBounds()), "selection reveals the entire tab in horizontal overflow");
         expect(find(*card, "mainBusFxDetails") == nullptr, "no Details gate or duplicate primary controls");
         auto* body = viewportIn(*card); expect(body != nullptr, "full card body scrolls vertically");
         const auto checkParameter = [&](const juce::String& id) {
@@ -267,22 +386,54 @@ void compactCardsAndScreenshots(Processor& owner, const juce::File& output) {
         };
         const auto slot = size_t(routingFxSlot(node.id));
         checkParameter(fxParameterId(slot, "Mix"));
+        if (node.type == NodeType::chorale || node.type == NodeType::equalizer) {
+            auto* mixSlider = dynamic_cast<juce::Slider*>(find(*card, fxParameterId(slot, "Mix")));
+            expect(mixSlider && mixSlider->getSliderStyle() == juce::Slider::LinearHorizontal,
+                   "rack-owned Mix uses a standalone linear slider");
+            expect(mixSlider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
+                   "rack-owned Mix value is above the control");
+            auto* mixControl = dynamic_cast<ParameterKnob*>(mixSlider->getParentComponent());
+            expect(mixControl && mixControl->getHeight() == 60 && mixControl->getWidth() <= 240,
+                   "standalone rack Mix has a compact 60px-high footprint");
+            if (node.type == NodeType::chorale) {
+                auto* motion = dynamic_cast<juce::Slider*>(find(*card, fxParameterId(slot, "Motion")));
+                expect(motion && motion->getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag
+                           && motion->getTextBoxPosition() == juce::Slider::TextBoxAbove,
+                       "Chorale Motion remains a rotary with its value above");
+                auto* motionControl = motion->getParentComponent();
+                expect(motionControl->getWidth() == 78 && motionControl->getHeight() == 100,
+                       "Chorale Motion never stretches across the inspector");
+                expect(mixControl->getX() > motionControl->getRight()
+                           && mixControl->getY() < motionControl->getBottom(),
+                       "wide Chorale places standalone Mix beside the compact Motion knob");
+            } else {
+                auto* tone = find(*card, "mainBusFxFullPanel");
+                expect(tone && tone->getY() == 0 && tone->getWidth() == body->getViewedComponent()->getWidth(),
+                       "Tone inspector retains full width and starts at the top without a Mix strip");
+                expect(mixControl->getY() >= tone->getBottom() && mixControl->getX() > tone->getWidth() / 2,
+                       "Tone extra Mix occupies a compact footer on the control side");
+                auto* eqGraph = descendant<toneui::EqGraph>(*tone);
+                expect(eqGraph && eqGraph->getWidth() > 200, "full-width Tone retains its usable EQ graph");
+            }
+        }
         if (isCreativeEffect(node.type)) for (size_t i = 0; i < creativeParameterCount; ++i)
             if (creativeParameters[i].kind == creativeKind(node.type)) checkParameter(creativeParameterId(slot, i));
         if (isUtilityEffect(node.type)) for (size_t i = 0; i < utilityParameterCount; ++i)
             if (utilityParameters[i].kind == utilityKind(node.type)) checkParameter(utilityParameterId(slot, i));
         body->setViewPosition(0, 0);
     }
-    auto* granular = find(rack, "mainBusFx100");
-    row->setViewPosition(granular->getX(), 0);
+    auto* granular = selectRackNode(rack, 100);
+    row->setViewPosition(0, 0);
     auto* body = viewportIn(*granular);
     auto* mix = find(*granular, fxParameterId(1, "Mix"));
     const auto mixBounds = body->getViewedComponent()->getLocalArea(mix, mix->getLocalBounds());
     body->setViewPosition(0, mixBounds.getY());
     const int previousY = body->getViewPositionY(); const int previousX = row->getViewPositionX();
+    const int maximumY = body->getViewedComponent()->getHeight() - body->getViewHeight();
     auto* focus = juce::Component::getCurrentlyFocusedComponent();
     wheelAt(rack, *mix, 0, -.5f);
-    expect(body->getViewPositionY() > previousY, "hovered nested knob scrolls card without a click");
+    expect(previousY < maximumY ? body->getViewPositionY() > previousY : body->getViewPositionY() == previousY,
+           "hovered nested knob scrolls the inspector, or stays clamped at its bottom");
     expect(row->getViewPositionX() == previousX, "vertical body wheel leaves horizontal rack alone");
     expect(juce::Component::getCurrentlyFocusedComponent() == focus, "hover wheel does not steal keyboard focus");
     body->setViewPosition(0, 0);
@@ -293,17 +444,64 @@ void compactCardsAndScreenshots(Processor& owner, const juce::File& output) {
     body->setViewPosition(0, body->getViewedComponent()->getHeight());
     wheelAt(rack, *body, 0, -.5f);
     expect(row->getViewPositionX() == previousX, "vertical edge wheel never turns into horizontal row scrolling");
-    wheelAt(rack, *find(*granular, "mainBusFxDrag"), -.5f, 0);
+    wheelAt(rack, *find(*find(rack, "mainBusFxTab100"), "mainBusFxDrag"), -.5f, 0);
     expect(row->getViewPositionX() > previousX, "hovered card header scrolls outer row horizontally");
+    body->setViewPosition(0, 80);
+    const auto rememberedPosition = body->getViewPosition();
+    auto* fullPanel = find(*granular, "mainBusFxFullPanel");
+    selectRackNode(rack, 101);
+    expect(!granular->isVisible(), "previous inspector is hidden, not destroyed");
+    expect(selectRackNode(rack, 100) == granular && find(*granular, "mainBusFxFullPanel") == fullPanel,
+           "switching tabs preserves inspector components and attachments");
+    expect(body->getViewPosition() == rememberedPosition, "switching tabs preserves per-instance scroll");
+    int previousRight = -1;
+    for (const auto id : mainBusFx::discover(graph).effects) {
+        auto* tab = find(rack, "mainBusFxTab" + juce::String(id));
+        expect(tab && tab->getX() > previousRight, "tab order follows actual graph order");
+        previousRight = tab->getRight();
+    }
+    const auto addBounds = find(rack, "mainBusAddFx")->getBounds();
+    row->setViewPosition(row->getViewedComponent()->getWidth(), 0);
+    expect(find(rack, "mainBusAddFx")->getBounds() == addBounds && addBounds.getX() >= row->getRight(),
+           "+ FX stays fixed outside horizontal overflow");
     const std::array<const char*, 3> skins{"device", "neon", "spectral"};
     for (int skin = 0; skin < 3; ++skin) {
         owner.setSkin(skin); rack.getProperties().set(vocalstackThemeProperty, skin); rack.setNeon(skin == 1);
         row->setViewPosition(0, 0); body->setViewPosition(0, 0);
         writeSnapshot(rack, output, juce::String("rack-row-") + skins[size_t(skin)]);
         writeSnapshot(*granular, output, juce::String("rack-granular-") + skins[size_t(skin)]);
+        selectRackNode(rack, 12);
+        writeSnapshot(rack, output, juce::String("rack-chorale-tabs-") + skins[size_t(skin)]);
+        selectRackNode(rack, 106);
+        viewportIn(*find(rack, "mainBusFx106"))->setViewPosition(0, 0);
+        writeSnapshot(rack, output, juce::String("rack-eq-tabs-") + skins[size_t(skin)]);
+        auto* reverb = selectRackNode(rack, 101);
+        viewportIn(*reverb)->setViewPosition(0, 0);
+        auto* reverbTab = find(rack, "mainBusFxTab101");
+        auto* title = dynamic_cast<juce::TextButton*>(find(*reverbTab, "mainBusFxDrag"));
+        const auto onId = fxParameterId(2, "On");
+        const float savedOn = owner.parameters.getRawParameterValue(onId)->load();
+        const auto tick = [&] { pump(); pump(); pump(); };
+        set(owner, onId, 1); tick();
+        const auto activeTitle = title->findColour(juce::TextButton::textColourOffId);
+        const auto activeSelectedTitle = title->findColour(juce::TextButton::textColourOnId);
+        const auto palette = themePalette(rack, skin == 1);
+        expect(activeSelectedTitle == palette.accent.contrasting(),
+               "selected tab text contrasts against its accent background in each theme");
+        expect(row->getViewArea().contains(reverbTab->getBounds()), "selected Reverb tab is accessible among multiple FX");
+        writeSnapshot(rack, output, juce::String("rack-reverb-tabs-") + skins[size_t(skin)]);
+        set(owner, onId, 0); tick();
+        expect(title->findColour(juce::TextButton::textColourOffId) != activeTitle
+                   && title->findColour(juce::TextButton::textColourOnId) != activeSelectedTitle,
+               "rack timer dims both ordinary and selected tab titles after host bypass changes");
+        expect(title->isEnabled() && title->getToggleState() && reverb->isVisible(),
+               "bypassed tab stays selectable with its selected inspector visible");
+        writeSnapshot(rack, output, juce::String("rack-reverb-bypassed-tabs-") + skins[size_t(skin)]);
+        set(owner, onId, savedOn); tick();
+        selectRackNode(rack, 100);
         row->setViewPosition(row->getViewedComponent()->getWidth(), 0);
         writeSnapshot(rack, output, juce::String("rack-row-end-") + skins[size_t(skin)]);
-        rack.setSize(row->getViewedComponent()->getWidth() + 12, MainBusFxRackPanel::preferredHeight);
+        rack.setSize(row->getViewedComponent()->getWidth() + 80, MainBusFxRackPanel::preferredHeight);
         row->setViewPosition(0, 0);
         writeSnapshot(rack, output, juce::String("rack-row-all-") + skins[size_t(skin)]);
         rack.setSize(904, MainBusFxRackPanel::preferredHeight);
@@ -319,7 +517,7 @@ void run(const juce::File& output) {
     expect(owner.setRoutingGraph(graph, error), "processor accepts rack topology");
     MainBusFxRackPanel rack(owner); rack.setBounds(0, 0, 904, 244);
     expect(find(rack, "mainBusFx12") && find(rack, "mainBusFx100") && find(rack, "mainBusFx101"), "same routing node cards");
-    auto* card = find(rack, "mainBusFx100");
+    auto* card = selectRackNode(rack, 100);
     auto* pitch = dynamic_cast<juce::Slider*>(find(*card, creativeParameterId(1, size_t(CreativeParameter::granularPitch))));
     expect(pitch != nullptr, "Granular uses real modulation-capable host control");
     pitch->setValue(5, juce::sendNotificationSync);
@@ -330,10 +528,10 @@ void run(const juce::File& output) {
         return routing.commitExternalGraphEdit(candidate, rejection);
     };
     rack.sync();
-    auto* handle = find(*card, "mainBusFxDrag");
+    auto* handle = find(*find(rack, "mainBusFxTab100"), "mainBusFxDrag");
     const auto now = juce::Time::getCurrentTime();
     const auto start = handle->getLocalBounds().getCentre().toFloat();
-    const auto finish = start.translated(-float(MainBusFxRackPanel::cardWidth + MainBusFxRackPanel::cardGap), 0);
+    const auto finish = start.translated(-float(MainBusFxRackPanel::tabWidth + MainBusFxRackPanel::tabGap), 0);
     const auto event = [&](juce::Point<float> point) {
         return juce::MouseEvent{juce::Desktop::getInstance().getMainMouseSource(), point,
             juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), 0, 0, 0, 0, 0,
@@ -341,7 +539,7 @@ void run(const juce::File& output) {
     };
     handle->mouseDown(event(start)); handle->mouseDrag(event(finish)); handle->mouseUp(event(finish)); pump();
     expect(mainBusFx::discover(owner.getRoutingGraph()).effects.front() == 100, "horizontal handle drag reorders actual routing nodes");
-    expect(find(rack, "mainBusFx100") == card, "drag retains card identity and attachments");
+    expect(find(rack, "mainBusFx100") == card && card->isVisible(), "drag retains selected inspector identity and attachments");
     const auto history = [&](const juce::String& text) {
         for (auto* child : routing.getChildren()) if (auto* button = dynamic_cast<juce::TextButton*>(child))
             if (button->getButtonText() == text) { expect(button->isEnabled(), "shared history action enabled"); button->onClick(); rack.sync(); return; }
@@ -358,12 +556,14 @@ void run(const juce::File& output) {
     expect(processorRouting::encode(owner.getRoutingGraph(), "Graph").toXmlString() == before, "refresh and layout do not publish topology");
     auto reordered = mainBusFx::move(owner.getRoutingGraph(), 100, 0);
     expect(owner.setRoutingGraph(reordered.graph, error), "external Routing edit accepted"); rack.sync();
-    expect(find(rack, "mainBusFx100") == card, "external reorder retains card and gesture bindings");
+    expect(find(rack, "mainBusFx100") == card && card->isVisible(), "external reorder retains selection and gesture bindings");
     expect(owner.parameters.getRawParameterValue(creativeParameterId(1, size_t(CreativeParameter::granularPitch)))->load() == 5, "topology does not rewind automation");
     auto branched = owner.getRoutingGraph(); branched.links.push_back({11, 13, 0, 0});
     expect(owner.setRoutingGraph(branched, error), "custom routing accepted"); rack.sync();
     expect(!find(rack, "mainBusAddFx")->isEnabled(), "ambiguous insertion disabled");
     expect(pitch->isEnabled(), "branch FX parameters remain editable");
+    expect(selectRackNode(rack, 101)->isVisible(), "ambiguous graphs still permit tab selection");
+    selectRackNode(rack, 100);
     juce::MemoryBlock state; owner.getStateInformation(state);
     expect(owner.setRoutingGraph(defaultGraph(), error), "change graph before recall"); rack.sync();
     owner.setStateInformation(state.getData(), int(state.getSize())); rack.sync();
@@ -376,8 +576,9 @@ void run(const juce::File& output) {
     auto editor = std::make_unique<Editor>(owner);
     expect(find(*editor, "mainBusFxRack") != nullptr, "Stack replaces fixed Chorale with rack");
     editor.reset();
+    tabSelectionLifecycleRegressions(owner);
     editorHitTestedWheelRegressions();
-    compactCardsAndScreenshots(owner, output);
+    tabbedInspectorsAndScreenshots(owner, output);
     std::cout << "Main Bus FX rack UI/bindings/recall tests passed\n";
 }
 }

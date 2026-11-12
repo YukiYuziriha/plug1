@@ -1,6 +1,8 @@
 #pragma once
 
 #include "DoublerPanel.h"
+#include "CreativeEffectPanel.h"
+#include "UtilityEffectPanel.h"
 #include <array>
 #include <memory>
 #include <stdexcept>
@@ -131,8 +133,85 @@ inline void sliderTextBoxFactory() {
     require(valueLabel->getCurrentTextEditor() == nullptr, "Cancelled entry left its editor open");
     control.setLookAndFeel(nullptr);
 }
+inline void fxHoveredSurfaces() {
+    auto owner = std::make_unique<Processor>();
+    for (int theme : {0, 1, 2}) for (int width : {280, 940}) {
+        juce::Component root, content;
+        PassiveViewport outer;
+        root.setSize(width + 20, 220); root.setVisible(true);
+        root.addAndMakeVisible(outer); outer.setBounds(root.getLocalBounds());
+        content.setSize(width, 1800); outer.setViewedComponent(&content, false);
+        CreativeEffectPanel creative(*owner, 1, CreativeKind::reverb);
+        UtilityEffectPanel utility(*owner, 2, UtilityKind::stereo);
+        ParameterChanges parameters(*owner);
+        const auto exercise = [&](auto& panel, const juce::String& knobId, const juce::String& toggleId,
+                                  const juce::String& mixId) {
+            panel.getProperties().set(vocalstackThemeProperty, theme);
+            panel.setNeon(theme == 1);
+            content.addAndMakeVisible(panel); panel.setBounds(0, 0, width, 180);
+            const auto find = [](auto&& self, juce::Component& component, const juce::String& id) -> juce::Component* {
+                if (component.getComponentID() == id) return &component;
+                for (auto* child : component.getChildren()) if (auto* found = self(self, *child, id)) return found;
+                return nullptr;
+            };
+            const auto dispatch = [&](juce::Component& surface, juce::Component& expected) {
+                outer.setViewPosition(0, 0);
+                const auto point = root.getLocalPoint(&surface, surface.getLocalBounds().getCentre());
+                auto* hit = root.getComponentAt(point);
+                require(hit == &expected, "FX wheel point missed its actual rendered target: " + expected.getComponentID());
+                auto* inner = hit->findParentComponentOfClass<juce::Viewport>();
+                require(inner && inner != &outer, "FX surface lost its nested viewport");
+                const auto before = inner->getViewPosition();
+                const auto focus = juce::Component::getCurrentlyFocusedComponent();
+                const auto local = hit->getLocalPoint(&root, point).toFloat();
+                const auto now = juce::Time::getCurrentTime();
+                const juce::MouseEvent event{juce::Desktop::getInstance().getMainMouseSource(), local,
+                    {}, 1, 0, 0, 0, 0, hit, hit, now, local, now, 0, false};
+                juce::MouseWheelDetails wheel{}; wheel.deltaY = before.y > 0 ? .3f : -.3f;
+                hit->mouseWheelMove(event, wheel);
+                require(inner->getViewPositionX() == before.x
+                            && (before.y > 0 ? inner->getViewPositionY() < before.y : inner->getViewPositionY() > before.y),
+                        "Hovered FX surface did not scroll its nearest viewport");
+                require(outer.getViewPosition() == juce::Point<int>(), "FX wheel also scrolled the Stack ancestor");
+                require(juce::Component::getCurrentlyFocusedComponent() == focus, "FX hover wheel captured host keys");
+                parameters.check();
+            };
+            for (const auto& id : {knobId, mixId}) {
+                auto* slider = dynamic_cast<juce::Slider*>(find(find, panel, id));
+                require(slider != nullptr, "Missing FX wheel slider: " + id);
+                require(slider->getSliderStyle() == (id == mixId ? juce::Slider::LinearHorizontal
+                                                               : juce::Slider::RotaryHorizontalVerticalDrag),
+                        "FX wheel fixture has the wrong control mode");
+                juce::Label* value = nullptr;
+                for (auto* child : slider->getChildren()) if (auto* label = dynamic_cast<juce::Label*>(child)) value = label;
+                require(value && slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
+                        "Missing value-above wheel target");
+                panel.revealParameter(id); dispatch(*value, *value);
+                require(value->getCurrentTextEditor() == nullptr, "Hover wheel opened numeric entry");
+                auto* row = slider->getParentComponent();
+                juce::Label* title = nullptr;
+                for (auto* child : row->getChildren())
+                    if (auto* label = dynamic_cast<juce::Label*>(child); label && label->isVisible()) title = label;
+                require(title && title->getY() >= slider->getBottom(), "Missing label-below wheel surface");
+                panel.revealParameter(id); dispatch(*title, *row);
+            }
+            auto* toggle = dynamic_cast<juce::Button*>(find(find, panel, toggleId));
+            require(toggle && toggle->getWidth() >= 24 && toggle->getWidth() <= 64
+                        && toggle->getHeight() >= 24 && toggle->getHeight() <= 28,
+                    "Missing usable compact FX toggle wheel target");
+            panel.revealParameter(toggleId); dispatch(*toggle, *toggle);
+            panel.setVisible(false);
+        };
+        exercise(creative, creativeParameterId(1, size_t(CreativeParameter::reverbDecay)),
+                 creativeParameterId(1, size_t(CreativeParameter::reverbFreeze)), "fx1Mix");
+        exercise(utility, utilityParameterId(2, size_t(UtilityParameter::stereoWidth)),
+                 utilityParameterId(2, size_t(UtilityParameter::stereoSwap)), "fx2Mix");
+        outer.setViewedComponent(nullptr, false);
+    }
+}
 inline void run() {
     sliderTextBoxFactory();
+    fxHoveredSurfaces();
     Fixture f;
     ParameterChanges parameters(*f.owner);
     const auto focus = juce::Component::getCurrentlyFocusedComponent();

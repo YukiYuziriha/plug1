@@ -1,12 +1,52 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.2 built, validated, packaged and installed
+## Current status — 1.9.3 built, validated, packaged and installed; push pending
 
 This section is the current roadmap. Release records below describe what shipped
 in each version; the original design at the end is historical, not a fresh task
 list. When requirements conflict, the latest release record takes precedence.
 
-### 1.9.2 — parameter graph restored; validated and installed
+### 1.9.3 — tabbed Main Bus FX and responsive effect editors
+
+UI-only scope: no audio DSP, host parameter IDs/counts, ranges or defaults change.
+
+- [x] Bump version to 1.9.3.
+- [x] Replace simultaneous Main Bus FX cards with tabs for the actual Routing
+  nodes; click a tab to show one full-width editor, not a duplicate processor.
+- [x] Drag tabs to reorder through Routing's shared one-step Undo/Redo path;
+  retain per-instance bypass/remove controls and the + FX add workflow.
+- [x] Retain surviving editor instances and scroll state across selection and
+  reorder; automatically reveal the selected tab when the strip overflows.
+- [x] Reflow fixed compact knobs responsively, with numeric values above and names
+  below, horizontal Mix sliders and compact two-state controls.
+- [x] Use graph-left/controls-right layouts in wide Creative, Tone and Utility
+  editors, with stacked layouts at narrower widths.
+- [x] Extend editor and rack UI regression coverage. Initial editor run passed
+  61/67: layout classification mistook hidden Utility sliders for Mix rows, and
+  old geometry assertions needed updating. Fixed both; rerun passed 67/67,
+  then all 34 focused CTests passed in
+  177.04 s, including editor groups and rack UI. Release build succeeded.
+- [x] Independent static review found no blockers.
+- [x] Following image inspection, give the rack its own `PanelStyle` to address
+  standalone tab On ellipsis/flat-theme rendering.
+- [x] After the final `PanelStyle` fix, full Release build succeeded and all
+  34 focused CTests passed in 176.42 s, including 67 editor groups and rack UI.
+- [x] Review rack Reverb Neon, EQ Neon, Granular Spectral and Routing Reverb
+  images; compact tab On is now readable. Add tracked `VocalStack-FX-Tabs.png`.
+- [x] Copy Release CLAP/VST3 to tracked `Windows-x64`; record package SHA256 hashes
+  in the validation record. Packaged CLAP smoke passed 2087 automatable parameters
+  at original indices, stereo 48 kHz, mono-to-stereo 44.1 kHz and latency 1344 samples.
+- [x] Run `source/build/install-release.ps1`: both per-user CLAP and VST3 reported
+  **Installed and SHA256 verified**.
+- [ ] Complete release commit/push after final validation and package refresh.
+- [ ] Actual Bitwig visual/listening/transport/automation/recall and native FPS checks.
+
+See [Release 1.9.3 validation](docs/Release-1.9.3-Validation.md) for evidence
+and package hashes. The long legacy DSP suite was not rerun; actual host checks remain
+unverified. **1.9.3 is now installed; 1.9.2's record remains historical and does not
+validate 1.9.3.** Commit/push remain for the coordinator.
+
+### Historical 1.9.2 — parameter graph restored; validated and installed
 
 - [x] Version bumped to 1.9.2; presentation-only change, no DSP changes.
 - [x] Restore `CreativeEffectVisual`'s original-style fixed overlapping parameter

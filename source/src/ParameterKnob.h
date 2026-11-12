@@ -307,7 +307,7 @@ public:
         slider.setName(title); slider.setTitle(title);
         slider.setLookAndFeel(&style);
         slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 68, 19);
+        slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 68, 19);
         addAndMakeVisible(slider);
         link = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner.parameters, id, slider);
         if (auto* parameter = owner.parameters.getParameter(id))
@@ -344,7 +344,7 @@ public:
     }
     void setLinear(bool value) {
         slider.setSliderStyle(value ? juce::Slider::LinearHorizontal : juce::Slider::RotaryHorizontalVerticalDrag);
-        slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 68, value ? 18 : 19);
+        slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 68, value ? 18 : 19);
         resized();
     }
     ~ParameterKnob() override { slider.setLookAndFeel(nullptr); }
@@ -352,7 +352,7 @@ public:
         forwardPassiveWheel(*this, event, wheel);
     }
     void resized() override {
-        auto area = getLocalBounds(); label.setBounds(area.removeFromTop(17)); slider.setBounds(area);
+        auto area = getLocalBounds(); label.setBounds(area.removeFromBottom(20)); slider.setBounds(area);
     }
     void setNeon(bool neon) {
         const auto p = themePalette(*this, neon);

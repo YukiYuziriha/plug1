@@ -14,6 +14,7 @@
 #include "HoverWheelRegressionTests.h"
 #include "ToneCardLayoutTests.h"
 #include "UtilityPanelTests.h"
+#include "CreativePanelLayoutTests.h"
 #include "RackUndoIntegrationTests.h"
 
 #include <algorithm>
@@ -508,10 +509,11 @@ void checkDrawerControls(Processor& owner, juce::Component& parent, int& sliders
             expect(parent.getLocalBounds().contains(child->getBounds()), "Drawer child outside parent: " + child->getName());
         if (auto* slider = dynamic_cast<juce::Slider*>(child)) {
             ++sliders;
-            expect(slider->getSliderStyle() == (stackSliders ? juce::Slider::LinearHorizontal
-                                                            : juce::Slider::RotaryHorizontalVerticalDrag),
-                   "Only Stack Lead/voice controls should use horizontal sliders");
             const auto id = slider->getComponentID();
+            const bool linear = stackSliders || id.endsWith("Mix");
+            expect(slider->getSliderStyle() == (linear ? juce::Slider::LinearHorizontal
+                                                      : juce::Slider::RotaryHorizontalVerticalDrag),
+                   "Stack voice controls and standalone FX Mix use horizontal sliders");
             auto& p = parameter(owner, id);
             slider->setValue(p.getNormalisableRange().end, juce::sendNotificationSync);
             expectNear(parameterValue(owner, id), p.getNormalisableRange().end, "Drawer slider binding: " + id);
@@ -682,6 +684,11 @@ void editorSkin(int theme) {
     });
     expect(chorale != nullptr, "Main Bus FX rack is missing its canonical Chorale card");
     checkDrawerControls(owner, *chorale, choraleSliders, choraleButtons);
+        auto* choraleTab = vocalstack::toneUiTests::find<juce::Component>(*rack, [](auto& child) {
+            return child.getComponentID() == "mainBusFxTab12";
+        });
+        expect(choraleTab != nullptr, "Main Bus Chorale node tab missing");
+        checkDrawerControls(owner, *choraleTab, choraleSliders, choraleButtons);
     expect(advancedSliders == 24 && advancedButtons == 3, "Fresh Stack must contain Lead and two complete eight-slider voice cards");
     expect(choraleSliders == 2 && choraleButtons == 1, "Main Bus Chorale knobs or host-bound switch missing");
     auto* addVoice = findButton(*editor, "+ Add voice");
@@ -771,7 +778,7 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 66> tests{{
+    const std::array<Test, 67> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -798,6 +805,7 @@ int main(int argc, char** argv) {
         }},
         {"Three-theme state, legacy migration and preset isolation", vocalstack::updateUiTests::themeState},
         {"All utility inspectors in all three themes", vocalstack::updateUiTests::utilityInspectors},
+                {"Responsive Creative controls, compact switches and scroll anchors", vocalstack::creativePanelLayoutTests::run},
         {"Half-speed relative sliders across sizes, skew and themes", vocalstack::updateUiTests::halfSpeedSliders},
         {"Slider selection, feedback, alignment, sensitivity and knob modes", vocalstack::sliderRenderingTests::run},
                 {"Hovered controls scroll nearest viewport without parameter edits", vocalstack::hoverWheelRegressionTests::run},

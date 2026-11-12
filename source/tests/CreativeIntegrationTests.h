@@ -417,7 +417,10 @@ inline void inspectorControls(Processor& p, CreativeEffectPanel& panel, Creative
             return c.getComponentID() == id && (dynamic_cast<const juce::Slider*>(&c) || dynamic_cast<const juce::Button*>(&c));
         });
         require(control != nullptr && control->isShowing(), "Missing visible creative control: " + id);
-        require(control->getWidth() >= 80 && control->getHeight() >= 20, "Creative control clipped at minimum routing width: " + id);
+        require(control->getWidth() >= (discrete ? 48 : 80) && control->getHeight() >= 20,
+                        "Creative control clipped at minimum routing width: " + id);
+                if (discrete) require(control->getWidth() <= 64 && control->getHeight() >= 24,
+                                      "Creative two-state control must stay compact and usable: " + id);
         require(control->getParentComponent()->getLocalBounds().contains(control->getBounds()), "Creative control outside its row: " + id);
         if (discrete) {
             auto* button = dynamic_cast<juce::Button*>(control); require(button != nullptr, "Discrete creative control is not a button");

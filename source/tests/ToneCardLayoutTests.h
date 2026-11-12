@@ -18,6 +18,10 @@ inline void checkContent(ToneEffectPanel& panel) {
     auto* content = view.getViewedComponent();
     ui::require(content != nullptr, "Tone card has no content");
     ui::require(content->getWidth() <= view.getViewArea().getWidth(), "Tone card needs horizontal scrolling");
+    const bool wide = panel.getWidth() >= 620;
+    const int inner = content->getWidth() - 16;
+    const int controlWidth = wide ? inner - inner * 44 / 100 - 12 : inner;
+    const int controlX = wide ? 8 + inner * 44 / 100 + 12 : 8;
     std::vector<juce::Component*> visible;
     for (auto* child : content->getChildren()) {
         if (!child->isVisible()) continue;
@@ -46,10 +50,21 @@ inline void checkContent(ToneEffectPanel& panel) {
                             + " content=" + content->getLocalBounds().toString()
                             + " panel=" + panel.getLocalBounds().toString());
         }
+        if (auto* button = dynamic_cast<juce::Button*>(child); button && button->getClickingTogglesState())
+            ui::require(button->getWidth() >= 48 && button->getWidth() <= 64,
+                        "Two-state control expanded into a full row");
         if (auto* choice = dynamic_cast<juce::ComboBox*>(child))
             ui::require(choice->getWidth() >= 140, "Compact mode is not a readable full-width row");
         if (auto* knob = dynamic_cast<toneui::Control*>(child)) {
-            ui::require(knob->getWidth() >= 76 && knob->getHeight() >= 100, "Compact knob is squeezed");
+            ui::require(knob->getX() >= controlX, "Wide Tone control escaped its right-hand group");
+            const bool linear = knob->slider.getSliderStyle() == juce::Slider::LinearHorizontal;
+            if (linear) {
+                ui::require(knob->getWidth() == controlWidth && knob->getHeight() == 62,
+                            "Mix must be a standalone horizontal slider row");
+            } else {
+                ui::require(knob->getWidth() == 78 && knob->getHeight() == 100,
+                            "Responsive knob must retain its compact fixed size");
+            }
             bool valueFound = false;
             for (auto* part : knob->slider.getChildren()) {
                 if (auto* label = dynamic_cast<juce::Label*>(part); label && label->isVisible()) {
@@ -62,19 +77,42 @@ inline void checkContent(ToneEffectPanel& panel) {
             ui::require(valueFound, "Compact knob lost its value label");
         }
     }
+    int knobCount = 0, firstY = content->getHeight(), lastY = 0;
+    for (auto* child : visible) {
+        auto* knob = dynamic_cast<toneui::Control*>(child);
+        if (!knob || knob->slider.getSliderStyle() == juce::Slider::LinearHorizontal) continue;
+        ++knobCount;
+        firstY = juce::jmin(firstY, knob->getY());
+        lastY = juce::jmax(lastY, knob->getY());
+    }
+    const int columns = juce::jmax(1, (controlWidth + 4) / 82);
+    if (knobCount > 0)
+        ui::require(lastY - firstY == ((knobCount - 1) / columns) * 104,
+                    "Tone knobs did not rewrap to use the available inspector width");
     ui::passive(panel);
 }
 
 inline void narrowLayouts() {
     auto owner = std::make_unique<Processor>();
     for (auto theme : {Theme::device, Theme::neon, Theme::spectral}) {
-        for (int width : {190, 204, 220}) {
+        for (int width : {190, 204, 220, 280, 320, 400, 560, 619, 620, 640, 800, 860}) {
             for (int kind : {6, 7, 8}) {
                 ToneEffectPanel panel(*owner, 1, static_cast<NodeType>(kind));
                 panel.getProperties().set(vocalstackThemeProperty, int(theme));
                 panel.setNeon(theme == Theme::neon);
-                panel.setSize(width, 240);
+                panel.setSize(width, 280);
                 checkContent(panel);
+                if (width >= 620) {
+                    auto* plot = ui::find<toneui::FxMonitorView>(panel, [](auto&) { return true; });
+                    auto* eq = ui::find<toneui::EqGraph>(panel, [](auto&) { return true; });
+                    auto* left = eq ? static_cast<juce::Component*>(eq) : static_cast<juce::Component*>(plot);
+                    ui::require(left != nullptr && left->getX() == 8
+                                && left->getWidth() < viewport(panel).getViewedComponent()->getWidth() / 2,
+                                "Wide Tone plot still spans a full-width column");
+                    if (width == 860)
+                        ui::require(viewport(panel).getViewedComponent()->getHeight() <= 280,
+                                    "860px Tone inspector wastes its short wide layout on vertical scrolling");
+                }
                 viewport(panel).setViewPosition(0, 0);
                 const auto image = ui::render(panel);
                 ui::require(image.isValid(), "Compact Tone card failed to render");
@@ -107,8 +145,16 @@ inline void narrowLayouts() {
                 checkContent(panel);
                 panel.setSize(400, ToneEffectPanel::preferredHeight);
                 checkContent(panel);
-                ui::require(panel.preferredContentHeight(400) == ToneEffectPanel::preferredHeight,
-                            "Broad inspector preferred height changed");
+                ui::require(panel.preferredContentHeight(400) >= ToneEffectPanel::preferredHeight,
+                            "Broad inspector lost its useful plot/control height");
+                auto& view = viewport(panel);
+                view.setViewPosition(0, 120);
+                const int oldY = view.getViewPositionY();
+                panel.setSize(860, 240);
+                ui::require(view.getViewPositionY() == juce::jmin(oldY,
+                                view.getViewedComponent()->getHeight() - view.getViewArea().getHeight()),
+                            "Widening Tone inspector reset its scroll position");
+                checkContent(panel);
             }
         }
     }

@@ -67,14 +67,19 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                 combo.onChange = [this] { panel.editValue(id, float(combo.getSelectedId() - 1)); };
             } else if (discrete) {
                 toggle.setModulationOwner(panel.owner); toggle.setComponentID(id);
-                toggle.setButtonText(name); toggle.setClickingTogglesState(true);
+                toggle.setName(name); toggle.setTooltip(name);
+                toggle.setButtonText(field == size_t(UtilityParameter::stereoSwap) ? "Swap"
+                    : field == size_t(UtilityParameter::stereoInvertLeft) ? "Inv L"
+                    : field == size_t(UtilityParameter::stereoInvertRight) ? "Inv R" : name);
+                toggle.setClickingTogglesState(true);
                 toggle.onClick = [this] { panel.editValue(id, toggle.getToggleState() ? 1.f : 0.f); };
                 addAndMakeVisible(toggle); label.setVisible(false);
             } else {
                 slider.owner = &panel.owner; slider.bindModulation(panel.owner, id);
                 slider.setName(name); slider.setLookAndFeel(&style);
-                slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-                slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 85, 21);
+                slider.setSliderStyle(field == utilityParameterCount ? juce::Slider::LinearHorizontal
+                                                                   : juce::Slider::RotaryHorizontalVerticalDrag);
+                slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 76, 21);
                 addAndMakeVisible(slider);
                 link = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(panel.owner.parameters, id, slider);
                 if (auto* parameter = panel.owner.parameters.getParameter(id))
@@ -117,10 +122,15 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         void resized() override {
             auto b = getLocalBounds().reduced(2, 1);
             label.setJustificationType(juce::Justification::centred);
-            label.setBounds(b.removeFromTop(17));
-            slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, juce::jmin(85, b.getWidth()), 21);
-            slider.setBounds(b); combo.setBounds(b.withHeight(24));
-            toggle.setBounds(getLocalBounds().reduced(2, 8));
+            if (combo.isVisible()) {
+                label.setBounds(b.removeFromTop(17));
+                combo.setBounds(b.withHeight(24));
+            } else {
+                label.setBounds(b.removeFromBottom(17));
+                slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, juce::jmin(76, b.getWidth()), 21);
+                slider.setBounds(b);
+            }
+            toggle.setBounds(getLocalBounds().reduced(0, 2));
         }
         void setNeon(bool neon) {
             const auto c = themePalette(*this, neon);
@@ -581,30 +591,48 @@ public:
     }
     void paint(juce::Graphics& g) override { g.fillAll(themePalette(*this, neon).panel); }
     void resized() override {
+        const auto position = viewport.getViewPosition();
         viewport.setBounds(getLocalBounds());
         const int width = juce::jmax(1, getWidth() - viewport.getScrollBarThickness());
         const int inner = juce::jmax(1, width - 16);
+        const bool wide = getWidth() >= 620;
+        const int visualWidth = wide ? inner * 44 / 100 : inner;
+        const int controlX = wide ? 8 + visualWidth + 12 : 8;
+        const int controlWidth = wide ? inner - visualWidth - 12 : inner;
         int y = 8;
         const int visualHeight = isFilter() ? 238 : kind == UtilityKind::gate ? 110 : 72;
-        visual.setBounds(8, y, inner, visualHeight); y += visualHeight + 8;
+        visual.setBounds(8, y, visualWidth, visualHeight); y += visualHeight + 8;
         const int overviewHeight = juce::jmax(54, int(std::ceil(
             juce::GlyphArrangement::getStringWidth(overview.getFont(), overview.getText())
-                / double(juce::jmax(1, inner - 8)))) * 16 + 8);
-        overview.setBounds(8, y, inner, overviewHeight); y += overviewHeight + 6;
-        const int columns = juce::jmax(1, inner / 76);
-        const int cell = inner / columns;
-        int column = 0;
+                / double(juce::jmax(1, visualWidth - 8)))) * 16 + 8);
+        overview.setBounds(8, y, visualWidth, overviewHeight); y += overviewHeight + 6;
+        const int visualBottom = y;
+        if (wide) y = 8;
+        constexpr int knobWidth = 78, knobHeight = 100, gap = 4;
+        int x = controlX, rowHeight = 0;
+        const auto flush = [&] {
+            if (rowHeight != 0) { y += rowHeight + gap; x = controlX; rowHeight = 0; }
+        };
         for (const auto& row : rows) {
-            if (row->combo.isVisible()) {
-                if (column != 0) { y += 100; column = 0; }
-                row->setBounds(8, y, inner, 46); y += 48;
+            if (row->combo.isVisible() || (row->slider.isVisible()
+                            && row->slider.getSliderStyle() == juce::Slider::LinearHorizontal)) {
+                flush();
+                const int height = row->combo.isVisible() ? 46 : 62;
+                row->setBounds(controlX, y, controlWidth, height); y += height + gap;
             } else {
-                row->setBounds(8 + column * cell, y, cell, 98);
-                if (++column == columns) { y += 100; column = 0; }
+                const bool toggle = row->toggle.isVisible();
+                const int cellWidth = toggle ? 64 : knobWidth;
+                const int cellHeight = toggle ? 28 : knobHeight;
+                // Keep switches out of tall knob rows, but let adjacent switches share a row.
+                if (rowHeight != 0 && (rowHeight != cellHeight || x + cellWidth > controlX + controlWidth)) flush();
+                row->setBounds(x, y, juce::jmin(controlWidth, cellWidth), cellHeight);
+                x += cellWidth + gap;
+                rowHeight = cellHeight;
             }
         }
-        if (column != 0) y += 100;
-        content.setSize(width, juce::jmax(getHeight(), y + 8));
+        flush();
+        content.setSize(width, juce::jmax(getHeight(), juce::jmax(y, visualBottom) + 8));
+        viewport.setViewPosition(position);
     }
 private:
     bool isFilter() const { return kind == UtilityKind::xpFilter || kind == UtilityKind::synthFilter; }

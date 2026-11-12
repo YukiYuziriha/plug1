@@ -281,7 +281,9 @@ inline void utilityInspectors() {
                 }
             } else if (d.discrete) {
                 auto* toggle = ui::find<juce::Button>(*panel, [&](auto& c) { return c.getComponentID() == id; });
-                ui::require(toggle != nullptr, "Missing utility toggle: " + id);
+                ui::require(toggle && toggle->isShowing() && toggle->getWidth() >= 24 && toggle->getWidth() <= 64
+                                && toggle->getHeight() >= 24 && toggle->getHeight() <= 28,
+                            "Missing or unusable compact utility toggle: " + id);
                 for (const bool on : {true, false}) {
                     toggle->setToggleState(on, juce::dontSendNotification); toggle->onClick();
                     ui::near(ui::read(*owner, id), float(on), "Utility toggle write: " + id);
@@ -307,9 +309,13 @@ inline void utilityInspectors() {
         }
         constexpr std::array<int, 5> counts{1, 5, 6, 4, 5};
         ui::require(controls == counts[kind], "Utility inspector coverage count changed");
+        panel->revealParameter("fx1Mix");
         auto& mix = ui::slider(*panel, "fx1Mix");
+        ui::require(mix.getSliderStyle() == juce::Slider::LinearHorizontal, "Utility Mix must be linear");
+        const auto mixBefore = ui::read(*owner, "fx1Mix");
         const auto mixTrack = mix.getLookAndFeel().getSliderLayout(mix).sliderBounds.toFloat();
         ui::drag(mix, mixTrack.getCentre(), mixTrack.getCentre().translated(-mixTrack.getWidth() * .3f, 0));
+        ui::require(ui::read(*owner, "fx1Mix") != mixBefore, "Utility dry/wet drag did not edit its parameter");
         ui::near(ui::read(*owner, "fx1Mix"), mix.getValue(), "Utility dry/wet binding");
         ui::require(owner->getRoutingGraph().nodes.size() == wiring, "Utility edit changed routing");
         gestures.balanced("Utility inspector"); ui::passive(*editor);
@@ -464,8 +470,60 @@ inline void creativeVisuals() {
     }
 }
 
+inline void rackTabs() {
+    for (int theme = 0; theme < 3; ++theme) {
+        auto owner = std::make_unique<Processor>(); owner->setSkin(theme);
+        Graph graph{{{1, NodeType::lead}, {100, NodeType::reverb}, {101, NodeType::gain}, {13, NodeType::output}},
+                    {{1, 100, 0, 0}, {100, 101, 0, 0}, {101, 13, 0, 0}}};
+        juce::String error; ui::require(owner->setRoutingGraph(graph, error), error);
+        std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor());
+        editor->addToDesktop(0); editor->setVisible(true);
+        auto* rack = ui::find<juce::Component>(*editor, [](auto& c) { return c.getComponentID() == "mainBusFxRack"; });
+        ui::require(rack != nullptr, "Missing Stack FX rack");
+        const auto select = [&](int id) -> juce::Component& {
+            auto* tab = ui::find<juce::Component>(*rack, [&](auto& c) {
+                return c.getComponentID() == "mainBusFxTab" + juce::String(id);
+            });
+            ui::require(tab != nullptr, "Missing FX tab");
+            auto* handle = ui::find<juce::TextButton>(*tab, [](auto& b) { return b.getComponentID() == "mainBusFxDrag"; });
+            ui::require(handle && bool(handle->onClick), "Missing FX tab selection action");
+            const auto focus = juce::Component::getCurrentlyFocusedComponent();
+            handle->onClick();
+            auto* body = ui::find<juce::Component>(*rack, [&](auto& c) {
+                return c.getComponentID() == "mainBusFx" + juce::String(id);
+            });
+            auto* other = ui::find<juce::Component>(*rack, [&](auto& c) {
+                return c.getComponentID() == "mainBusFx" + juce::String(id == 100 ? 101 : 100);
+            });
+            ui::require(body && body->isShowing() && other && !other->isVisible() && handle->getToggleState(),
+                        "FX tabs must show exactly the selected body");
+            ui::require(body->getWidth() >= rack->getWidth() - 12 && rack->getLocalBounds().contains(body->getBounds()),
+                        "Selected FX body must use the full rack width without clipping");
+            ui::require(juce::Component::getCurrentlyFocusedComponent() == focus, "FX selection captured host keys");
+            return *body;
+        };
+        auto& reverb = select(100);
+        juce::Component::SafePointer<juce::Slider> retained(&ui::slider(reverb, "fx1Mix"));
+        select(101);
+        write(*owner, "fx1Mix", 37);
+        auto& reopened = select(100);
+        ui::require(retained && &ui::slider(reopened, "fx1Mix") == retained.getComponent(),
+                    "Tab switching replaced the retained Mix slider");
+        int mixes = 0;
+        const auto count = [&](auto&& self, juce::Component& component) -> void {
+            if (dynamic_cast<juce::Slider*>(&component) && component.getComponentID() == "fx1Mix") ++mixes;
+            for (auto* child : component.getChildren()) self(self, *child);
+        };
+        count(count, reopened);
+        ui::require(mixes == 1 && retained->getSliderStyle() == juce::Slider::LinearHorizontal,
+                    "Selected FX must retain one linear Mix slider, not a duplicate rotary control");
+        waitFor([&] { return std::abs(retained->getValue() - 37) < .01; }, "Hidden FX lost its host binding");
+    }
+}
+
 // Render the actual editor, with the selected inspector in situ, not a mock panel.
 inline void screenshots() {
+    rackTabs();
     constexpr std::array<NodeType, 4> types{NodeType::xpFilter, NodeType::synthFilter, NodeType::reverb, NodeType::waveshaper};
     constexpr std::array<const char*, 4> names{"xp-filter", "synth-filter", "reverb", "waveshaper"};
     for (int theme = 0; theme < 3; ++theme) {

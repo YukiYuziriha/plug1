@@ -172,8 +172,9 @@ inline void controlModes() {
     auto owner = std::make_unique<Processor>();
     const auto check = [](auto&& self, juce::Component& component, bool linear) -> int {
         int count = 0;
-        if (auto* slider = dynamic_cast<juce::Slider*>(&component)) {
-            toneUiTests::require(slider->getSliderStyle() == (linear ? juce::Slider::LinearHorizontal
+        if (auto* slider = dynamic_cast<juce::Slider*>(&component); slider && slider->isVisible()) {
+            const bool horizontal = linear || slider->getComponentID() == "fx1Mix";
+            toneUiTests::require(slider->getSliderStyle() == (horizontal ? juce::Slider::LinearHorizontal
                 : juce::Slider::RotaryHorizontalVerticalDrag), "Wrong parameter control mode: " + slider->getComponentID());
             toneUiTests::require(!slider->getWantsKeyboardFocus() && !slider->getMouseClickGrabsKeyboardFocus(),
                 "Parameter control captured host keys");
@@ -191,18 +192,51 @@ inline void controlModes() {
         stack.setSize(174, 278); stack.setCompact(compact);
         toneUiTests::require(check(check, stack, true) == 8, "Stack voice lost a slider");
     }
-    for (int width : {280, 560}) {
+    const auto checkPanelLayout = [](juce::Component& panel) {
+        auto& mix = toneUiTests::slider(panel, "fx1Mix");
+        toneUiTests::require(mix.getSliderStyle() == juce::Slider::LinearHorizontal,
+            "Dry/wet Mix must remain linear");
+        const auto visit = [](auto&& self, juce::Component& component) -> void {
+            if (auto* slider = dynamic_cast<juce::Slider*>(&component); slider && slider->isVisible()) {
+                toneUiTests::require(slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
+                    "FX numeric value must be above its control");
+                const auto layout = slider->getLookAndFeel().getSliderLayout(*slider);
+                toneUiTests::require(!layout.textBoxBounds.isEmpty()
+                        && layout.textBoxBounds.getBottom() <= layout.sliderBounds.getY(),
+                    "FX value overlaps its slider");
+                auto* row = slider->getParentComponent();
+                auto* title = toneUiTests::find<juce::Label>(*row, [&](auto& label) {
+                    return label.getParentComponent() == row && label.isVisible();
+                });
+                toneUiTests::require(title && title->getY() >= slider->getBottom()
+                        && row->getLocalBounds().contains(title->getBounds()),
+                    "FX parameter title must be below, without clipping");
+            }
+            if (auto* button = dynamic_cast<juce::Button*>(&component);
+                button && button->isVisible() && button->getComponentID().startsWith("fx1")) {
+                toneUiTests::require(button->getWidth() >= 24 && button->getWidth() <= 64
+                        && button->getHeight() >= 24 && button->getHeight() <= 28
+                        && button->getParentComponent()->getLocalBounds().contains(button->getBounds()),
+                    "FX toggle must be compact, usable and unclipped");
+            }
+            for (auto* child : component.getChildren()) self(self, *child);
+        };
+        visit(visit, panel);
+    };
+    for (int width : {280, 560, 940}) {
         for (auto kind : {CreativeKind::delay, CreativeKind::reverb, CreativeKind::compressor,
                           CreativeKind::bitcrusher, CreativeKind::granular}) {
             CreativeEffectPanel creative(*owner, 1, kind);
             creative.setSize(width, 600);
-            toneUiTests::require(check(check, creative, false) > 0, "Creative controls missing");
+            toneUiTests::require(check(check, creative, false) > 1, "Creative controls missing");
+            checkPanelLayout(creative);
         }
         for (auto kind : {UtilityKind::gain, UtilityKind::stereo, UtilityKind::gate,
                           UtilityKind::xpFilter, UtilityKind::synthFilter}) {
             UtilityEffectPanel utility(*owner, 1, kind);
             utility.setSize(width, 600);
-            toneUiTests::require(check(check, utility, false) > 0, "Utility controls missing");
+            toneUiTests::require(check(check, utility, false) > 1, "Utility controls missing");
+            checkPanelLayout(utility);
         }
         ModulationPanel modulation(*owner);
         modulation.setSize(width, 600);

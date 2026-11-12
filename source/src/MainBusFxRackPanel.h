@@ -7,11 +7,12 @@
 
 namespace vocalstack {
 
-// Host-bound cards over the processor's graph. No private graph/FX-slot pool.
+// Host-bound tabs over the processor's graph. No private graph/FX-slot pool.
 class MainBusFxRackPanel final : public juce::Component, private juce::Timer {
 public:
     explicit MainBusFxRackPanel(Processor& processor) : owner(processor) {
         setName("Main Bus FX rack"); setComponentID("mainBusFxRack");
+                setLookAndFeel(&panelStyle);
         add.setButtonText("+ FX"); add.setComponentID("mainBusAddFx");
         add.onClick = [this] { showAddMenu(); };
         addAndMakeVisible(add); addAndMakeVisible(status); addAndMakeVisible(viewport);
@@ -21,13 +22,16 @@ public:
         status.setFont(juce::Font(juce::FontOptions(11.f)));
         detail::passiveControl(*this); sync(); startTimerHz(12);
     }
-    // Voice-sized cards with fixed headers and independently scrolling full inspectors.
-    static constexpr int cardWidth = 204, cardGap = 8, preferredHeight = 340;
+    ~MainBusFxRackPanel() override {
+            stopTimer(); viewport.setViewedComponent(nullptr, false); setLookAndFeel(nullptr);
+        }
+    static constexpr int tabWidth = 188, tabGap = 4, preferredHeight = 340;
     // The editor supplies RoutingPanel's validated, one-step graph undo path.
     std::function<bool(const Graph&, juce::String&)> commitGraph;
     void setNeon(bool value) {
         neon = value;
         const auto p = themePalette(*this, neon);
+        panelStyle.setPalette(p);
         status.setColour(juce::Label::textColourId, p.secondary);
         add.setColour(juce::TextButton::buttonColourId, p.inset);
         add.setColour(juce::TextButton::textColourOffId, p.text);
@@ -40,14 +44,33 @@ public:
         for (auto id : segment.effects) if (const auto* node = mainBusFx::find(graph, id))
             signature += juce::String(id) + ":" + juce::String(int(node->type)) + ";";
         if (signature != cardSignature) {
+            const auto oldSelection = selectedId;
+            std::vector<uint32_t> previousIds;
+            for (auto& card : cards) previousIds.push_back(card->model.id);
+            size_t oldIndex = 0;
+            for (size_t i = 0; i < cards.size(); ++i) if (cards[i]->model.id == selectedId) oldIndex = i;
             auto previous = std::move(cards); cards.clear();
             for (auto id : segment.effects) if (const auto* node = mainBusFx::find(graph, id)) {
                 std::unique_ptr<Card> card;
                 for (auto& old : previous) if (old && old->model.id == id && old->model.type == node->type) { card = std::move(old); break; }
                 if (!card) card = std::make_unique<Card>(*this, *node);
-                content.addAndMakeVisible(*card); cards.push_back(std::move(card));
+                content.addAndMakeVisible(card->tab);
+                addChildComponent(*card);
+                cards.push_back(std::move(card));
             }
-            cardSignature = signature; resized(); setNeon(neon);
+            // Keep selection by node identity, including on external reorder/Undo.
+            selectedId = 0;
+            for (auto& card : cards) if (card->model.id == oldSelection) selectedId = oldSelection;
+            // An insertion (including one made in Routing) opens the new instance.
+            // Initial discovery opens the first tab rather than jumping to the far end.
+            if (previousIds.empty()) {
+                if (!cards.empty()) selectedId = cards.front()->model.id;
+            } else for (auto& card : cards)
+                if (std::find(previousIds.begin(), previousIds.end(), card->model.id) == previousIds.end())
+                    selectedId = card->model.id;
+            if (selectedId == 0 && !cards.empty()) selectedId = cards[juce::jmin(oldIndex, cards.size() - 1)]->model.id;
+            for (auto& old : previous) if (old) old->cancelEditing();
+            cardSignature = signature; updateSelection(); resized(); setNeon(neon);
         }
         const auto capacity = mainBusFx::capacityProblem(graph);
         const auto reason = !segment.editable() ? segment.unavailable : !commitGraph
@@ -56,9 +79,10 @@ public:
         add.setTooltip(juce::String(reason));
         for (auto& card : cards) {
             card->remove.setEnabled(segment.editable() && bool(commitGraph));
-            card->handle.setEnabled(segment.editable() && bool(commitGraph));
+            card->canReorder = segment.editable() && bool(commitGraph);
+            card->syncTabState();
             card->remove.setTooltip(segment.editable() ? "Remove this routing node (Undo in Routing)" : juce::String(segment.unavailable));
-            card->handle.setTooltip(segment.editable() ? "Drag horizontally to reorder this FX before Output trim" : juce::String(segment.unavailable));
+            card->handle.setTooltip(card->canReorder ? "Select FX; drag horizontally to reorder (Undo in Routing)" : "Select FX / " + juce::String(reason));
         }
         status.setText(lastError.isNotEmpty() ? lastError : reason.empty()
             ? "MAIN BUS FX  /  same nodes as Routing  /  before Output trim"
@@ -66,13 +90,21 @@ public:
     }
     void resized() override {
         auto area = getLocalBounds().reduced(6);
-        auto header = area.removeFromTop(28); add.setBounds(header.removeFromRight(64)); status.setBounds(header);
-        viewport.setBounds(area);
-        const int total = juce::jmax(0, int(cards.size()) * (cardWidth + cardGap) - cardGap);
-        const int height = juce::jmax(0, area.getHeight() - viewport.getScrollBarThickness());
-        content.setSize(juce::jmax(area.getWidth(), total), height);
+        status.setBounds(area.removeFromBottom(18));
+        auto header = area.removeFromTop(42);
+        add.setBounds(header.removeFromRight(64).reduced(2, 4));
+        header.removeFromRight(4);
+        viewport.setBounds(header);
+        const int total = juce::jmax(0, int(cards.size()) * (tabWidth + tabGap) - tabGap);
+        const int height = juce::jmax(0, header.getHeight() - viewport.getScrollBarThickness());
+        content.setSize(juce::jmax(header.getWidth(), total), height);
         int x = 0;
-        for (auto& card : cards) { card->setBounds(x, 0, cardWidth, height); x += cardWidth + cardGap; }
+        for (auto& card : cards) {
+            card->tab.setBounds(x, 0, tabWidth, height);
+            card->setBounds(area);
+            x += tabWidth + tabGap;
+        }
+        revealSelection();
     }
     void paint(juce::Graphics& g) override {
         const auto p = themePalette(*this, neon); g.setColour(p.panel); g.fillRect(getLocalBounds());
@@ -88,44 +120,66 @@ private:
     class Card final : public juce::Component {
         class Handle final : public juce::TextButton {
         public:
-            explicit Handle(Card& c) : card(c) { setButtonText("::"); setComponentID("mainBusFxDrag"); }
+            explicit Handle(Card& c) : card(c) {
+                setComponentID("mainBusFxDrag");
+                setTriggeredOnMouseDown(false);
+                onClick = [this] { card.rack.select(card.model.id); };
+            }
             void mouseDown(const juce::MouseEvent& e) override {
+                if (!e.mods.isLeftButtonDown()) return;
+                card.rack.select(card.model.id);
                 startX = e.getEventRelativeTo(&card.rack.content).x;
+                started = true;
+                signature = card.rack.cardSignature;
+                order = mainBusFx::discover(card.rack.owner.getRoutingGraph()).effects;
                 card.rack.dragTarget = int(std::find_if(card.rack.cards.begin(), card.rack.cards.end(),
                     [this](const auto& c) { return c.get() == &card; }) - card.rack.cards.begin());
             }
             void mouseDrag(const juce::MouseEvent& e) override {
                 auto& rack = card.rack;
+                if (!started || !card.canReorder || signature != rack.cardSignature) return;
                 const auto point = e.getEventRelativeTo(&rack.viewport).position;
                 rack.viewport.autoScroll(int(point.x), int(point.y), 24, 16);
                 const int x = e.getEventRelativeTo(&rack.content).x;
-                rack.dragTarget = juce::jlimit(0, int(rack.cards.size()) - 1, x / (cardWidth + cardGap));
+                rack.dragTarget = juce::jlimit(0, int(rack.cards.size()) - 1, x / (tabWidth + tabGap));
             }
             void mouseUp(const juce::MouseEvent& e) override {
-                if (!isEnabled() || std::abs(e.getEventRelativeTo(&card.rack.content).x - startX) < 5) return;
+                const bool valid = started && card.canReorder && signature == card.rack.cardSignature
+                    && order == mainBusFx::discover(card.rack.owner.getRoutingGraph()).effects;
+                started = false;
+                if (!valid || std::abs(e.getEventRelativeTo(&card.rack.content).x - startX) < 5) return;
                 const auto id = card.model.id; auto* rack = &card.rack;
                 const auto index = rack->dragTarget;
                 juce::Component::SafePointer<MainBusFxRackPanel> safe(rack);
-                juce::MessageManager::callAsync([safe, id, index] {
-                    if (safe) safe->apply(mainBusFx::move(safe->owner.getRoutingGraph(), id, size_t(index)));
+                const auto expectedOrder = order;
+                juce::MessageManager::callAsync([safe, id, index, expectedOrder] {
+                    if (safe && mainBusFx::discover(safe->owner.getRoutingGraph()).effects == expectedOrder)
+                        safe->apply(mainBusFx::move(safe->owner.getRoutingGraph(), id, size_t(index)));
                 });
             }
         private:
             Card& card; int startX = 0;
+            bool started = false;
+            juce::String signature;
+            std::vector<uint32_t> order;
         };
     public:
         Card(MainBusFxRackPanel& panel, const RoutingNode& node) : model(node), handle(*this), rack(panel) {
             setName(name(model.type) + " node " + juce::String(model.id));
             setComponentID("mainBusFx" + juce::String(model.id));
-            addAndMakeVisible(handle); addAndMakeVisible(title); addAndMakeVisible(enabled);
-            addAndMakeVisible(remove);
+            tab.setComponentID("mainBusFxTab" + juce::String(model.id));
+            tab.setName(getName());
+            tab.addAndMakeVisible(handle); tab.addAndMakeVisible(enabled);
+            tab.addAndMakeVisible(remove);
             remove.setComponentID("mainBusFxRemove");
-            title.setText(name(model.type) + "  #" + juce::String(model.id), juce::dontSendNotification);
+            handle.setButtonText(name(model.type) + "  #" + juce::String(model.id));
             enabled.setButtonText("On"); enabled.setClickingTogglesState(true);
+            enabled.setTooltip("Enable/bypass this instance (does not select the tab)");
             remove.setButtonText("x");
             const int slot = routingFxSlot(model.id);
             if (slot >= 0) {
                 enabled.setModulationOwner(rack.owner); enabled.setComponentID(fxParameterId(size_t(slot), "On"));
+                enabledValue = rack.owner.parameters.getRawParameterValue(enabled.getComponentID());
                 enabledLink = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(rack.owner.parameters, fxParameterId(size_t(slot), "On"), enabled);
                 if (model.type == NodeType::chorale) {
                     controls.setComponentID("mainBusChoraleControls");
@@ -133,7 +187,7 @@ private:
                     addAndMakeVisible(bodyViewport);
                     bodyViewport.setViewedComponent(&controls, false);
                     bodyViewport.setScrollBarsShown(true, false);
-                    addKnob(fxParameterId(size_t(slot), "Mix"), "Mix", "%");
+                    addKnob(fxParameterId(size_t(slot), "Mix"), "Mix", "%", true);
                     addKnob(fxParameterId(size_t(slot), "Motion"), "Motion", "%");
                 } else if (slot > 0) {
                     if (isCreativeEffect(model.type)) fullPanel = std::make_unique<CreativeEffectPanel>(rack.owner, size_t(slot), creativeKind(model.type));
@@ -145,7 +199,7 @@ private:
                         bodyViewport.setViewedComponent(&controls, false);
                         bodyViewport.setScrollBarsShown(true, false);
                         if (model.type != NodeType::waveshaper)
-                            addKnob(fxParameterId(size_t(slot), "Mix"), "Mix", "%");
+                            addKnob(fxParameterId(size_t(slot), "Mix"), "Mix", "%", true);
                     }
                     fullPanel->setComponentID("mainBusFxFullPanel");
                     if (dynamic_cast<ToneEffectPanel*>(fullPanel.get())) controls.addAndMakeVisible(*fullPanel);
@@ -153,44 +207,58 @@ private:
                 }
             } else {
                 enabled.setEnabled(false);
-                title.setTooltip("Unmapped routing instance: edit its settings in Routing");
+                enabled.setTooltip("Unmapped routing instance: edit its settings in Routing");
             }
             remove.onClick = [this] {
                 const auto id = model.id; juce::Component::SafePointer<MainBusFxRackPanel> safe(&rack);
                 juce::MessageManager::callAsync([safe, id] { if (safe) safe->apply(mainBusFx::remove(safe->owner.getRoutingGraph(), id)); });
             };
             detail::passiveControl(*this);
+            detail::passiveControl(tab);
         }
-        ~Card() override { cancelGestures(*this); }
+        ~Card() override { cancelEditing(); bodyViewport.setViewedComponent(nullptr, false); }
         void resized() override {
             auto area = getLocalBounds().reduced(4);
-            auto header = area.removeFromTop(24);
-            handle.setBounds(header.removeFromLeft(22));
-            remove.setBounds(header.removeFromRight(24));
-            enabled.setBounds(header.removeFromRight(36));
-            title.setBounds(header);
-            area.removeFromTop(4);
+            auto header = tab.getLocalBounds().reduced(1);
+            remove.setBounds(header.removeFromRight(22));
+            enabled.setBounds(header.removeFromRight(30));
+            handle.setBounds(header);
             if (fullPanel && !dynamic_cast<ToneEffectPanel*>(fullPanel.get())) fullPanel->setBounds(area);
             else {
                 bodyViewport.setBounds(area);
                 const int width = juce::jmax(1, area.getWidth() - bodyViewport.getScrollBarThickness());
-                const int knobAreaHeight = int(knobs.size()) * knobHeight;
-                auto* tonePanel = dynamic_cast<ToneEffectPanel*>(fullPanel.get());
-                const int panelHeight = tonePanel ? tonePanel->preferredContentHeight(width) : 0;
-                controls.setSize(width, juce::jmax(area.getHeight(), knobAreaHeight + panelHeight));
-                if (fullPanel) fullPanel->setBounds(0, knobAreaHeight, width, panelHeight);
-                for (size_t i = 0; i < knobs.size(); ++i)
-                    knobs[i]->setBounds(4, int(i) * knobHeight, width - 8, knobHeight);
+                if (auto* tonePanel = dynamic_cast<ToneEffectPanel*>(fullPanel.get())) {
+                    const int panelHeight = tonePanel->preferredContentHeight(width);
+                    const int extraHeight = knobs.empty() ? 0 : mixHeight + controlGap;
+                    controls.setSize(width, juce::jmax(area.getHeight(), panelHeight + extraHeight));
+                    // Keep Tone's responsive graph-left/controls-right layout at the top.
+                    // The rack-owned Mix is a compact footer, not a full-width top strip.
+                    fullPanel->setBounds(0, 0, width, panelHeight);
+                    if (!knobs.empty()) {
+                        const int mixWidth = juce::jmin(240, juce::jmax(1, width - 16));
+                        knobs.front()->setBounds(juce::jmax(0, width - mixWidth - 8), panelHeight + controlGap,
+                                                 mixWidth, mixHeight);
+                    }
+                } else if (model.type == NodeType::chorale && knobs.size() == 2) {
+                    const bool sideBySide = width >= 260;
+                    const int mixX = sideBySide ? 8 + motionWidth + controlGap : 8;
+                    const int mixY = sideBySide ? 8 + (motionHeight - mixHeight) / 2 : 8 + motionHeight + controlGap;
+                    const int mixWidth = juce::jmin(240, juce::jmax(1, width - mixX - 8));
+                    controls.setSize(width, juce::jmax(area.getHeight(), juce::jmax(8 + motionHeight, mixY + mixHeight) + 8));
+                    knobs[1]->setBounds(8, 8, juce::jmin(motionWidth, juce::jmax(1, width - 16)), motionHeight);
+                    knobs[0]->setBounds(mixX, mixY, mixWidth, mixHeight);
+                } else controls.setSize(width, area.getHeight());
             }
         }
         void setNeon(bool value) {
             neon = value; const auto p = themePalette(*this, neon);
-            title.setColour(juce::Label::textColourId, p.text);
             for (auto* button : std::initializer_list<juce::TextButton*>{&handle, &remove, &enabled}) {
                 button->setColour(juce::TextButton::buttonColourId, p.inset);
                 button->setColour(juce::TextButton::textColourOffId, p.text);
                 button->setColour(juce::TextButton::buttonOnColourId, p.accent);
+                button->setColour(juce::TextButton::textColourOnId, p.accent.contrasting());
             }
+            syncTabState();
             for (auto& knob : knobs) knob->setNeon(neon);
             if (auto* panel = dynamic_cast<CreativeEffectPanel*>(fullPanel.get())) panel->setNeon(neon);
             if (auto* panel = dynamic_cast<UtilityEffectPanel*>(fullPanel.get())) panel->setNeon(neon);
@@ -201,7 +269,25 @@ private:
             const auto p = themePalette(*this, neon); g.setColour(p.inset); g.fillRoundedRectangle(getLocalBounds().toFloat(), 4);
             g.setColour(p.border); g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(.5f), 4, 1);
         }
+        void syncTabState() {
+            const auto p = themePalette(*this, neon);
+            const bool active = enabled.isEnabled() && enabledValue && enabledValue->load() > .5f;
+            const auto selectedText = p.accent.contrasting();
+            handle.setColour(juce::TextButton::textColourOffId,
+                             active ? p.text : p.text.interpolatedWith(p.inset, .45f));
+            handle.setColour(juce::TextButton::textColourOnId,
+                             active ? selectedText : selectedText.interpolatedWith(p.accent, .25f));
+        }
+        void cancelEditing() { cancelGestures(*this); }
+        void showSelected(bool selected) {
+            if (!selected && isVisible()) cancelEditing();
+            setVisible(selected);
+            handle.setToggleState(selected, juce::dontSendNotification);
+            tab.repaint();
+        }
         RoutingNode model;
+        bool canReorder = false;
+        juce::Component tab;
         Handle handle;
         juce::TextButton remove;
     private:
@@ -215,18 +301,17 @@ private:
                 now, {-1, -1}, now, 0, true};
             component.mouseUp(release);
         }
-        void addKnob(const juce::String& id, const juce::String& label, const char* unit) {
+        void addKnob(const juce::String& id, const juce::String& label, const char* unit, bool linear = false) {
             if (!rack.owner.parameters.getParameter(id)) return;
             auto knob = std::make_unique<ParameterKnob>(rack.owner, id, label, unit);
-            knob->slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-            knob->slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 72, 19);
+            knob->setLinear(linear);
             controls.addAndMakeVisible(*knob); knobs.push_back(std::move(knob));
         }
         MainBusFxRackPanel& rack;
         bool neon = false;
-        static constexpr int knobHeight = 100;
-        juce::Label title;
+        static constexpr int motionWidth = 78, motionHeight = 100, mixHeight = 60, controlGap = 8;
         modulationui::Button enabled;
+        std::atomic<float>* enabledValue = nullptr;
         juce::Component controls;
         PassiveViewport bodyViewport;
 
@@ -234,6 +319,25 @@ private:
         std::unique_ptr<juce::Component> fullPanel;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enabledLink;
     };
+    void select(uint32_t id) {
+        if (selectedId != id) {
+            selectedId = id;
+            updateSelection();
+        }
+        revealSelection();
+    }
+    void updateSelection() {
+        for (auto& card : cards) card->showSelected(card->model.id == selectedId);
+    }
+    void revealSelection() {
+        for (auto& card : cards) if (card->model.id == selectedId) {
+            const auto bounds = card->tab.getBounds();
+            const int left = viewport.getViewPositionX(), width = viewport.getViewWidth();
+            if (bounds.getX() < left) viewport.setViewPosition(bounds.getX(), 0);
+            else if (bounds.getRight() > left + width)
+                viewport.setViewPosition(juce::jmax(0, bounds.getRight() - width), 0);
+        }
+    }
     void showAddMenu() {
         juce::PopupMenu menu;
         for (auto type : types) menu.addItem(int(type) + 1, name(type));
@@ -256,8 +360,10 @@ private:
         NodeType::bitcrusher, NodeType::compressor, NodeType::delay, NodeType::reverb, NodeType::granular,
         NodeType::equalizer, NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter};
 
+    modulationui::PanelStyle panelStyle;
     Processor& owner;
     bool neon = false;
+    uint32_t selectedId = 0;
     int dragTarget = 0;
     juce::TextButton add;
     juce::Label status;

@@ -5,6 +5,8 @@
 #include "ParameterKnob.h"
 #include "ModulationUI.h"
 #include "CreativeEffectVisual.h"
+#include <algorithm>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -57,7 +59,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
         Row(Processor& owner, const juce::String& id, const juce::String& name,
             const juce::String& tooltip, const char* unit, bool discrete) {
             setComponentID(id + "Control");
-                        slider.addMouseListener(this, true);
+            slider.addMouseListener(this, true);
             label.setText(name, juce::dontSendNotification);
             label.setFont(juce::Font(juce::FontOptions(11.5f)));
             label.setMinimumHorizontalScale(1.f);
@@ -75,7 +77,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
                 slider.setName(name); slider.setTitle(name); slider.setTooltip(tooltip);
                 slider.setLookAndFeel(&style);
                 slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-                slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 82, 21);
+                slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 82, 20);
                 addAndMakeVisible(slider);
                 sliderLink = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner.parameters, id, slider);
                 if (auto* p = owner.parameters.getParameter(id))
@@ -95,24 +97,31 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             }
         }
         ~Row() override { slider.removeMouseListener(this); slider.setLookAndFeel(nullptr); }
-                void mouseDown(const juce::MouseEvent& e) override {
-                    // Numeric entry lives in the slider's child Label/TextEditor, not
-                    // Slider::mouseDown. Capture its pre-edit value without taking keys.
-                    if (e.eventComponent != &slider && slider.owner && slider.owner->modulationAssignmentId() == 0)
-                        if (slider.beginEdit) slider.beginEdit();
-                }
-                void mouseUp(const juce::MouseEvent& e) override {
-                    if (e.eventComponent != &slider && slider.endEdit) slider.endEdit();
-                }
-        void resized() override {
-            auto area = getLocalBounds().reduced(2, 1);
-            label.setJustificationType(juce::Justification::centred);
-            label.setFont(juce::Font(juce::FontOptions(getWidth() < 100 ? 11.f : 11.5f)));
-            label.setBounds(area.removeFromTop(26));
-            slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, juce::jmin(82, area.getWidth()), 20);
-            slider.setBounds(area);
-            toggle.setBounds(getLocalBounds().reduced(2, 8));
+        void mouseDown(const juce::MouseEvent& e) override {
+            // Numeric entry lives in the slider's child Label/TextEditor, not
+            // Slider::mouseDown. Capture its pre-edit value without taking keys.
+            textEditing = e.eventComponent != &slider && slider.owner
+                && slider.owner->modulationAssignmentId() == 0 && !e.mods.isPopupMenu();
+            if (textEditing && slider.beginEdit) slider.beginEdit();
         }
+        void mouseUp(const juce::MouseEvent&) override {
+            if (textEditing && slider.endEdit) slider.endEdit();
+            textEditing = false;
+        }
+        void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override {
+            forwardPassiveWheel(*this, e, wheel);
+        }
+        void resized() override {
+            auto area = getLocalBounds().reduced(1, 0);
+            label.setJustificationType(juce::Justification::centred);
+            label.setBounds(area.removeFromBottom(28));
+            slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, juce::jmin(82, area.getWidth()), 20);
+            slider.setBounds(area);
+            // Keep two-state controls button-sized, rather than filling a knob cell.
+            toggle.setBounds(getLocalBounds().withSizeKeepingCentre(juce::jmin(58, getWidth()), 28));
+        }
+        int preferredWidth() const { return buttonLink ? 60 : 84; }
+        bool textEditing = false;
         void setNeon(bool neon) {
             const auto palette = themePalette(*this, neon);
             const auto accent = palette.accent;
@@ -143,13 +152,16 @@ public:
         : owner(processor), slot(fxSlot), kind(effectKind), visual(processor, fxSlot, effectKind) {
         setName(effectName(kind) + " inspector");
         overview.setText(description(kind), juce::dontSendNotification);
-        overview.setFont(juce::Font(juce::FontOptions(11.5f)));
+        overview.setFont(juce::Font(juce::FontOptions(12.0f)));
+        overview.setMinimumHorizontalScale(1.f);
+        overview.setBorderSize(juce::BorderSize<int>(0));
         overview.setJustificationType(juce::Justification::topLeft);
         overview.setInterceptsMouseClicks(false, false);
         content.addAndMakeVisible(overview);
         content.addAndMakeVisible(visual);
         addGroup("BLEND");
-        addRow(fxParameterId(slot, "Mix"), "Dry / Wet", "True dry/wet blend for this FX slot.", "%", false);
+        addRow(fxParameterId(slot, "Mix"), "Mix", "True dry/wet blend for this FX slot: 0% dry, 100% wet.", "%", false);
+        groups.back().rows.back()->slider.setSliderStyle(juce::Slider::LinearHorizontal);
         const char* previous = "";
         for (size_t i = 0; i < creativeParameterCount; ++i) {
             const auto& d = creativeParameters[i];
@@ -166,13 +178,16 @@ public:
         content.addChildComponent(meter); meter.setVisible(kind == CreativeKind::compressor);
         viewport.setViewedComponent(&content, false); viewport.setScrollBarsShown(true, false);
         addAndMakeVisible(viewport);
+        viewport.onScroll = [this] { if (!layingOut) rememberScroll(); };
         setNeon(false); detail::passiveControl(*this); updateState(); startTimerHz(20);
     }
-    ~CreativeEffectPanel() override { stopTimer(); viewport.setViewedComponent(nullptr, false); }
+    ~CreativeEffectPanel() override {
+        stopTimer(); viewport.onScroll = nullptr; viewport.setViewedComponent(nullptr, false);
+    }
     // Called before base-value edits; assignment gestures are not base edits.
     std::function<void(const juce::String&)> onBeginEdit;
     std::function<void()> onEndEdit;
-        std::function<void()> onValueChanged;
+    std::function<void()> onValueChanged;
     static juce::String effectName(CreativeKind k) {
         switch (k) {
             case CreativeKind::delay: return "Delay";
@@ -185,11 +200,11 @@ public:
     }
     static juce::String description(CreativeKind k) {
         switch (k) {
-            case CreativeKind::delay: return "Stereo repeats with tempo sync, feedback colour, pitch and vocal ducking. Beats are quarter-note multiples.";
-            case CreativeKind::reverb: return "Diffuse stereo space: shape early reflections, the decay and its colour; duck the tail behind the vocal.";
-            case CreativeKind::compressor: return "Stereo-linked dynamics with a soft knee and filtered detector. Mix blends parallel compression; makeup is manual.";
-            case CreativeKind::bitcrusher: return "Bit-depth and sample-rate reduction with input drive, dither and output filtering.";
-            case CreativeKind::granular: return "Grains from recent audio, with pitch, reverse, timing scatter and stereo spread. Freeze holds the capture buffer.";
+            case CreativeKind::delay: return "Stereo repeats with tempo sync, coloured feedback and pitch. Ducking keeps repeats behind the vocal.\nBeats use quarter-note multiples: 0.5 = eighth, 1 = quarter.";
+            case CreativeKind::reverb: return "Shape early reflections, tail length and tone in a diffuse stereo space. Ducking keeps the tail behind the vocal.\nFreeze holds the tail; Mix blends dry and wet.";
+            case CreativeKind::compressor: return "Stereo-linked compression with a soft knee and filtered level detector.\nMakeup is manual output gain. Mix blends dry and compressed audio for parallel compression.";
+            case CreativeKind::bitcrusher: return "Reduce bit depth and sample rate for digital texture. Drive colours the input; dither decorrelates quantization distortion.\nFilter the output, then blend with Mix.";
+            case CreativeKind::granular: return "Layer grains from recent audio. Shape grain length, density, pitch and stereo spread; add timing scatter.\nFreeze holds captured audio, not grain playback. The graph is a stable parameter guide, not live audio.";
         }
         return {};
     }
@@ -214,29 +229,69 @@ public:
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 5);
     }
     void resized() override {
+        const juce::ScopedValueSetter<bool> guard(layingOut, true);
         viewport.setBounds(getLocalBounds());
-        // Reserve scrollbar width consistently so crossing the height threshold
-        // cannot reflow the grid back and forth.
+        // Always reserve the scrollbar, avoiding threshold-dependent reflow.
         const int width = juce::jmax(1, getWidth() - viewport.getScrollBarThickness());
-        const int columns = juce::jlimit(1, 6, (width - 16) / 76);
-        const int cell = juce::jmax(1, (width - 16) / columns);
-        int y = 8;
-        const bool compact = width < 280;
-        const int visualHeight = compact ? 216 : 238;
-        visual.setBounds(8, y, juce::jmax(1, width - 16), visualHeight); y += visualHeight + 8;
-        const int overviewHeight = compact ? 76 : 44;
-        overview.setBounds(8, y, juce::jmax(1, width - 16), overviewHeight); y += overviewHeight + 6;
-        if (kind == CreativeKind::compressor) { meter.setBounds(8, y, width - 16, 28); y += 34; }
-        for (auto& group : groups) {
-            group.heading->setBounds(8, y, width - 16, 23); y += 25;
-            for (size_t i = 0; i < group.rows.size(); ++i)
-                group.rows[i]->setBounds(8 + int(i % size_t(columns)) * cell,
-                    y + int(i / size_t(columns)) * 100, cell, 98);
-            y += int((group.rows.size() + size_t(columns) - 1) / size_t(columns)) * 100 + 8;
+        const int innerWidth = juce::jmax(1, width - 16);
+        const bool split = innerWidth >= 680;
+        const int visualWidth = split ? juce::jlimit(270, 440, innerWidth * 2 / 5) : innerWidth;
+        const int visualHeight = split ? 254 : (width < 280 ? 216 : 238);
+        visual.setBounds(8, 8, visualWidth, visualHeight);
+        juce::AttributedString descriptionText;
+        descriptionText.append(overview.getText(), overview.getFont());
+        juce::TextLayout descriptionLayout;
+        descriptionLayout.createLayout(descriptionText, float(visualWidth));
+        const int overviewHeight = juce::jmax(32, int(std::ceil(descriptionLayout.getHeight())) + 6);
+        overview.setBounds(8, visual.getBottom() + 10, visualWidth, overviewHeight);
+        int visualBottom = overview.getBottom() + 8;
+        if (kind == CreativeKind::compressor) {
+            meter.setBounds(8, visualBottom, visualWidth, 28);
+            visualBottom = meter.getBottom() + 8;
         }
-        content.setSize(width, juce::jmax(getHeight(), y));
+        const int controlsX = split ? visual.getRight() + 16 : 8;
+        const int controlsWidth = split ? juce::jmax(1, width - controlsX - 8) : innerWidth;
+        int y = split ? 8 : visualBottom;
+        for (auto& group : groups) {
+            group.heading->setBounds(controlsX, y, controlsWidth, 20);
+            y += 22;
+            if (&group == &groups.front()) {
+                group.rows.front()->setBounds(controlsX, y, controlsWidth, 64);
+                y += 70;
+                continue;
+            }
+            int x = 0, lineHeight = 0;
+            for (auto& row : group.rows) {
+                const int cellWidth = juce::jmin(controlsWidth, row->preferredWidth());
+                const int cellHeight = row->buttonLink ? 44 : 100;
+                if (x > 0 && x + cellWidth > controlsWidth) {
+                    y += lineHeight + 2; x = 0; lineHeight = 0;
+                }
+                row->setBounds(controlsX + x, y, cellWidth, cellHeight);
+                x += cellWidth + 2;
+                lineHeight = juce::jmax(lineHeight, cellHeight);
+            }
+            y += lineHeight + 10;
+        }
+        content.setSize(width, juce::jmax(getHeight(), juce::jmax(visualBottom, y)));
+        // Retain the preferred anchor even if a wide/tall view temporarily has
+        // no scroll range. Returning to a sidebar restores this instance's place.
+        viewport.setViewPosition(0, scrollAnchor ? scrollAnchor->getY() + scrollOffset : scrollY);
     }
 private:
+    class InspectorViewport final : public PassiveViewport {
+    public:
+        std::function<void()> onScroll;
+        void visibleAreaChanged(const juce::Rectangle<int>&) override { if (onScroll) onScroll(); }
+    };
+    void rememberScroll() {
+        scrollY = viewport.getViewPositionY();
+        scrollAnchor = nullptr;
+        for (auto& group : groups) for (auto& row : group.rows)
+            if (row->getY() <= scrollY && (!scrollAnchor || row->getY() > scrollAnchor->getY()))
+                scrollAnchor = row.get();
+        scrollOffset = scrollAnchor ? scrollY - scrollAnchor->getY() : 0;
+    }
     juce::Colour accent() const { return themePalette(*this, neon).accent; }
     void addGroup(const char* name) {
         Group group;
@@ -251,7 +306,7 @@ private:
         const auto begin = [this, id] { if (onBeginEdit) onBeginEdit(id); };
         const auto end = [this] { if (onEndEdit) onEndEdit(); updateState(); };
         row->slider.beginEdit = begin; row->slider.endEdit = end;
-                row->slider.onValueChange = [this] { if (onValueChanged) onValueChanged(); };
+        row->slider.onValueChange = [this] { if (onValueChanged) onValueChanged(); };
         row->toggle.beginEdit = begin; row->toggle.endEdit = end;
         content.addAndMakeVisible(*row); groups.back().rows.push_back(std::move(row));
     }
@@ -327,7 +382,10 @@ private:
     bool neon = false;
     CreativeEffectVisual visual;
     juce::Component content;
-    PassiveViewport viewport;
+    InspectorViewport viewport;
+    bool layingOut = false;
+    Row* scrollAnchor = nullptr;
+    int scrollY = 0, scrollOffset = 0;
     juce::Label overview, meter;
     std::vector<Group> groups;
     Row* timeRow = nullptr;

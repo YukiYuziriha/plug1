@@ -1926,7 +1926,7 @@ private:
                                      390);
                     return;
                 }
-        fxOn.setBounds(4, 34, 160, 26);
+        fxOn.setBounds(4, 34, 80, 26);
         disconnect.setBounds(4, 34, 130, 28);
         if (creativePanel || utilityPanel) {
             const int available = juce::jmax(0, inspector.getHeight() - 96);
@@ -1941,17 +1941,18 @@ private:
             const int footerHeight = crossover ? 79 : 28;
             const int available = juce::jmax(0, inspector.getHeight() - 68 - footerHeight);
             toneViewport.setBounds(0, 68, inspector.getWidth(), available);
-            tonePanel->setBounds(0, 0, juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness()), ToneEffectPanel::preferredHeight);
+            const int width = juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness());
+                        tonePanel->setBounds(0, 0, width, juce::jmax(available, tonePanel->preferredContentHeight(width)));
             inspectorInfo.setFont(juce::Font(juce::FontOptions(11.0f)));
             inspectorInfo.setBounds(0, 68 + available + 4, inspector.getWidth(), footerHeight - 4);
             return;
         }
         int y = 76;
-        const int columns = juce::jmax(1, juce::jmin(3, int(fields.size())));
-        const int fieldWidth = inspector.getWidth() / columns;
+        const int columns = juce::jmax(1, inspector.getWidth() / 82);
+        const int fieldWidth = 82;
         for (size_t i = 0; i < fields.size(); ++i)
             fields[i]->setBounds(int(i % size_t(columns)) * fieldWidth, y + int(i / size_t(columns)) * 104, juce::jmax(0, fieldWidth - 4), 100);
-        if (!fields.empty()) y += int((fields.size() + 2) / 3) * 104;
+        if (!fields.empty()) y += int((fields.size() + size_t(columns) - 1) / size_t(columns)) * 104;
         nodeValue.setBounds(0, 40, 140, 110);
         if (mixControl) mixControl->setBounds(0, 40, 140, 110);
         const int infoY = fields.empty() ? (nodeValue.getParentComponent() == &inspector || mixControl ? 160 : selectedLink >= 0 ? 76 : 40) : y + 12;

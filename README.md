@@ -1,17 +1,24 @@
-# Vocal Stack 1.9.2
+# Vocal Stack 1.9.3
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.2 is built, validated, packaged and installed** (coordinator-reported).
-Release CLAP/VST3 builds succeeded; all **34 focused CTests passed in 182.97 s**,
-including **66 editor groups**. Packages SHA256-match Release artifacts and
-packaged CLAP smoke passed. The granular graph restores the original-style
-parameter illustration rather than the flickering live cloud. All six theme/width
-review screenshots were manually reviewed; root Granular and Stack FX previews
-were updated from the current Release. **Installation retry succeeded: both
-per-user CLAP and VST3 reported Installed and SHA256 verified.** Release commit
-`c1ee5c7` is pushed to `origin/main`; actual DAW visual checks remain unverified. See the
+**1.9.3 is built, validated, packaged and installed** (coordinator-reported);
+**commit/push remain pending**. Main Bus FX use real Routing-node tabs with one
+full-width selected editor, retained instances and responsive compact controls.
+No audio DSP or host parameters change. After the final rack `PanelStyle` fix,
+the full Release build succeeded and **34 focused CTests passed in 176.42 s**,
+including **67 editor groups and rack UI**. Image review confirmed readable compact
+tab **On** text. Tracked CLAP/VST3 packages were refreshed, packaged CLAP smoke
+passed, and both per-user formats reported **Installed and SHA256 verified**.
+Actual host checks remain unverified; the long legacy DSP suite was not rerun.
+See the [1.9.3 validation record](docs/Release-1.9.3-Validation.md).
+
+![Main Bus FX tabs with a full-width selected editor](VocalStack-FX-Tabs.png)
+
+**Historical installed release: 1.9.2.** Its Release build, 34-test pass, package
+hashes, packaged smoke and successful installation belong to that release, not
+1.9.3. Commit `c1ee5c7` was pushed to `origin/main`; see the
 [1.9.2 validation record](docs/Release-1.9.2-Validation.md).
 
 **Previous release 1.9.1 is built, validated, packaged and installed.** The coordinator
@@ -54,7 +61,7 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.2 installation retry succeeded:** both per-user CLAP and VST3 reported
+**1.9.3 installation succeeded:** both per-user CLAP and VST3 reported
 **Installed and SHA256 verified** via the coordinator's run of
 `source/build/install-release.ps1`. Do not terminate Bitwig or overwrite a loaded
 plugin to force replacement. Actual Bitwig listening/transport and native FPS
@@ -139,8 +146,12 @@ Stack cards use four rows of two horizontal sliders in narrower, unchanged-heigh
 cards. Selecting a Lead/Voice node opens the same parameters as larger two-row
 rotary controls on the right. Selection follows between views. Numeric entry, double-click
 reset, and modifier fine adjustment remain available without stealing idle DAW keys.
-Continuous parameter controls elsewhere use rotary knobs; switches and menus
-remain switches and menus. Stack sliders draw one light base thumb and a separate
+Other continuous controls generally use rotary knobs, with horizontal **Mix**
+sliders in effect editors; switches and menus remain switches and menus. Effect
+knobs retain compact fixed sizes and reflow into rows rather than stretching with
+the panel. Numeric values sit above knobs and parameter names below; two-state
+controls stay compact. Wide Creative, Tone and Utility editors place the graph on
+the left and controls on the right, stacking them in narrower views. Stack sliders draw one light base thumb and a separate
 upper-lane effective-value triangle, with assigned ranges on the primary track.
 Horizontal sliders use relative dragging at half cursor speed: moving across one
 track width changes half the displayed range (in slider/skew space), independent of
@@ -356,16 +367,23 @@ on migration. The default Basic signal path remains regression-tested unchanged.
 
 ![Native routing with independent multiband outputs](VocalStack-Routing.png)
 
-### Main Bus FX rack (1.9.1)
+### Main Bus FX rack (1.9.3)
 
-Stack's **+ FX** rack replaces the fixed Chorale strip. Its compact cards are the
-actual Routing nodes, not duplicate processors: enable, edit, remove, and reorder
-with the dedicated drag handle. Duplicate FX have independent parameters and
-share Routing's existing 16-effect/48-node capacity. FX cards run horizontally at
-204 px wide, close to the 172 px voice cards. Every card exposes its full parameter
-UI with internal vertical scrolling and a fixed header; there is no **Details**
-step. Drag the handle horizontally to reorder. Controls, modulation bindings and
-visuals are shared with Routing.
+Stack's **+ FX** rack replaces the fixed Chorale strip. Its tabs represent the
+actual main-bus Routing nodes, not duplicate processors. Click a tab to open that
+instance's full parameter editor across the rack width; only one editor is visible
+at a time. Drag the tab horizontally to reorder through Routing's shared one-step
+Undo/Redo path. Each tab provides independent **On** bypass and remove controls;
+**+ FX** adds another instance. Duplicate FX retain independent parameters and
+share Routing's existing 16-effect/48-node capacity.
+
+Surviving node instances and their editor/scroll state are retained across tab
+switches and reorders rather than rebuilt. The selected tab is automatically
+revealed when the tab strip overflows, including after selection or resizing.
+Controls, modulation bindings and visuals are shared with Routing. Compact knobs
+reflow at fixed sizes, with numbers above and names below; Mix uses a horizontal
+slider and two-state controls remain compact. Wide Creative, Tone and Utility
+editors place graphs left and controls right, with a stacked narrow layout.
 
 Hover-wheel navigation uses shared `PassiveViewport` handling: plain wheel scrolls
 the nearest vertical ancestor that can move, continuing outward at an edge. It
@@ -781,6 +799,24 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.9.3 — built, validated, packaged and installed (coordinator-reported):** after
+the rack-owned `PanelStyle` fix, the full Release build succeeded and all **34
+focused CTests passed in 176.42 s**, including **67 editor groups and rack UI**.
+Independent static review found no blockers. Reviewed images cover rack Reverb
+and EQ in Neon, Granular in Spectral, and Routing Reverb; compact tab **On** text
+is now readable. The new tracked preview is `VocalStack-FX-Tabs.png`.
+
+Release CLAP/VST3 were copied to tracked `Windows-x64`. Packaged CLAP smoke passed
+**2087 automatable parameters at original indices**, stereo at **48 kHz**,
+mono-to-stereo at **44.1 kHz**, and **1344-sample latency**. Both per-user formats
+reported **Installed and SHA256 verified** via `source/build/install-release.ps1`.
+Hashes and the concise initial test-correction history are in the
+[1.9.3 record](docs/Release-1.9.3-Validation.md). The long legacy DSP suite was not
+rerun; actual host checks remain unverified. **Commit/push remain pending.**
+This documentation-only pass ran no build or tests.
+
+### Historical 1.9.2 verification
 
 **1.9.2 — built, validated, packaged and installed (coordinator-reported):** Release
 CLAP/VST3 builds succeeded. The combined build/test command timed out at 600 s

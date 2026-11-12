@@ -104,6 +104,55 @@ struct UtilityPanelTests {
         void parameterValueChanged(int, float) override {}
         void parameterGestureChanged(int, bool starting) override { starting ? ++starts : ++ends; }
     };
+    static void layouts() {
+        auto owner = std::make_unique<Processor>();
+        for (auto kind : {UtilityKind::gain, UtilityKind::stereo, UtilityKind::gate,
+                          UtilityKind::xpFilter, UtilityKind::synthFilter}) {
+            UtilityEffectPanel panel(*owner, 1, kind);
+            for (int width : {190, 204, 220, 280, 320, 400, 560, 619, 620, 640, 800, 860}) {
+                panel.setSize(width, 280);
+                const bool wide = width >= 620;
+                const int inner = panel.content.getWidth() - 16;
+                const int controlWidth = wide ? inner - inner * 44 / 100 - 12 : inner;
+                const int controlX = wide ? panel.visual.getRight() + 12 : 8;
+                require(!wide || (panel.visual.getWidth() < inner / 2
+                                 && panel.rows.front()->getY() == panel.visual.getY()),
+                        "Wide Utility inspector still uses a full-width vertical column");
+                require(panel.content.getWidth() <= panel.viewport.getViewArea().getWidth(),
+                        "Utility inspector requires horizontal scrolling");
+                for (size_t i = 0; i < panel.rows.size(); ++i) {
+                    const auto& row = panel.rows[i];
+                    require(panel.content.getLocalBounds().contains(row->getBounds()), "Utility parameter clipped");
+                    require(row->getX() >= controlX, "Wide Utility control escaped its right-hand group");
+                    require(!row->getBounds().intersects(panel.visual.getBounds())
+                            && !row->getBounds().intersects(panel.overview.getBounds()), "Utility control overlaps its visual");
+                    for (size_t j = 0; j < i; ++j)
+                        require(!row->getBounds().intersects(panel.rows[j]->getBounds()), "Utility parameters overlap");
+                    if (row->toggle.isVisible()) {
+                        require(row->getWidth() == 64 && row->getHeight() == 28, "Utility switch is not compact");
+                    } else if (row->combo.isVisible()) {
+                        require(row->getWidth() == controlWidth, "Filter mode lost its control-group row");
+                    } else {
+                        const bool mix = row->id == fxParameterId(1, "Mix");
+                        require(row->slider.getSliderStyle() == (mix ? juce::Slider::LinearHorizontal
+                                                                 : juce::Slider::RotaryHorizontalVerticalDrag),
+                                "Utility parameter changed control style");
+                        require(row->getWidth() == (mix ? controlWidth : 78)
+                                && row->getHeight() == (mix ? 62 : 100), "Utility control stretched with inspector");
+                        require(row->slider.getTextBoxPosition() == juce::Slider::TextBoxAbove,
+                                "Utility value is not above its control");
+                        require(row->label.getY() >= row->slider.getBottom(), "Utility name is not below its control");
+                    }
+                }
+                panel.viewport.setViewPosition(0, 100);
+                const int oldY = panel.viewport.getViewPositionY();
+                panel.setSize(width + 1, 280);
+                require(panel.viewport.getViewPositionY() == juce::jmin(oldY,
+                            panel.content.getHeight() - panel.viewport.getViewArea().getHeight()),
+                        "Utility resize reset scroll position");
+            }
+        }
+    }
     static void controls() {
         auto owner = std::make_unique<Processor>();
         const auto focus = juce::Component::getCurrentlyFocusedComponent();
@@ -117,7 +166,7 @@ struct UtilityPanelTests {
                 panel.setNeon(neon); panel.setSize(width, 380);
                 for (const auto& row : panel.rows) {
                     require(panel.content.getLocalBounds().contains(row->getBounds()), "Narrow card clipped a parameter");
-                    require(row->getWidth() >= 76, "Narrow control is unusably small");
+                    require(row->getWidth() >= (row->toggle.isVisible() ? 48 : 76), "Narrow control is unusably small");
                     if (row->combo.isVisible()) require(row->getWidth() == panel.visual.getWidth(), "Mode selector is truncated to a knob cell");
                 }
                 if (width == 190 || width == 220) {
@@ -253,6 +302,6 @@ struct UtilityPanelTests {
             measure(name.c_str(), 5, [&](int) { const auto curve = UtilityEffect::synthResponseCurve(48000, settings, 32768); require(curve.size() == 16385, "Invalid profile curve"); });
         }
     }
-    static void run() { scheduling(); controls(); profile(); }
+    static void run() { scheduling(); layouts(); controls(); profile(); }
 };
 } // namespace vocalstack
