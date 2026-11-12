@@ -13,6 +13,54 @@
 
 namespace vocalstack {
 
+// FxMonitor-style exclusive payload ownership: bounded producer/readers, no
+// plain-field seqlock races. Contention drops a frame rather than waiting.
+class GrainSnapshotBridge {
+public:
+    void publish(const RoutingGrainSnapshot& frame) noexcept {
+        const auto token = latest.load(std::memory_order_relaxed);
+        for (size_t i = 0; i < buffers->size(); ++i) {
+            if ((token & 3) == i + 1) continue;
+            auto& b = (*buffers)[i];
+            int free = 0;
+            if (!b.owner.compare_exchange_strong(free, -1, std::memory_order_acquire,
+                                                  std::memory_order_relaxed)) continue;
+            b.frame = frame;
+            b.owner.store(0, std::memory_order_release);
+            latest.store((++sequence << 2) | (i + 1), std::memory_order_release);
+            return;
+        }
+    }
+    bool read(size_t slot, RoutingGrainFrame& out, uint64_t revision, uint64_t epoch) const noexcept {
+        if (slot >= 16) return false;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            const auto token = latest.load(std::memory_order_acquire);
+            if (!token) return false;
+            auto& b = (*buffers)[(token & 3) - 1];
+            int free = 0;
+            if (!b.owner.compare_exchange_strong(free, 1, std::memory_order_acquire,
+                                                  std::memory_order_relaxed)) continue;
+            bool valid = latest.load(std::memory_order_acquire) == token
+                && b.frame.revision == revision && b.frame.resetEpoch == epoch;
+            if (valid) out = b.frame.nodes[slot];
+            valid = valid && latest.load(std::memory_order_acquire) == token;
+            b.owner.store(0, std::memory_order_release);
+            if (valid) return out.nodeId != 0 && out.generation != 0;
+        }
+        return false;
+    }
+private:
+    struct Buffer {
+        std::atomic<int> owner{0};
+        RoutingGrainSnapshot frame{};
+    };
+    std::unique_ptr<std::array<Buffer, 3>> buffers = std::make_unique<std::array<Buffer, 3>>();
+    std::atomic<uint64_t> latest{0};
+    uint64_t sequence = 0;
+    static_assert(std::atomic<int>::is_always_lock_free && std::atomic<uint64_t>::is_always_lock_free,
+                  "Grain publication requires lock-free ownership");
+};
+
 // Append host parameters: existing IDs and indices are part of session compatibility.
 inline constexpr std::array<const char*, 139> legacyParameterIds{
     "level", "double", "human", "width", "formant",
@@ -270,6 +318,11 @@ public:
     void releaseFxMonitor(size_t slot);
     bool readFxMonitor(size_t slot, FxMonitorFrame& out) const;
     float getCreativeGainReduction(size_t slot) const noexcept { return fxMonitor.gainReduction(slot); }
+        bool readGrainSnapshot(size_t slot, RoutingGrainFrame& out) const noexcept;
+            bool isGrainSnapshotCurrent(const RoutingGrainFrame& frame) const noexcept {
+                return frame.nodeId != 0 && frame.generation != 0
+                    && frame.revision == engine.requestedGrainRevision() && frame.resetEpoch == engine.grainEpoch();
+            }
 
 
     int getSkin() const noexcept { return skin.load(std::memory_order_relaxed); }
@@ -329,6 +382,7 @@ private:
     // FxMonitor's large windows live on its heap, not the Processor/test stack.
     // Declared before engine so the non-owning executor pointer outlives it.
     FxMonitor fxMonitor;
+    GrainSnapshotBridge grainBridge;
     VocalEngine engine;
     bool prepared = false;
 };

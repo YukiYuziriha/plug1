@@ -75,6 +75,10 @@ public:
     void setFxMonitor(FxMonitor* monitor) noexcept { routing.setFxMonitor(monitor); }
     std::array<VoiceSnapshot, 8> voiceSnapshots() const noexcept { return snapshots; }
     VoiceSnapshot leadSnapshot() const noexcept { return leadState; }
+        // Same-owner audio copies; Processor owns concurrent publication.
+        RoutingGrainSnapshot grainSnapshot() const noexcept;
+        uint64_t requestedGrainRevision() const noexcept { return routing.requestedGrainRevision(); }
+        uint64_t grainEpoch() const noexcept { return routing.grainEpoch(); }
 
 private:
     static constexpr int quantum = 64;

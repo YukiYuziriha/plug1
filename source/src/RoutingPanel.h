@@ -5,6 +5,7 @@
 #include "UtilityEffectPanel.h"
 #include "ModulationPanel.h"
 #include <map>
+#include <limits>
 
 namespace vocalstack {
 
@@ -26,6 +27,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         unsigned fxOnUndoMask = 0;
         bool parameterEdit = false;
         bool layoutOnly = false;
+        std::vector<Assignment> modulationAssignments;
     };
     class Canvas final : public juce::Component {
     public:
@@ -210,7 +212,31 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         explicit ModulatorTile(const Modulator& m) : TextButton(modulatorName(m)), model(m) {}
         Modulator model;
         float phase = 0;
-        std::vector<float> history;
+        std::vector<float> history, waveform;
+        Modulator previewModel;
+        bool previewValid = false;
+        void refreshWaveform() {
+            if (model.type == ModulatorType::random) return;
+            if (previewValid && model.phase == previewModel.phase && model.depth == previewModel.depth
+                && model.shape == previewModel.shape && model.waveform == previewModel.waveform
+                && model.bipolar == previewModel.bipolar) return;
+            previewModel = model; previewValid = true;
+            // Use the audio evaluator, not a second approximation of its skew/polarity rules.
+            auto evaluator = std::make_unique<ModulationBackend>();
+            ModulationBackend::Plan plan;
+            plan.modulatorCount = 1; plan.modulators[0] = model;
+            plan.assignmentCount = 1; plan.assignments[0] = {0, 0, 1};
+            plan.modulators[0].sync = false; plan.modulators[0].rateHz = 1;
+            if (!evaluator->publish(plan)) return;
+            evaluator->prepare(48000);
+            std::array<float, ModulationBackend::maxTargets> contributions{};
+            waveform.clear(); waveform.reserve(65);
+            for (int i = 0; i <= 64; ++i) {
+                evaluator->tick(contributions);
+                waveform.push_back(contributions[0]);
+                evaluator->advance(750);
+            }
+        }
         void paintButton(juce::Graphics& g, bool hovered, bool down) override {
             auto bounds = getLocalBounds().toFloat().reduced(1);
             const auto accent = findColour(juce::TextButton::buttonOnColourId);
@@ -220,28 +246,17 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             g.drawRect(bounds, getToggleState() ? 2.0f : 1.0f);
             g.setColour(findColour(juce::TextButton::textColourOffId));
             g.setFont(juce::Font(juce::FontOptions(12.0f)));
-            g.drawText(getButtonText(), bounds.removeFromTop(22), juce::Justification::centred);
-            const auto plot = bounds.reduced(7, 6);
+            g.drawFittedText(getButtonText(), bounds.removeFromTop(15).toNearestInt(), juce::Justification::centred, 1);
+            const auto plot = bounds.reduced(3, 2);
             g.setColour(accent.withAlpha(.2f));
             g.drawHorizontalLine(int(plot.getCentreY()), plot.getX(), plot.getRight());
             juce::Path path;
             const bool random = model.type == ModulatorType::random;
-            const size_t count = random ? history.size() : 65;
+            const auto& values = random ? history : waveform;
+            const size_t count = values.size();
             for (size_t i = 0; i < count; ++i) {
-                const float t = float(i) / float(random ? 63 : 64);
-                float value = random ? history[i] : 0;
-                if (!random) {
-                    const float pivot = .01f + .98f * model.shape;
-                    const float x = t < pivot ? .5f * t / pivot : .5f + .5f * (t - pivot) / (1 - pivot);
-                    switch (model.waveform) {
-                        case ModulationWaveform::sine: value = std::sin(juce::MathConstants<float>::twoPi * x); break;
-                        case ModulationWaveform::triangle: value = 1 - 4 * std::abs(x - .5f); break;
-                        case ModulationWaveform::saw: value = 2 * x - 1; break;
-                        case ModulationWaveform::square: value = x < .5f ? 1.0f : -1.0f; break;
-                    }
-                    if (!model.bipolar) value = .5f * (value + 1);
-                    value *= model.depth;
-                }
+                const float t = float(i) / float(juce::jmax(size_t(1), count - 1));
+                const float value = values[i];
                 const float x = plot.getX() + t * plot.getWidth();
                 const float y = plot.getCentreY() - value * plot.getHeight() * .45f;
                 if (i == 0) path.startNewSubPath(x, y); else path.lineTo(x, y);
@@ -249,7 +264,8 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             g.setColour(accent); g.strokePath(path, juce::PathStrokeType(1.5f));
             if (!random) {
                 g.setColour(accent.withAlpha(.6f));
-                const float x = plot.getX() + juce::jlimit(0.0f, 1.0f, phase) * plot.getWidth();
+                const float relativePhase = phase - model.phase;
+                const float x = plot.getX() + (relativePhase - std::floor(relativePhase)) * plot.getWidth();
                 g.drawLine(x, plot.getY(), x, plot.getBottom(), 1);
             }
         }
@@ -262,10 +278,18 @@ public:
         addAndMakeVisible(inspectorDivider);
         addChildComponent(modulationPanel);
         addChildComponent(modulationDivider);
+        addAndMakeVisible(modulationToggle);
+        modulationToggle.setName("Toggle modulation editor");
+        modulationToggle.onClick = [this] {
+            rememberLayout();
+            if (modulationVisible) cancelControlGestures(modulationPanel);
+            modulationVisible = !modulationVisible;
+            updateModulationPanel(); saveLayout(); updateButtons();
+        };
         addAndMakeVisible(status);
                 addAndMakeVisible(modulatorViewport); modulatorViewport.setViewedComponent(&modulatorStrip, false);
                 modulatorViewport.setScrollBarsShown(true, false);
-                addAndMakeVisible(addModulator); addModulator.setButtonText("+ Modulator");
+                addAndMakeVisible(addModulator); addModulator.setButtonText("+ Mod");
                 addModulator.onClick = [this] { showModulatorMenu(); };
                 addChildComponent(assignmentBanner);
                 assignmentBanner.onClick = [this] { owner.endModulationAssignment(); refreshAssignmentBanner(); };
@@ -312,9 +336,9 @@ public:
         zoomOut.onClick = [this] { zoomAt(canvas.getLocalBounds().getCentre().toFloat(), 1.0f / 1.2f); };
         zoomIn.onClick = [this] { zoomAt(canvas.getLocalBounds().getCentre().toFloat(), 1.2f); };
         canvas.setName("Routing node canvas");
-        add.setTooltip("Add an independent effect, a dry/wet mixer, or a missing source");
+        add.setTooltip("Add an independent effect, a dry/wet mixer, a full-level A/B splitter, or a missing source");
         remove.setTooltip("Delete the selected node and its cables. Output is retained");
-        bypass.setTooltip("Bypass the selected FX through its host parameter. A bypassed splitter passes full-band audio on port 0 only.");
+        bypass.setTooltip("Bypass the selected FX through its host parameter. Bypassed Multiband passes full-band audio on port 0 only.");
         graph = owner.getRoutingGraph();
         loadLayout(owner.getRoutingLayout());
         ensurePositions();
@@ -342,6 +366,39 @@ public:
         toneViewport.setViewedComponent(nullptr, false);
         modulatorViewport.setViewedComponent(nullptr, false); nodeValue.setLookAndFeel(nullptr);
     }
+    // Rack topology edits share Routing's history, including lifecycle parameter snapshots.
+    bool commitExternalGraphEdit(const Graph& candidate, juce::String& rejectionReason) {
+        auto latest = owner.getRoutingGraph();
+        const auto next = signature(latest);
+        const auto savedLayout = owner.getRoutingLayout();
+        const auto layoutSignature = savedLayout.toXmlString();
+        if (next != lastSignature || layoutSignature != lastLayoutSignature) {
+            // Hidden panels may not have observed a preset/host graph or layout change.
+            undoStates.clear(); redoStates.clear(); selectedLink = -1;
+            graph = std::move(latest);
+            loadLayout(savedLayout); lastLayoutSignature = layoutSignature;
+        } else graph = std::move(latest);
+        lastSignature = next;
+        lastPortSignature = portSignature();
+        ensurePositions(); validateSelection();
+
+        const auto validation = RoutingExecutor::validate(candidate);
+        if (!validation) {
+            error = juce::String(validation.message);
+            rejectionReason = error;
+            showStatus(); rebuildInspector(); syncNodeCards(); canvas.repaint();
+            return false;
+        }
+
+        auto previousRedo = std::move(redoStates);
+        remember();
+        graph = candidate;
+        const bool accepted = publish();
+        if (!accepted) redoStates = std::move(previousRedo);
+        validateSelection(); rebuildInspector(); updateButtons();
+        rejectionReason = error;
+        return accepted;
+    }
     void visibilityChanged() override { syncNodeCards(); }
     void parentHierarchyChanged() override { syncNodeCards(); }
     // Call only after the embedded canvas has its final bounds.
@@ -357,7 +414,7 @@ public:
         inspectorTitle.setColour(juce::Label::textColourId, palette.text);
         inspectorInfo.setColour(juce::Label::textColourId, palette.muted);
         status.setColour(juce::Label::textColourId, error.isEmpty() ? palette.secondary : palette.accent);
-        for (auto* b : std::initializer_list<juce::TextButton*>{&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn, &disconnect, &addModulator, &assignmentBanner, &expandAll, &collapseAll, &inspectorToggle}) {
+        for (auto* b : std::initializer_list<juce::TextButton*>{&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn, &disconnect, &addModulator, &assignmentBanner, &expandAll, &collapseAll, &inspectorToggle, &modulationToggle}) {
             b->setColour(juce::TextButton::buttonColourId, palette.panel);
             b->setColour(juce::TextButton::buttonOnColourId, palette.accent);
             b->setColour(juce::TextButton::textColourOffId, palette.text);
@@ -404,10 +461,11 @@ public:
         inspectorToggle.setTooltip(inspectorVisible ? "Hide inspector (sticky)" : "Show inspector");
         inspector.setVisible(inspectorVisible); inspectorDivider.setVisible(inspectorVisible);
         const int inspectorWidth = inspectorVisible ? constrainedInspectorWidth(desiredInspectorWidth) : 0;
-        const int railWidth = 132;
+        const int railWidth = 66;
         const int bottom = getHeight() - 40;
         const int modulationHeight = constrainedModulationHeight(desiredModulationHeight);
-        const int stripTop = selectedModulator ? bottom - modulationHeight : bottom;
+        const bool showModulation = modulationVisible && selectedModulator != 0;
+        const int stripTop = showModulation ? bottom - modulationHeight : bottom;
         const int x = getWidth() - inspectorWidth - 12;
         canvas.setBounds(railWidth + 24, 70, juce::jmax(100, x - railWidth - 44), juce::jmax(0, stripTop - 78));
         assignmentBanner.setBounds(inspectorVisible ? x : juce::jmax(canvas.getX(), getWidth() - 360), 44,
@@ -416,13 +474,18 @@ public:
         inspectorDivider.setBounds(x - 13, 44, 10, juce::jmax(0, bottom - 52));
         addModulator.setBounds(12, 72, railWidth, 28);
         modulatorViewport.setBounds(12, 106, railWidth, juce::jmax(0, bottom - 106));
-        modulatorStrip.setSize(railWidth - modulatorViewport.getScrollBarThickness(), int(modulatorButtons.size()) * 88);
+        modulatorStrip.setSize(railWidth - modulatorViewport.getScrollBarThickness(), int(modulatorButtons.size()) * 44);
         for (size_t i = 0; i < modulatorButtons.size(); ++i)
-            modulatorButtons[i]->setBounds(0, int(i) * 88, modulatorStrip.getWidth(), 82);
-        modulationDivider.setVisible(selectedModulator != 0);
+            modulatorButtons[i]->setBounds(0, int(i) * 44, modulatorStrip.getWidth(), 41);
+        modulationDivider.setVisible(showModulation);
+        modulationPanel.setVisible(showModulation);
+        modulationToggle.setButtonText(modulationVisible ? "v" : "^");
+        modulationToggle.setTooltip(modulationVisible ? "Hide modulation editor (sticky)" : "Show modulation editor");
+        modulationToggle.setBounds(canvas.getRight() - 34, bottom + 3, 30, 26);
+        modulationToggle.toFront(false);
         modulationDivider.setBounds(canvas.getX(), stripTop - 8, canvas.getWidth(), 8);
         modulationPanel.setBounds(canvas.getX(), stripTop, canvas.getWidth(), modulationHeight);
-        status.setBounds(8, getHeight() - 33, getWidth() - 16, 28);
+        status.setBounds(8, getHeight() - 33, juce::jmax(0, canvas.getRight() - 50), 28);
         layoutInspector(); syncNodeCards();
     }
 public:
@@ -439,8 +502,8 @@ public:
     std::function<void(const juce::String&)> onRevealParameter;
 private:
     int constrainedInspectorWidth(int desired) const {
-        // Match resized(): rail 132 + margins/gap 56 + canvas minimum 100.
-        const int available = juce::jmax(0, getWidth() - 288);
+        // Match resized(): rail 66 + margins/gap 56 + canvas minimum 100.
+        const int available = juce::jmax(0, getWidth() - 222);
         return juce::jmin(juce::jlimit(320, 480, desired), available);
     }
     void saveInspectorWidth() {
@@ -499,10 +562,14 @@ private:
         }
     }
     void rebuildModulatorStrip() {
+        auto previous = std::move(modulatorButtons);
         modulatorButtons.clear();
         for (const auto& m : owner.getModulationState().modulators) {
-            auto button = std::make_unique<ModulatorTile>(m);
-            button->setTooltip("Select modulator controls / assignments; audio routing selection never cancels Assign");
+            std::unique_ptr<ModulatorTile> button;
+            for (auto& old : previous) if (old && old->model.id == m.id && old->model.type == m.type) { button = std::move(old); break; }
+            if (!button) button = std::make_unique<ModulatorTile>(m);
+            button->model = m; button->refreshWaveform();
+            button->setTooltip(modulatorName(m) + ": select controls / assignments; audio routing selection never cancels Assign");
 
             button->onClick = [this, id = m.id] {
                 selectedModulator = id;
@@ -519,7 +586,7 @@ private:
         if (!found) selectedModulator = 0;
         if (selectedModulator) modulationui::selectModulator(owner, selectedModulator);
         if (modulationPanel.selectedId() != selectedModulator) modulationPanel.select(selectedModulator);
-        modulationPanel.setVisible(selectedModulator != 0);
+        modulationPanel.setVisible(modulationVisible && selectedModulator != 0);
         for (auto& tile : modulatorButtons)
             tile->setToggleState(tile->model.id == selectedModulationId(), juce::dontSendNotification);
         resized(); repaint();
@@ -584,6 +651,7 @@ private:
         case NodeType::sum: return {}; // Legacy nodes are stripped by the processor.
         case NodeType::mix: return n.mainControls ? "LEAD / STACK" : "DRY / WET MIX";
         case NodeType::output: return "OUTPUT";
+        case NodeType::splitter: return "Splitter";
         case NodeType::waveshaper: return "WAVESHAPER " + juce::String(routingFxSlot(n.id));
         case NodeType::equalizer: return "EQ8 " + juce::String(routingFxSlot(n.id));
         case NodeType::crossover: return "MULTIBAND " + juce::String(routingFxSlot(n.id));
@@ -607,10 +675,11 @@ private:
             || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type);
     }
     static int inputs(const RoutingNode& n) {
-        return n.type == NodeType::mix ? 2 : isEffect(n.type) || n.type == NodeType::output ? 1 : 0;
+        return n.type == NodeType::mix ? 2 : isEffect(n.type) || n.type == NodeType::output || n.type == NodeType::splitter ? 1 : 0;
     }
     int outputPins(const RoutingNode& n) const {
         if (n.type == NodeType::output || n.type == NodeType::sum) return 0;
+        if (n.type == NodeType::splitter) return 2;
         if (n.type != NodeType::crossover) return 1;
         const int slot = fxSlot(n);
         return (slot > 0 ? toneui::value(owner, toneParameterId(size_t(slot), "BandCount"), float(n.bandCount))
@@ -630,6 +699,7 @@ private:
             && std::any_of(graph.links.begin(), graph.links.end(), [&n](const auto& l) { return l.source == n.id && l.sourcePin == 2; });
     }
     juce::String outputName(const RoutingNode& n, int pin) const {
+        if (n.type == NodeType::splitter) return pin == 0 ? "A" : "B";
         if (n.type != NodeType::crossover) return "Out";
         if (pin >= outputPins(n)) return "Stored #2 | silent";
         if (!effectEnabled(n)) return pin == 0 ? "Dry / full-band" : "Silent / bypass";
@@ -791,32 +861,92 @@ private:
         return {b.getRight() - 26, b.getY() + 3, 22, 22};
     }
     void rememberLayout() { remember(); undoStates.back().layoutOnly = true; }
+    juce::Point<float> packedPosition(juce::Rectangle<float> card,
+                                      const std::vector<juce::Rectangle<float>>& obstacles,
+                                      float left, float width, juce::Point<float> anchor, bool rows) const {
+        constexpr float gap = 12;
+        const float right = left + juce::jmax(width, card.getWidth());
+        std::vector<float> xs{left, juce::jlimit(left, right - card.getWidth(), anchor.x)};
+        std::vector<float> ys{anchor.y};
+        float bottom = anchor.y;
+        for (const auto& obstacle : obstacles) {
+            xs.push_back(obstacle.getRight() + gap);
+            xs.push_back(obstacle.getX() - card.getWidth() - gap);
+            ys.push_back(obstacle.getBottom() + gap);
+            if (!rows) ys.push_back(obstacle.getY() - card.getHeight() - gap);
+            bottom = juce::jmax(bottom, obstacle.getBottom() + gap);
+        }
+        std::sort(xs.begin(), xs.end()); xs.erase(std::unique(xs.begin(), xs.end()), xs.end());
+        std::sort(ys.begin(), ys.end()); ys.erase(std::unique(ys.begin(), ys.end()), ys.end());
+        // Finite edge candidates, not an iterative push-down loop. The fallback
+        // is below every obstacle and therefore always terminates collision-free.
+        juce::Point<float> best{left, bottom};
+        double bestScore = std::numeric_limits<double>::max();
+        for (const float y : ys) for (const float x : xs) {
+            if (x < left || x + card.getWidth() > right || (rows && y < anchor.y)) continue;
+            card.setPosition(x, y);
+            bool blocked = false;
+            for (const auto& obstacle : obstacles) if (card.intersects(obstacle.expanded(gap - .01f))) { blocked = true; break; }
+            if (blocked) continue;
+            const double dx = x - anchor.x, dy = y - anchor.y;
+            const double score = rows ? double(y - anchor.y) * (width + 1) + x - left : dx * dx + dy * dy;
+            if (score < bestScore) { bestScore = score; best = {x, y}; }
+        }
+        return best;
+    }
+    void packExpanded(const std::vector<std::uint32_t>& ids, bool rows) {
+        if (ids.empty()) return;
+        std::vector<juce::Rectangle<float>> obstacles;
+        for (const auto& n : graph.nodes)
+            if (nodeVisible(n) && std::find(ids.begin(), ids.end(), n.id) == ids.end()) obstacles.push_back(nodeBounds(n));
+        float widest = 0;
+        auto anchor = positions.at(ids.front());
+        for (auto id : ids) {
+            const auto b = nodeBounds(*node(id));
+            widest = juce::jmax(widest, b.getWidth());
+            if (rows) {
+                const auto compact = compactPositions.at(id);
+                anchor.x = juce::jmin(anchor.x, compact.x); anchor.y = juce::jmin(anchor.y, compact.y);
+            }
+        }
+        const float viewWidth = float(juce::jmax(100, canvas.getWidth() - 32));
+        const float width = juce::jmax(widest, viewWidth / zoom);
+        const float left = rows ? anchor.x : juce::jmin(anchor.x, toWorld({16, 16}).x);
+        for (auto id : ids) {
+            const auto b = nodeBounds(*node(id));
+            const auto origin = rows ? anchor : positions.at(id);
+            positions[id] = expandedPositions[id] = packedPosition(b, obstacles, left, width, origin, rows);
+            obstacles.push_back(nodeBounds(*node(id)));
+        }
+    }
     void changeExpansion(const RoutingNode& n, bool value) {
         if (!expandable(n) || isExpanded(n) == value) return;
         (isExpanded(n) ? expandedPositions : compactPositions)[n.id] = positions[n.id];
         expanded[n.id] = value;
         auto& target = value ? expandedPositions : compactPositions;
-        if (target.count(n.id) == 0) {
-            // First use only: keep all existing cards fixed, move this new body
-            // down past intersecting neighbours. Stable-ID order makes bulk
-            // expansion deterministic, without a global graph rearrangement.
-            auto candidate = nodeBounds(n);
-            bool collision = true;
-            while (collision) {
-                collision = false;
-                float nextY = candidate.getY();
-                for (const auto& other : graph.nodes) if (other.id != n.id && other.type != NodeType::sum) {
-                    const auto obstacle = nodeBounds(other).expanded(12.0f);
-                    if (candidate.intersects(obstacle)) { nextY = juce::jmax(nextY, obstacle.getBottom()); collision = true; }
-                }
-                candidate.setY(nextY);
-            }
-            target[n.id] = candidate.getTopLeft();
+        if (target.count(n.id)) positions[n.id] = target[n.id];
+        else if (value) packExpanded({n.id}, false);
+        else positions[n.id] = compactPositions[n.id] = positions[n.id];
+    }
+    void revealExpanded(const RoutingNode& n) {
+        const auto b = nodeBounds(n);
+        const float fit = juce::jmin(float(juce::jmax(1, canvas.getWidth() - 32)) / b.getWidth(),
+                                    float(juce::jmax(1, canvas.getHeight() - 32)) / b.getHeight());
+        zoom = juce::jmin(juce::jmax(zoom, .35f), juce::jmax(.35f, fit));
+        auto screen = juce::Rectangle<float>(toScreen(b.getTopLeft()), toScreen(b.getBottomRight()));
+        const auto view = canvas.getLocalBounds().toFloat().reduced(16);
+        if (screen.getWidth() > view.getWidth() || screen.getHeight() > view.getHeight())
+            pan = view.getTopLeft() - b.getTopLeft() * zoom;
+        else {
+            if (screen.getX() < view.getX()) pan.x += view.getX() - screen.getX();
+            else if (screen.getRight() > view.getRight()) pan.x -= screen.getRight() - view.getRight();
+            if (screen.getY() < view.getY()) pan.y += view.getY() - screen.getY();
+            else if (screen.getBottom() > view.getBottom()) pan.y -= screen.getBottom() - view.getBottom();
         }
-        positions[n.id] = target[n.id];
     }
     void toggleExpanded(const RoutingNode& n) {
         rememberLayout(); changeExpansion(n, !isExpanded(n));
+        if (isExpanded(n)) revealExpanded(n);
         saveLayout(); syncNodeCards(); updateButtons(); canvas.repaint();
     }
     void setAllExpanded(bool value) {
@@ -824,12 +954,27 @@ private:
         for (const auto& n : graph.nodes) changed |= expandable(n) && isExpanded(n) != value;
         if (!changed) return;
         rememberLayout();
-        std::vector<std::uint32_t> ids;
-        for (const auto& n : graph.nodes) if (expandable(n)) ids.push_back(n.id);
-        std::sort(ids.begin(), ids.end());
-        for (auto id : ids) changeExpansion(*node(id), value);
+        std::vector<std::uint32_t> automatic;
+        for (const auto& n : graph.nodes) if (expandable(n)) {
+            if (isExpanded(n) != value) {
+                (isExpanded(n) ? expandedPositions : compactPositions)[n.id] = positions[n.id];
+                expanded[n.id] = value;
+                const auto& target = value ? expandedPositions : compactPositions;
+                if (target.count(n.id)) positions[n.id] = target.at(n.id);
+            }
+            if (value && expandedPositions.count(n.id) == 0) automatic.push_back(n.id);
+        }
+        std::sort(automatic.begin(), automatic.end());
+        // All final sizes are installed before collecting obstacles. Compact
+        // versions of these same cards must not obstruct their replacement.
         inspectorVisible = !value;
-        rebuildInspector(); resized(); saveLayout(); updateButtons(); canvas.repaint();
+        rebuildInspector(); resized();
+        if (value) {
+            packExpanded(automatic, true);
+            // Reveal one useful card instead of shrinking a large graph to fit.
+            if (!automatic.empty()) revealExpanded(*node(automatic.front()));
+        }
+        saveLayout(); syncNodeCards(); updateButtons(); canvas.repaint();
     }
     juce::Rectangle<float> cardScreenBounds(const RoutingNode& n) const {
         const auto b = nodeBounds(n);
@@ -1113,6 +1258,8 @@ private:
             }
         }
         if (draggingNode && e.position.getDistanceFrom(dragStart) > 2) {
+            if (const auto* n = node(draggingNode); n && isExpanded(*n))
+                expandedPositions[draggingNode] = positions[draggingNode];
             undoStates.push_back(dragBefore); limitHistory(); redoStates.clear(); saveLayout(); updateButtons();
         }
         if (!cableEdit) saveLayout();
@@ -1140,6 +1287,8 @@ private:
         tree.setProperty("inspectorVisible", inspectorVisible, nullptr);
         tree.setProperty("inspectorWidth", desiredInspectorWidth, nullptr);
         tree.setProperty("modulationHeight", desiredModulationHeight, nullptr);
+        tree.setProperty("modulationVisible", modulationVisible, nullptr);
+
         tree.setProperty("selectedNode", int(selectedNode), nullptr);
         tree.setProperty("selectedModulator", int(selectedModulator), nullptr);
         if (const auto* n = node(selectedNode); n && (n->type == NodeType::voice || n->type == NodeType::lead))
@@ -1151,6 +1300,7 @@ private:
             const auto* n = node(p.first);
             const bool open = n && isExpanded(*n);
             child.setProperty("expanded", open, nullptr);
+
             const auto writePosition = [&](const auto& saved, const char* x, const char* y, bool active) {
                 const auto it = saved.find(p.first);
                 if (active || it != saved.end()) {
@@ -1160,6 +1310,7 @@ private:
             };
             writePosition(compactPositions, "compactX", "compactY", !open);
             writePosition(expandedPositions, "expandedX", "expandedY", open);
+
                         if (const auto alias = names.find(p.first); alias != names.end()) child.setProperty("name", alias->second, nullptr);
                         tree.addChild(child, -1, nullptr);
         }
@@ -1173,6 +1324,7 @@ private:
         }
         positions.clear(); compactPositions.clear(); expandedPositions.clear(); expanded.clear(); names.clear();
         inspectorVisible = bool(tree.getProperty("inspectorVisible", true));
+        modulationVisible = bool(tree.getProperty("modulationVisible", true));
         selectedNode = uint32_t(int(tree.getProperty("selectedNode", 0)));
         selectedModulator = uint32_t(int(tree.getProperty("selectedModulator", 0)));
         const int voice = int(tree.getProperty("selectedVoiceSlot", -2));
@@ -1201,16 +1353,20 @@ private:
                 };
                 readPosition(compactPositions, "compactX", "compactY");
                 readPosition(expandedPositions, "expandedX", "expandedY");
+
                 auto& active = expanded[key] ? expandedPositions : compactPositions;
                 if (active.count(key) == 0) active[key] = {x, y};
                 if (compactPositions.count(key) == 0) compactPositions[key] = {x, y};
                 positions[key] = active[key];
+
                 const auto alias = c.getProperty("name").toString().trim().substring(0, 48);
                 if (alias.isNotEmpty()) names[std::uint32_t(id)] = alias;
             }
         }
+
         resized();
     }
+
     void ensurePositions() {
         int extra = 0;
         for (const auto& n : graph.nodes) if (positions.count(n.id) == 0) {
@@ -1234,6 +1390,7 @@ private:
             case NodeType::gate:
             case NodeType::xpFilter:
             case NodeType::synthFilter: p = {710, 30}; break;
+            case NodeType::splitter: p = {710, 130}; break;
             case NodeType::output: p = {930, 30}; break;
             }
             if (n.id >= 100) p = {270.0f + float(extra % 3) * 200, 460.0f + float(extra / 3) * 100};
@@ -1247,6 +1404,7 @@ private:
     }
     EditState state() const {
         EditState result{owner.getRoutingGraph(), layout(), {}};
+        result.modulationAssignments = owner.getModulationState().assignments;
         for (size_t slot = 0; slot < 16; ++slot)
             for (size_t field = 0; field < 3; ++field)
                 if (const auto* p = owner.parameters.getRawParameterValue(fxParameterId(slot, field))) result.fxValues[slot][field] = p->load();
@@ -1279,10 +1437,61 @@ private:
         auto saved = state(); saved.fxOnUndoMask = fxOnMask;
         undoStates.push_back(std::move(saved)); limitHistory(); redoStates.clear();
     }
+    static bool ownsModulationTarget(const RoutingNode& n, const juce::String& target) {
+        if (n.type == NodeType::mix)
+            return target == (n.mainControls ? juce::String("double") : localMixParameterId(n.id));
+        if (!isEffect(n.type)) return false;
+        const int slot = routingFxSlot(n.id);
+        if (slot < 0) return false;
+        const auto prefix = slot == 0 ? juce::String("chorale") : "fx" + juce::String(slot);
+        if (!target.startsWith(prefix)) return false;
+        if (slot == 0) return true;
+        const auto suffix = target.substring(prefix.length());
+        // fx1 must not claim fx10..fx15's assignments.
+        return !suffix.isEmpty() && !juce::CharacterFunctions::isDigit(suffix[0]);
+    }
     void stepHistory(std::vector<EditState>& from, std::vector<EditState>& to) {
         if (from.empty()) return;
         auto current = state();
-        const auto s = from.back(); from.pop_back();
+        const auto s = from.back();
+        auto modulation = owner.getModulationState();
+        bool restoreModulation = false;
+        if (!s.layoutOnly && !s.parameterEdit) {
+            const auto survives = [](const RoutingNode& n, const Graph& other) {
+                return std::any_of(other.nodes.begin(), other.nodes.end(), [&](const RoutingNode& candidate) {
+                    return candidate.id == n.id && candidate.type == n.type;
+                });
+            };
+            const auto restoredTarget = [&](const juce::String& target) {
+                return std::any_of(s.graph.nodes.begin(), s.graph.nodes.end(), [&](const RoutingNode& n) {
+                    return !survives(n, current.graph) && ownsModulationTarget(n, target);
+                });
+            };
+            const auto affectedTarget = [&](const juce::String& target) {
+                return restoredTarget(target) || std::any_of(current.graph.nodes.begin(), current.graph.nodes.end(), [&](const RoutingNode& n) {
+                    return !survives(n, s.graph) && ownsModulationTarget(n, target);
+                });
+            };
+            // Replace mappings only for lifecycle-changing identities, never the
+            // entire old modulation state: surviving maps and sources stay live.
+            auto& assignments = modulation.assignments;
+            assignments.erase(std::remove_if(assignments.begin(), assignments.end(), [&](const Assignment& a) {
+                return affectedTarget(a.targetParameterId);
+            }), assignments.end());
+            restoreModulation = assignments.size() != current.modulationAssignments.size();
+            for (const auto& a : s.modulationAssignments) {
+                if (!restoredTarget(a.targetParameterId)) continue;
+                if (std::none_of(modulation.modulators.begin(), modulation.modulators.end(), [&](const Modulator& m) {
+                    return m.id == a.modulatorId;
+                })) continue; // Deleting a source independently must not resurrect it.
+                assignments.push_back(a); restoreModulation = true;
+            }
+            if (assignments.size() > ModulationBackend::maxAssignments) {
+                error = "Undo/Redo needs more modulation assignment capacity; remove an assignment and retry.";
+                showStatus(); return; // Leave graph and both history stacks untouched.
+            }
+        }
+        from.pop_back();
         current.fxOnUndoMask = s.fxOnUndoMask;
         current.fxMixUndoMask = s.fxMixUndoMask;
         current.creativeUndoMasks = s.creativeUndoMasks;
@@ -1335,6 +1544,9 @@ private:
                 setParameter(toneParameterId(slot, "WaveLevelMatch"), s.levelMatchValues[slot - 1]);
             }
         }
+        // publish() retires the departing identity's maps. Restore only after
+        // graph acceptance, so a replacement cannot inherit the outgoing maps.
+        if (restoreModulation && !owner.setModulationState(modulation, error)) showStatus();
         graph = owner.getRoutingGraph(); lastSignature = signature(graph);
         rebuildInspector();
     }
@@ -1450,6 +1662,7 @@ private:
         menu.addItem(64, "Synth Filter | ladder / comb / formant", effectRoom);
         menu.addSeparator();
         menu.addItem(3, "Dry / Wet Mix", room);
+        menu.addItem(300, "Splitter | full-level A / B duplicates", room);
         menu.addSeparator();
         menu.addItem(10, "Restore Lead source", room && !hasSource(-1));
         for (int i = 0; i < 8; ++i) if (voicePresent(i))
@@ -1491,7 +1704,13 @@ private:
             if (effects >= 16) return;
         } else if (kind == 3) {
             n.type = NodeType::mix;
-            n.id = 200; while (node(n.id)) ++n.id;
+            for (std::uint32_t id = 200; id < 300; ++id) if (!node(id)) { n.id = id; break; }
+            if (!n.id) return;
+        } else if (kind == 300) {
+            n.type = NodeType::splitter;
+            for (std::uint32_t id = 300; id < 300 + std::uint32_t(RoutingExecutor::maxNodes); ++id)
+                if (!node(id)) { n.id = id; break; }
+            if (!n.id) return;
         } else if (kind == 10) { n.id = 1; n.type = NodeType::lead; }
         else if (kind >= 20 && kind < 28) {
             if (!voicePresent(kind - 20)) return;
@@ -1557,6 +1776,8 @@ private:
         juce::String info = "Select a machine to edit its controls.\n\nInputs accept multiple voices with automatic merge compensation. Each output (each Multiband band) has one outgoing cable. Dragging it to another input replaces its existing links; dropping on empty space disconnects them. Saved fanout remains until that output is edited. A click without dragging leaves wiring unchanged.\n\nDrag an occupied input end to reconnect; drop it on empty space to disconnect that cable. Ctrl/Command-drag an output to move a cable's source. Wheel zooms at the cursor; Alt/middle-drag pans.\n\nAbsent voices and the untouched bypassed main Chorale are hidden without changing routing. Muted voices stay visible. Unconnected inputs receive silence; rejected edits retain accepted routing.";
         if (n) {
             info = "Node ID " + juce::String(n->id);
+            if (n->type == NodeType::splitter)
+                info += "\nOne input is duplicated at full level to outputs A and B. No dry/wet blend, band split or FX slot. Each port has its own outgoing cable; rewiring one leaves the other intact.";
             if (isEffect(n->type)) {
                 const int slot = fxSlot(*n);
                 info += "\nIndependent FX slot " + juce::String(slot);
@@ -1673,7 +1894,8 @@ private:
                             inspector.addAndMakeVisible(*mixControl);
                             info += "\nFinal output trim; meters remain in the main editor. Exactly one Output is required.";
                         }
-            else info += "\nProcessed lead source. Connecting this output elsewhere moves its cable; inputs accept multiple sources.";
+            else if (n->type != NodeType::splitter)
+                info += "\nProcessed lead source. Connecting this output elsewhere moves its cable; inputs accept multiple sources.";
         } else if (selectedLink >= 0 && selectedLink < int(graph.links.size())) {
             DisplayLink item;
             if (!displayLink(selectedLink, item)) return;
@@ -1688,7 +1910,7 @@ private:
                 + "\n\nDrag the input end to reconnect or disconnect this cable. Drag the output to move its destination or drop on empty space to disconnect all its links. Ctrl/Command-drag the output to move this cable's source. Clicks leave wiring unchanged.";
             if (item.foldedEnd >= 0)
                 info += "\n\nTransparent bypass: this cable represents stored Mix 11 -> main Chorale 12 -> Output 13. Chorale is Off via its host parameter. Disconnect removes BOTH chain links; rewiring replaces both with one real direct cable. Enabling Chorale reveals the stored chain if unchanged.";
-            if (inactiveSource(l)) info += "\n\nINACTIVE / SILENT: this cable remains stored. Re-enable the splitter or return to 3 bands to restore its source port.";
+            if (inactiveSource(l)) info += "\n\nINACTIVE / SILENT: this cable remains stored. Re-enable Multiband or return to 3 bands to restore its source port.";
         }
         inspectorInfo.setText(info, juce::dontSendNotification);
         inspectorInfo.setJustificationType(juce::Justification::topLeft);
@@ -1753,6 +1975,7 @@ private:
         for (size_t i = 0; i < modulatorButtons.size() && i < modulators.size(); ++i) {
             auto& tile = *modulatorButtons[i];
             tile.model = modulators[i];
+            tile.refreshWaveform();
             tile.setToggleState(tile.model.id == selectedModulationId(), juce::dontSendNotification);
             if (snapshot.consistent) for (const auto& m : snapshot.modulators) if (m.id == tile.model.id) {
                 tile.phase = m.phase;
@@ -1807,7 +2030,7 @@ private:
     std::map<std::uint32_t, juce::Point<float>> positions, compactPositions, expandedPositions;
     std::map<std::uint32_t, bool> expanded;
     std::map<std::uint32_t, std::unique_ptr<NodeCard>> nodeCards;
-    bool inspectorVisible = true;
+    bool inspectorVisible = true, modulationVisible = true;
     int lastCardTheme = -1;
     std::map<std::uint32_t, juce::String> names;
     float zoom = 0.72f;
@@ -1842,7 +2065,7 @@ private:
         juce::String modulatorSignature;
         juce::Component modulatorStrip;
         juce::Viewport modulatorViewport;
-        juce::TextButton addModulator, assignmentBanner;
+        juce::TextButton addModulator, assignmentBanner, modulationToggle;
             juce::BubbleMessageComponent revealBubble;
         std::vector<std::unique_ptr<ModulatorTile>> modulatorButtons;
     std::unique_ptr<ToneEffectPanel> tonePanel;

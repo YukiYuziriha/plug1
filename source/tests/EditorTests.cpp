@@ -9,6 +9,9 @@
 #include "CreativeIntegrationTests.h"
 #include "UtilityIntegrationTests.h"
 #include "UpdateUiTests.h"
+#include "SliderRenderingTests.h"
+#include "MainBusFxRackPanel.h"
+#include "RackUndoIntegrationTests.h"
 
 #include <algorithm>
 #include <array>
@@ -491,7 +494,8 @@ juce::Button* findButton(juce::Component& parent, const juce::String& text) {
     return nullptr;
 }
 
-void checkDrawerControls(Processor& owner, juce::Component& parent, int& sliders, int& buttons) {
+void checkDrawerControls(Processor& owner, juce::Component& parent, int& sliders, int& buttons,
+                         bool stackSliders = false) {
     for (auto* child : parent.getChildren()) {
         if (!child->isVisible()) continue;
         // JUCE parents the viewed component inside a clipping holder, not directly in the viewport.
@@ -501,6 +505,9 @@ void checkDrawerControls(Processor& owner, juce::Component& parent, int& sliders
             expect(parent.getLocalBounds().contains(child->getBounds()), "Drawer child outside parent: " + child->getName());
         if (auto* slider = dynamic_cast<juce::Slider*>(child)) {
             ++sliders;
+            expect(slider->getSliderStyle() == (stackSliders ? juce::Slider::LinearHorizontal
+                                                            : juce::Slider::RotaryHorizontalVerticalDrag),
+                   "Only Stack Lead/voice controls should use horizontal sliders");
             const auto id = slider->getComponentID();
             auto& p = parameter(owner, id);
             slider->setValue(p.getNormalisableRange().end, juce::sendNotificationSync);
@@ -520,13 +527,14 @@ void checkDrawerControls(Processor& owner, juce::Component& parent, int& sliders
             expectNear(parameterValue(owner, id), p.getNormalisableRange().start, "Drawer numeric cancel: " + id);
             continue; // Slider internals have transient text editors and their own layout.
         }
-        if (auto* button = dynamic_cast<juce::Button*>(child); button && button->getComponentID().isNotEmpty()) {
+        if (auto* button = dynamic_cast<juce::Button*>(child);
+                    button && owner.parameters.getParameter(button->getComponentID()) != nullptr) {
             ++buttons;
             const auto id = button->getComponentID();
             setParameter(owner, id, 1);
             if (id != "advancedOn") expect(button->getToggleState(), "Voice/Chorale switch did not follow host");
         }
-        checkDrawerControls(owner, *child, sliders, buttons);
+        checkDrawerControls(owner, *child, sliders, buttons, stackSliders);
     }
 }
 
@@ -648,19 +656,31 @@ void editorSkin(int theme) {
     for (const auto* obsolete : {"Show Advanced", "Hide Advanced", "Voice stack", "Open Routing"})
         expect(findButton(*editor, obsolete) == nullptr, "Obsolete Stack action remains: " + juce::String(obsolete));
     expect(!owner.settings().advanced, "Always-visible Stack changed legacy activation");
-    expect(editor->isResizable() && windowHeight == 924 && windowWidth == 940,
-           "Fresh editor must be resizable at 940x924, including the preset toolbar");
-    expect(canvas.getHeight() == 872 && canvas.getTransform().isIdentity(),
-           "Fresh Stack must use its fixed unscaled 872px design");
+    // The Main Bus rack occupies y=344..588; Stack starts at 610 and retains its 442px design allocation.
+    expect(editor->isResizable() && windowHeight == 1104 && windowWidth == 940,
+           "Fresh editor must be resizable at 940x1104, including the 52px preset footer");
+    expect(canvas.getBounds() == juce::Rectangle<int>(0, 0, 940, 1052) && canvas.getTransform().isIdentity(),
+           "Fresh Stack must use its fixed unscaled 940x1052 design");
     int advancedSliders = 0, advancedButtons = 0, choraleSliders = 0, choraleButtons = 0;
     for (auto* child : canvas.getChildren()) {
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
-            checkDrawerControls(owner, *child, advancedSliders, advancedButtons);
-        if (dynamic_cast<vocalstack::ChoralePanel*>(child))
-            checkDrawerControls(owner, *child, choraleSliders, choraleButtons);
+            checkDrawerControls(owner, *child, advancedSliders, advancedButtons, true);
     }
+    auto* rack = vocalstack::toneUiTests::find<vocalstack::MainBusFxRackPanel>(canvas, [](auto&) { return true; });
+    expect(rack && rack->isVisible() && rack->getBounds() == juce::Rectangle<int>(18, 344, 904, 244),
+           "Stack must retain the full 904x244 Main Bus FX rack below the main controls");
+    auto* freshStack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(canvas, [](auto&) { return true; });
+    expect(freshStack && freshStack->getBounds() == juce::Rectangle<int>(18, 610, 904, 430)
+               && canvas.getLocalBounds().contains(freshStack->getBounds())
+               && !rack->getBounds().intersects(freshStack->getBounds()),
+           "The rack must not overlap or clip the full Stack panel at its new 610px origin");
+    auto* chorale = vocalstack::toneUiTests::find<juce::Component>(*rack, [](auto& child) {
+        return child.getComponentID() == "mainBusFx12";
+    });
+    expect(chorale != nullptr, "Main Bus FX rack is missing its canonical Chorale card");
+    checkDrawerControls(owner, *chorale, choraleSliders, choraleButtons);
     expect(advancedSliders == 24 && advancedButtons == 3, "Fresh Stack must contain Lead and two complete eight-slider voice cards");
-    expect(choraleSliders == 2 && choraleButtons == 1, "Chorale controls missing");
+    expect(choraleSliders == 2 && choraleButtons == 1, "Main Bus Chorale knobs or host-bound switch missing");
     auto* addVoice = findButton(*editor, "+ Add voice");
     expect(addVoice != nullptr, "Missing Add voice action");
     for (int i = 0; i < 6; ++i) addVoice->onClick();
@@ -668,7 +688,7 @@ void editorSkin(int theme) {
     advancedSliders = advancedButtons = 0;
     for (auto* child : canvas.getChildren())
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
-            checkDrawerControls(owner, *child, advancedSliders, advancedButtons);
+            checkDrawerControls(owner, *child, advancedSliders, advancedButtons, true);
     expect(advancedSliders == 72 && advancedButtons == 9, "Lead and eight complete stable voice cards missing");
     expectPassiveControls(*editor);
     setParameter(owner, "advancedOn", 0);
@@ -685,7 +705,7 @@ void editorSkin(int theme) {
         auto& p = parameter(owner, id);
         p.setValueNotifyingHost(p.getDefaultValue());
     }
-    editor->setSize(940, 924);
+    editor->setSize(940, 1104);
     saveSnapshot(*editor, filename + "-advanced.png");
     for (int i = 0; i < 6; ++i) addVoice->onClick();
     expectPassiveControls(*editor);
@@ -696,7 +716,7 @@ void editorSkin(int theme) {
     owner.setAdvancedVisible(false);
     juce::Timer::callPendingTimersSynchronously();
     auto* stack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(*editor, [](auto&) { return true; });
-    expect(stack && stack->isVisible() && canvas.getHeight() == 872 && owner.settings().advanced,
+    expect(stack && stack->isVisible() && canvas.getHeight() == 1052 && owner.settings().advanced,
            "Legacy visibility state hid Stack or changed activation");
     editor.reset();
     editor.reset(owner.createEditor());
@@ -748,7 +768,7 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 57> tests{{
+    const std::array<Test, 63> tests{{
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -776,12 +796,19 @@ int main(int argc, char** argv) {
         {"Three-theme state, legacy migration and preset isolation", vocalstack::updateUiTests::themeState},
         {"All utility inspectors in all three themes", vocalstack::updateUiTests::utilityInspectors},
         {"Half-speed relative sliders across sizes, skew and themes", vocalstack::updateUiTests::halfSpeedSliders},
+        {"Slider selection, feedback, alignment, sensitivity and knob modes", vocalstack::sliderRenderingTests::run},
+        {"Routing half-width modulator rail in all three themes", vocalstack::updateUiTests::routingModulatorRail},
+        {"Routing waveform previews follow modulator controls", vocalstack::updateUiTests::routingWaveformPreviews},
         {"Coherent creative visual models in all three themes", vocalstack::updateUiTests::creativeVisuals},
         {"Voice 1 FX alters only Voice 1 with automatic merging", perVoiceFxSignalPath},
         {"Routing mouse edits, history, focus and both skins", routingUiRegression},
+        {"Shared rack/Routing Undo integration", [] {
+            expect(vocalstack::rackUndoIntegrationTests::run(), "Rack Undo integration failed; see named failures above");
+        }},
         {"Embedded Stack/Routing tabs retain Advanced in both skins", routingPolish::embeddedTabs},
         {"Occupied output replacement, disconnect inspector and cursor zoom", routingPolish::outputGestures},
         {"Multiband output edits preserve other ports", routingPolish::multibandOutputs},
+        {"Splitter output edits preserve independent branches", routingPolish::splitterOutputs},
         {"Routing voice visibility follows presence, not mute", routingPolish::voiceVisibility},
         {"Canonical Chorale folding edits the real graph and follows host", routingPolish::foldedMainChorale},
         {"Waveshaper Raw disables Quality without erasing it", stackModulationUi::waveQualityRaw},
@@ -800,6 +827,7 @@ int main(int argc, char** argv) {
                 {"Routing context and Add Node menus anchor to cursor", stackModulationUi::menuCursorPlacement},
         {"Routing sticky inspector and global/individual expansion", routingExpansion::stickyAndGlobal},
         {"Routing first-use packing and independent manual positions", routingExpansion::packingAndPositions},
+        {"Routing horizontal packing separates parallel expanded lanes", routingExpansion::horizontalPacking},
         {"Routing layout-only history preserves newer graph and automation", routingExpansion::layoutHistory},
         {"Routing expansion and position banks survive reopen/state recall", routingExpansion::reopen},
         {"Expanded routing controls bind parameters in all three themes", routingExpansion::parameterBindings},

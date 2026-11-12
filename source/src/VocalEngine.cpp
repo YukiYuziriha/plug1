@@ -217,6 +217,10 @@ void VocalEngine::reset(const Settings& requested) {
                 settings.advanced ? 1.0f : 0.0f, settings.outputGainDb};
 }
 
+RoutingGrainSnapshot VocalEngine::grainSnapshot() const noexcept {
+    return routing.grainSnapshot();
+}
+
 Meters VocalEngine::meters() const noexcept {
     Meters result;
     result.inputChannels = inChannels;

@@ -134,6 +134,57 @@ void outputGestures() {
     }
 }
 
+void splitterOutputs() {
+    for (int skin = 0; skin < 3; ++skin) {
+        Graph graph{{{1, NodeType::lead}, {300, NodeType::splitter},
+                     {11, NodeType::mix}, {13, NodeType::output}},
+                    {{1, 300, 0}, {300, 11, 0, 0}, {300, 13, 0, 1}}};
+        Fixture f(graph, skin == 1);
+        f.owner.setSkin(skin);
+        vocalstack::updateUiTests::inheritTheme(*f.panel, skin); f.panel->setNeon(skin == 1);
+        f.selected(300, "Splitter", true);
+        auto* bypass = findButton(*f.panel, "Bypass FX");
+        expect(bypass && !bypass->isEnabled(), "Splitter incorrectly consumes an FX bypass control");
+        auto* info = vocalstack::toneUiTests::find<juce::Label>(*f.panel, [](auto& label) {
+            return label.getText().contains("outputs A and B") && label.getText().contains("full level");
+        });
+        expect(info != nullptr, "Splitter inspector must explain full-level duplicate outputs");
+        click(f.canvas(), f.pin(300, true, 0));
+        click(f.canvas(), f.pin(300, true, 1));
+        f.expectGraph(graph, "Splitter output clicks changed wiring");
+        auto* undo = findButton(*f.panel, "Undo");
+        expect(undo && !undo->isEnabled(), "Splitter output selection created undo history");
+
+        auto movedA = graph;
+        const auto editedA = movedA.links[1];
+        movedA.links.erase(movedA.links.begin() + 1);
+        movedA.links.push_back(editedA); movedA.links.back().inputPin = 1;
+        drag(f.canvas(), f.pin(300, true, 0), f.pin(11, false, 1));
+        f.expectGraph(movedA, "Rewiring Splitter A changed independent B cable");
+        action(*f.panel, "Undo"); f.expectGraph(graph, "Splitter A undo lost a port");
+        action(*f.panel, "Redo"); f.expectGraph(movedA, "Splitter A redo lost a port");
+        action(*f.panel, "Undo");
+
+        auto disconnectedB = graph; disconnectedB.links.pop_back();
+        drag(f.canvas(), f.pin(300, true, 1), {760, 500});
+        f.expectGraph(disconnectedB, "Disconnecting Splitter B changed A or its input");
+        action(*f.panel, "Undo"); f.expectGraph(graph, "Splitter B disconnect undo lost a port");
+
+        auto movedInput = graph;
+        const auto editedInput = movedInput.links[1];
+        movedInput.links.erase(movedInput.links.begin() + 1);
+        movedInput.links.push_back(editedInput); movedInput.links.back().destination = 13;
+        drag(f.canvas(), f.pin(11, false), f.pin(13, false));
+        f.expectGraph(movedInput, "Occupied input-end Splitter rewire changed its other output");
+        action(*f.panel, "Undo"); f.expectGraph(graph, "Splitter input-end undo lost wiring");
+        drag(f.canvas(), f.pin(300, true, 1), f.pin(300, false));
+        expect(graphText(f.owner.getRoutingGraph()) == graphText(graph), "Rejected Splitter cycle replaced accepted wiring");
+        expectSavedGraph(savedProcessorState(f.owner), "ActiveRoutingGraph", graph);
+        expect(!findButton(*f.panel, "Undo")->isEnabled(), "Rejected Splitter cycle left a phantom undo step");
+        expectPassiveControls(*f.panel);
+    }
+}
+
 void multibandOutputs() {
     for (const bool neon : {false, true}) {
         Graph graph{{{1, NodeType::lead}, {100, NodeType::crossover},

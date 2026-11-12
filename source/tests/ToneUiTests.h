@@ -496,7 +496,8 @@ inline int links(Processor& owner, std::uint32_t source, std::uint32_t destinati
 }
 inline juce::Component& canvas(RoutingPanel& panel) {
     auto* result = find<juce::Component>(panel, [](auto& c) { return c.getName() == "Routing node canvas"; });
-    require(result != nullptr && result->getBounds() == juce::Rectangle<int>(156, 70, panel.getWidth() - 508, panel.getHeight() - 118), "routing canvas bounds changed");
+    require(result != nullptr && result->getBounds() == juce::Rectangle<int>(90, 70, panel.getWidth() - 442, panel.getHeight() - 118),
+            "routing canvas must reserve the 66px modulator rail and default 320px inspector");
     return *result;
 }
 inline void routingPorts(bool neon) {

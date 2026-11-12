@@ -103,11 +103,11 @@ public:
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override {}
     void drawLinearModulation(juce::Graphics& g, juce::Rectangle<float> track) {
         const auto x = [&](float value) { return track.getX() + juce::jlimit(0.0f, 1.0f, value) * track.getWidth(); };
-        const float base = float(valueToProportionOfLength(getValue())), y = track.getY() - 6;
-        if (assignment != 0) {
-            g.setColour((componentTheme(*this) == Theme::spectral ? themePalette(*this).accent
-                            : juce::Colour(0xffb798ff)).withAlpha(0.4f));
-            g.drawLine(track.getX(), y, track.getRight(), y, 1);
+        const float base = float(valueToProportionOfLength(getValue())), y = track.getCentreY();
+        // Range shares the rail; effective feedback occupies a separate lane.
+        // Never composite a small cyan dot over the base thumb: near-coincident
+        // values otherwise look like one broken thin/fat pointer.
+        if (assignment != 0 && depth != 0) {
             const float lo = bipolar ? base - std::abs(depth) : base + juce::jmin(0.0f, depth);
             const float hi = bipolar ? base + std::abs(depth) : base + juce::jmax(0.0f, depth);
             g.setColour(componentTheme(*this) == Theme::spectral
@@ -117,7 +117,9 @@ public:
         }
         if (hasEffective) {
             g.setColour(componentTheme(*this) == Theme::spectral ? themePalette(*this).secondary : juce::Colour(0xff64f5e3));
-            g.drawLine(x(effective), y - 3, x(effective), track.getY() + 4, 1.5f);
+            juce::Path marker;
+            marker.addTriangle(x(effective) - 3, y - 11, x(effective) + 3, y - 11, x(effective), y - 7);
+            g.fillPath(marker);
         }
     }
     void drawModulation(juce::Graphics& g, juce::Point<float> centre, float radius, float start, float end) {
@@ -173,7 +175,7 @@ public:
         void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h,
                               float position, float, float, juce::Slider::SliderStyle,
                               juce::Slider& slider) override {
-            const auto track = juce::Rectangle<float>(float(x + 5), float(y + h / 2), float(juce::jmax(1, w - 10)), 2.0f);
+            const auto track = juce::Rectangle<float>(float(x), float(y) + float(h) * 0.5f, float(juce::jmax(1, w)), 2.0f);
             const bool bipolar = slider.getMinimum() < 0 && slider.getMaximum() > 0;
             const float origin = bipolar ? track.getX() + float(slider.valueToProportionOfLength(0)) * track.getWidth() : track.getX();
             const float thumb = juce::jlimit(track.getX(), track.getRight(), position);
@@ -185,9 +187,10 @@ public:
                 g.setColour(componentTheme(slider) == Theme::device ? juce::Colour(0xffd7dfe6) : themePalette(slider).muted);
                 g.drawVerticalLine(juce::roundToInt(origin), track.getY() - 3, track.getY() + 5);
             }
-            g.setColour(slider.findColour(juce::Slider::thumbColourId));
-            g.fillRoundedRectangle(thumb - 2, track.getY() - 4, 4, 10, 1);
             if (auto* mod = dynamic_cast<ModulationSlider*>(&slider)) mod->drawLinearModulation(g, track);
+            // Draw the single base thumb last so range colour cannot split it.
+            g.setColour(themePalette(slider).text);
+            g.fillRoundedRectangle(thumb - 2, track.getCentreY() - 5, 4, 10, 1);
         }
         void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float position,
                               float start, float end, juce::Slider& slider) override {
@@ -266,6 +269,7 @@ public:
     }
     void setLinear(bool value) {
         slider.setSliderStyle(value ? juce::Slider::LinearHorizontal : juce::Slider::RotaryHorizontalVerticalDrag);
+        slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 68, value ? 18 : 19);
         resized();
     }
     ~ParameterKnob() override { slider.setLookAndFeel(nullptr); }

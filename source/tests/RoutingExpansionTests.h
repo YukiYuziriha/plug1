@@ -163,6 +163,73 @@ void packingAndPositions() {
     for (const auto& n : g.nodes) expectPoint(position(other.owner, n.id), position(original.owner, n.id), "Packing depends on node vector order");
 }
 
+void horizontalPacking() {
+    for (int skin = 0; skin < 3; ++skin) for (int width : {904, 1280, 1800}) {
+        Fixture f(graph(), false); theme(f, skin);
+        f.panel->setSize(width, 800);
+        routingPolish::action(*f.panel, "Expand all");
+        nonoverlap(f);
+        const auto lead = bounds(f.owner, 1);
+        bool beside = false, wrapped = false;
+        for (auto id : {11u, 13u, 100u}) {
+            const auto card = bounds(f.owner, id);
+            beside |= card.getX() >= lead.getRight() + 11;
+            wrapped |= card.getY() > lead.getY();
+        }
+        expect(beside, "Bulk expansion failed to use horizontal viewport space");
+        if (width == 904) expect(wrapped, "Narrow bulk expansion did not wrap final card sizes");
+        const auto saved = f.owner.getRoutingLayout().createCopy();
+        const float zoom = float(saved.getProperty("zoom"));
+        expect(zoom >= .35f, "Bulk expansion shrank controls below the readable zoom floor");
+        const auto screen = juce::Rectangle<float>(f.point(1, 0, 0),
+                                                   f.point(1, lead.getWidth(), lead.getHeight()));
+        expect(f.canvas().getLocalBounds().toFloat().contains(screen), "Bulk expansion did not reveal its first useful card");
+        expect(f.canvas().getNumChildComponents() > 0, "Bulk expansion left every useful control virtualized away");
+        f.panel->setSize(width + 170, 870);
+        routingPolish::action(*f.panel, "Expand all");
+        routingPolish::action(*f.panel, "Collapse all");
+        routingPolish::action(*f.panel, "Expand all");
+        for (const auto& n : graph().nodes) {
+            const auto previous = saved.getChildWithProperty("id", int(n.id));
+            expectPoint(position(f.owner, n.id), {float(previous.getProperty("x")), float(previous.getProperty("y"))},
+                        "Resize/repeated bulk expansion destroyed an existing arrangement");
+        }
+    }
+    {
+        Fixture single(graph(), false); inspector(single, false); single.panel->setSize(1800, 800);
+        const auto neighbour = position(single.owner, 100);
+        toggle(single, 13);
+        nonoverlap(single);
+        expect(position(single.owner, 13).x >= 642 && position(single.owner, 13).y == 20,
+               "Single expansion pushed downward instead of using adjacent horizontal space");
+        expectPoint(position(single.owner, 100), neighbour, "Single expansion rearranged its neighbour");
+        const auto card = bounds(single.owner, 13);
+        expect(single.canvas().getLocalBounds().toFloat().contains(juce::Rectangle<float>(
+                   single.point(13, 0, 0), single.point(13, card.getWidth(), card.getHeight()))),
+               "Single expansion failed to reveal its target card");
+    }
+    // Old files cannot distinguish automatic from manual coordinates. Keep even
+    // a downward-looking or overlapping saved layout rather than infer intent.
+    Fixture f(graph(), false);
+    auto saved = f.owner.getRoutingLayout().createCopy();
+    auto output = saved.getChildWithProperty("id", 13);
+    output.setProperty("expanded", true, nullptr);
+    output.setProperty("x", 20.0f, nullptr);
+    output.setProperty("y", 6012.0f, nullptr);
+    output.setProperty("expandedX", 20.0f, nullptr);
+    output.setProperty("expandedY", 6012.0f, nullptr);
+    output.setProperty("compactX", 640.0f, nullptr);
+    output.setProperty("compactY", 20.0f, nullptr);
+    f.panel.reset(); f.owner.setRoutingLayout(saved);
+    f.panel = std::make_unique<vocalstack::RoutingPanel>(f.owner);
+    f.panel->addToDesktop(0); f.panel->setVisible(true);
+    expectPoint(position(f.owner, 13), {20, 6012}, "Opening an unclassified saved position guessed migration intent");
+    routingPolish::action(*f.panel, "Collapse all");
+    expectPoint(position(f.owner, 13), {640, 20}, "Unclassified layout lost its compact bank");
+    routingPolish::action(*f.panel, "Expand all");
+    expectPoint(position(f.owner, 13), {20, 6012}, "Bulk expansion overwrote an unclassified expanded position");
+}
+
 void layoutHistory() {
     Fixture f(graph(), false);
     const auto compact = position(f.owner, 13);
@@ -868,6 +935,11 @@ void screenshots() {
         expectNear(float(overview.owner.getRoutingLayout().getProperty("zoom")), 1, "Expanded overview must use legible 100% zoom");
         binding(overview, "leadGain"); binding(overview, "outputGain");
         saveSnapshot(*overview.panel, "routing-expanded-overview" + suffix);
+        for (int width : {904, 1800}) {
+            Fixture packed(graph(), false); routingExpansion::theme(packed, theme); packed.panel->setSize(width, 800);
+            routingPolish::action(*packed.panel, "Expand all"); nonoverlap(packed);
+            saveSnapshot(*packed.panel, "routing-packed-" + juce::String(width) + suffix);
+        }
         for (auto type : {NodeType::xpFilter, NodeType::reverb, NodeType::waveshaper}) {
             Fixture f(vocalstack::updateUiTests::effectGraph(type), false);
             routingExpansion::theme(f, theme); f.panel->setSize(1600, 1000);

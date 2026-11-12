@@ -8,7 +8,7 @@ Font font(float height, bool bold = false) {
     return Font(FontOptions(height, bold ? Font::bold : Font::plain));
 }
 
-constexpr int editorWidth = 940, editorHeight = 430, drawerHeight = 442;
+constexpr int editorWidth = 940, editorHeight = 610, drawerHeight = 442;
 const std::array<Rectangle<int>, 4> controlPlates{{
     {18, 76, 104, 214}, {132, 76, 306, 214},
     {448, 76, 104, 214}, {562, 76, 104, 214}
@@ -28,6 +28,16 @@ constexpr std::array<const char*, knobParameterIds.size()> knobTips{
     "Final output trim: -24 to +12 dB. Double-click for unity (0 dB). Separate from leveler correction"
 };
 constexpr std::array<const char*, switchParameterIds.size()> switchNames{"LEVEL", "DOUBLE", "FORMANT", "BYPASS"};
+
+// The Routing owner supplies this small public bridge; never fall back to a
+// processor-only write that would silently bypass the graph's Undo history.
+template <typename Routing>
+void connectMainBusUndo(MainBusFxRackPanel& rack, Routing& routing) {
+    if constexpr (requires(const Graph& graph, String& error) { routing.commitExternalGraphEdit(graph, error); })
+        rack.commitGraph = [&routing](const Graph& graph, String& error) {
+            return routing.commitExternalGraphEdit(graph, error);
+        };
+}
 
 void leaveKeyboardToHost(Component& component) {
     // Numeric entry owns keys only while its transient TextEditor is open.
@@ -49,7 +59,7 @@ void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
 
 Editor::Editor(Processor& processor)
     : AudioProcessorEditor(processor), owner(processor), presets(processor), globalMix(processor, "globalMix", "Mix", "%"), routingPanel(processor),
-      advancedPanel(processor), choralePanel(processor) {
+      advancedPanel(processor), mainBusFxRack(processor) {
     setLookAndFeel(&style);
     addAndMakeVisible(layoutCanvas);
     addAndMakeVisible(presets);
@@ -160,7 +170,9 @@ Editor::Editor(Processor& processor)
     routingPanel.onRevealParameter = [this](const String& id) { revealParameter(id); };
     addChildComponent(revealBubble);
     advancedPanel.selectVoice(selectedVoiceSlot, false, false);
-    layoutCanvas.addAndMakeVisible(choralePanel);
+    connectMainBusUndo(mainBusFxRack, routingPanel);
+    layoutCanvas.addAndMakeVisible(mainBusFxRack);
+    mainBusFxRack.sync();
     layoutCanvas.addAndMakeVisible(meterPanel);
     meterPanel.onReset = [this] { owner.requestMeterReset(); };
     meterPanel.setMeters(owner.getMeters());
@@ -201,7 +213,7 @@ void Editor::applyTheme() {
     assignmentBanner.setColour(Label::textColourId, selectedTheme == Theme::spectral ? palette.accent : rgb(0xb798ff));
     meterPanel.setNeon(style.flash);
     advancedPanel.setNeon(style.flash);
-    choralePanel.setNeon(style.flash);
+    mainBusFxRack.setNeon(style.flash);
     routingPanel.setNeon(style.flash);
     const auto foreground = palette.text;
     const auto muted = palette.muted;
@@ -267,9 +279,9 @@ void Editor::resized() {
     stackTab.setBounds(382, 26, 70, 26);
     routingTab.setBounds(458, 26, 78, 26);
     routingPanel.setBounds(18, 100, jmax(0, getWidth() - 36), jmax(0, contentHeight - 118));
-    assignmentBanner.setBounds(24, routingVisible ? 70 : 408, routingVisible ? jmax(0, getWidth() - 118) : 760, 22);
-    endAssignment.setBounds(routingVisible ? getWidth() - 88 : 790, routingVisible ? 70 : 408, 64, 22);
-    choralePanel.setBounds(18, 344, 904, 64);
+    assignmentBanner.setBounds(24, routingVisible ? 70 : 588, routingVisible ? jmax(0, getWidth() - 118) : 760, 22);
+    endAssignment.setBounds(routingVisible ? getWidth() - 88 : 790, routingVisible ? 70 : 588, 64, 22);
+    mainBusFxRack.setBounds(18, 344, 904, 244);
     advancedPanel.setBounds(18, editorHeight, 904, drawerHeight - 12);
     if (!restoringWindow) rememberWindow();
 }
@@ -283,7 +295,7 @@ void Editor::syncDrawer() {
     for (auto* button : {&theme, &reset, &copy, &paste})
         button->setVisible(!routingVisible);
     meterPanel.setVisible(!routingVisible);
-    choralePanel.setVisible(!routingVisible);
+    mainBusFxRack.setVisible(!routingVisible);
     advancedPanel.setVisible(!routingVisible);
     routingPanel.setVisible(routingVisible);
     stackTab.setToggleState(!routingVisible, dontSendNotification);
@@ -293,6 +305,7 @@ void Editor::syncDrawer() {
         const auto tree = owner.getRoutingLayout();
         selectedVoiceSlot = jlimit(-1, 7, int(tree.getProperty("selectedVoiceSlot", selectedVoiceSlot)));
         advancedPanel.selectVoice(selectedVoiceSlot, true, false);
+        mainBusFxRack.sync();
     }
     resized();
     advancedPanel.sync();

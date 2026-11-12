@@ -1,14 +1,23 @@
-# Vocal Stack 1.8.0
+# Vocal Stack 1.9.0
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-1.8.0 adds **expandable routing nodes** with in-node controls and visuals, a
-sticky hideable inspector, and separate remembered compact/expanded positions.
-This is a UI release: no audio DSP or host parameter changes.
+1.9.0 is **built, packaged and validated**. Installation was blocked by a locked
+installed CLAP; no installed files changed, so **1.8.0 remains installed**.
+It adds two-dimensional expanded-node packing, a compact modulation rail with
+DSP-accurate LFO previews and sticky bottom-editor visibility, full-level A/B
+Splitter nodes, and a **Main Bus FX rack** in Stack using the same Routing nodes
+and shared Undo/Redo. Continuous parameter controls are knobs except Stack
+Lead/voice sliders, whose base/effective pointers are now visually distinct.
+
+DSP repairs include measured **4× reverb wet-output calibration** (+12.04 dB,
+not AGC), granular capture/freeze boundary hardening with actual live grain
+snapshots, and a compressor meter based on the gain actually applied. See the
+[DSP audit](docs/DSP-Audit.md) for measurements and limitations.
 
 1.7.1 reduced routing/DSP overhead and introduced half-speed horizontal slider
-dragging. Its historical CPU measurements are retained below, not new 1.8.0 results.
+dragging. Its historical CPU measurements are retained below, not 1.9.0 results.
 
 1.7.0 added **Gain, Stereo Utility, Gate/Expander, XP Filter and Synth Filter**,
 reverb **pitched feedback / shimmer and wet swell**, themed effect visualizations,
@@ -17,12 +26,17 @@ actual GPL-covered, upstream-derived filter equations—not category stand-ins.
 Delay, Reverb, Compressor, Bitcrusher, Granular and whole-patch presets remain;
 eight factory patches now provide starting points for routing and modulation.
 
-1.8.0 Release CLAP/VST3 builds and matching tracked packages are complete. All 19
-focused CTest suites, including 57 editor/state groups, passed. The packaged CLAP
-host smoke passed; both plugins were installed to the per-user Common directories
-and SHA256-verified. Actual Bitwig listening/transport checks remain unperformed.
+Release CLAP/VST3 builds and all **34 focused CTests passed in 146.69 s**,
+including eight factory-audio shards and **63 editor groups**. Separate legacy
+DSP passed in **81.8347 s**. Tracked packages match Release artifacts by SHA256;
+packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperformed.**
 
 ## Install
+
+**Current installation status:** the 1.9.0 install attempt was blocked because the
+installed CLAP is locked by another process. No installed files were changed;
+1.8.0 remains installed. Retry after the locking process releases the plugin;
+do not terminate Bitwig or overwrite a loaded plugin to force installation.
 
 1. Extract the ZIP.
 2. Copy `Windows-x64/CLAP/Vocal Stack.clap` to
@@ -103,6 +117,9 @@ Stack cards use four rows of two horizontal sliders in narrower, unchanged-heigh
 cards. Selecting a Lead/Voice node opens the same parameters as larger two-row
 rotary controls on the right. Selection follows between views. Numeric entry, double-click
 reset, and modifier fine adjustment remain available without stealing idle DAW keys.
+Continuous parameter controls elsewhere use rotary knobs; switches and menus
+remain switches and menus. Stack sliders draw one light base thumb and a separate
+upper-lane effective-value triangle, with assigned ranges on the primary track.
 Horizontal sliders use relative dragging at half cursor speed: moving across one
 track width changes half the displayed range (in slider/skew space), independent of
 track width. Initial track clicks no longer jump the value. Repeated drags can reach
@@ -227,10 +244,12 @@ around the cursor without Ctrl; +/- and **Fit** are also available.
   visuals, including FX enable. Chorale offers Mix/Motion, Mix nodes offer their
   balance, and Output offers trim. These edit the same underlying values as the
   inspector, not separate DSP instances. Mixed compact/expanded cards are supported.
-- Each stable node ID remembers separate compact and expanded positions. First-use
-  expansion packs the new card downward past neighbours without moving existing
-  cards. Later toggles restore remembered positions rather than repacking manual
-  arrangements. Moving one layout does not move the other.
+- Each stable node ID remembers separate compact and expanded positions. In 1.9.0,
+  bounded deterministic 2D packing uses available horizontal space and wraps;
+  bulk expansion plans final card sizes together, without compact replacements
+  obstructing them. Existing remembered/manual positions are retained. Single
+  expansion reveals its target rather than fitting the entire graph to tiny size.
+  Moving one layout does not move the other.
 - Inspector visibility, expansion states and both position sets persist in the
   instance layout. Expansion/collapse and node moves support layout-only Undo/Redo
   without republishing topology or replaying audio parameters.
@@ -260,10 +279,15 @@ outgoing links. It is workflow inspiration, not an exact copy: our single-output
 connection policy is intentional, while inputs still support compensated fan-in.
 
 Available nodes: Lead, Voice sources, Chorale, Waveshaper, EQ8, Multiband,
-Delay, Reverb, Compressor, Bitcrusher, Granular, Dry/Wet Mix, Output. One FX node is one independent machine; routing chooses
+Delay, Reverb, Compressor, Bitcrusher, Granular, Gain, Stereo Utility,
+Gate/Expander, XP Filter, Synth Filter, Dry/Wet Mix, Splitter and Output. One FX node is one independent machine; routing chooses
 whether it processes one voice, a group, or the whole result. Connect several
 voices directly to the same input for an automatically compensated merge.
-Mix retains separate Dry and Wet pins. The default path is:
+Mix retains separate Dry and Wet pins. **Splitter (1.9.0)** duplicates one input
+at full level to independent A/B output ports. Rewiring one leaves the other
+intact; it preserves source/band provenance for merge compensation and uses no
+FX slot or host parameters. It is not Multiband, a crossover, or a −6 dB split.
+The default path is:
 
 ```text
 Lead ---------------------> Main Mix Dry
@@ -310,6 +334,25 @@ on migration. The default Basic signal path remains regression-tested unchanged.
 
 ![Native routing with independent multiband outputs](VocalStack-Routing.png)
 
+### Main Bus FX rack (1.9.0)
+
+Stack's **+ FX** rack replaces the fixed Chorale strip. Its compact cards are the
+actual Routing nodes, not duplicate processors: enable, edit, remove, and reorder
+with the dedicated drag handle. Duplicate FX have independent parameters and
+share Routing's existing 16-effect/48-node capacity. Expanded panels reuse the
+same controls, modulation bindings and visuals, including live granular snapshots.
+
+Topology edits use Routing's shared one-step Undo/Redo bridge, restoring lifecycle
+parameters/modulation while preserving unrelated live mappings and sources.
+Removed effect cache IDs are purged so immediate re-add cannot revive old tails. The editable rack
+is the unambiguous serial segment from main Mix to Output, before final trim;
+surviving effects retain their identities and DSP history. Splitter and Multiband
+are structural nodes and are added only in Routing. For custom/branched or
+ambiguous main-bus paths, rack topology changes are disabled with an explanation;
+identifiable FX remain editable and the graph is never flattened automatically.
+
+![Stack Main Bus FX rack with shared Routing nodes](VocalStack-Stack-FX.png)
+
 ### Creative effects
 
 Add an effect in Routing, connect it, then select it to edit its independent
@@ -323,6 +366,23 @@ echo/grain timing is intentional, not compensated away.
 | **Compressor** | Zero-lookahead, stereo-linked peak detector; threshold, ratio 1:1–20:1, knee 0–24 dB, attack 0.1–100 ms, release 10–2000 ms, detector high-pass 20–1000 Hz, gain-reduction readout and manual makeup −12…+24 dB. No automatic makeup. |
 | **Bitcrusher** | Bit depth 3–24, sample/hold rate 1–96 kHz (limited by host rate), input drive, input-gated TPDF dither and output low-pass. Aliasing is intentional; the postfilter is not an antialiased sample-rate converter. |
 | **Granular** | Up to 32 grain voices with fixed Hann-like polynomial windows; pitch −24…+12 st, length 20–250 ms, density 4–80 Hz, stereo spread, lookback 0–1500 ms, timing scatter, reverse, capture freeze, low/high cuts and capture drive. Not formant-preserving; launches are skipped when all voices are busy. |
+
+**1.9.0 reverb level change:** final wet output is calibrated by a fixed 4×
+(+12.04 dB), based on measured noise, tone and synthetic-transient fixtures.
+Existing patches, freeze and shimmer are louder at the same Wet setting; reduce
+patch/output gain as needed. Default ducking remains 6 dB. This is not automatic
+level matching, AGC, a limiter, or hidden dry audio at 100% Wet. Routing keeps its
+linear dry/wet blend; intermediate settings can still dip with decorrelated or
+filtered material, and headroom is not guaranteed for arbitrary input/graphs.
+
+Granular now restricts reads to captured history, clamps lookback to valid data,
+and retires grains crossing freeze/capture boundaries with a short held-sample
+fade. Routing and Stack show the same **actual DSP grain snapshots**: circular
+positions, progress/envelopes, pan, direction and valid/frozen capture state.
+Frames are published once per host block, not extrapolated; stopped transport
+shows the last completed block. No capture waveform is fabricated. Other creative
+plots remain parameter-derived schematics, not measured impulse responses.
+Compressor gain reduction now reports the actual smoothed gain before makeup.
 
 Reverb RT60 is a midband target, not a guaranteed measured decay: damping,
 filters and interpolation shorten it. Reverb freeze is bounded/near-lossless,
@@ -346,7 +406,7 @@ These are original DSP, UI and presets, not proprietary code/assets/preset ports
 
 ![Reverb inspector and whole-patch preset browser](VocalStack-Reverb.png)
 
-![Granular vocal texture inspector in the Device skin](VocalStack-Granular.png)
+![Actual live DSP grain snapshot in the Device skin](VocalStack-Granular.png)
 
 ### Utility and character filters
 
@@ -449,6 +509,11 @@ including bypass, rather than an animation inferred from the curve.
 
 In Routing, use **+ Modulator** above the left rail to add Classic LFO or Random.
 Waveform tiles in that vertically scrolling rail select existing modulators.
+In 1.9.0 the left modulator rail is 66 px wide with 44 px tile stride. LFO traces
+use the DSP evaluator, including phase, skew, polarity and amount; Random shows
+actual published output history. The always-reachable bottom hide/show control is
+sticky across source selection and persisted independently of the right inspector.
+
 The canvas-width bottom strip has **Controls / Assignments** tabs and horizontal
 overflow scrolling; its controls keep fixed sizes. The right inspector remains
 available at full height for the selected audio node, independently of LFO selection. Up to 16 independent monophonic sources and 256
@@ -633,7 +698,7 @@ the CLAP tail sentinel.
 - `HarmonyShifter.h`: fixed-latency STFT musical pitch/formant processor.
 - `Waveshaper.h` / `Equalizer.h` / `Multiband.h`: independent tone processors.
 - `ToneEffectPanel.h` / `ToneEqGraph.h`: selected-FX controls and native EQ graph.
-- `CreativeEffects.h` / `CreativeEffectPanel.h` / `CreativeEffectVisual.h`: creative DSP, inspectors and schematics.
+- `CreativeEffects.h` / `CreativeEffectPanel.h` / `CreativeEffectVisual.h`: creative DSP, inspectors, parameter schematics and actual granular snapshots.
 - `UtilityFilters.h` / `VitalFilterDSP.h` / `UtilityEffectPanel.h`: utilities, character filters and cached response plots.
 - `VisualTheme.h`: shared Device/Neon/Spectral palette and inheritance.
 - `PresetManager.h`: validated full-patch files, factory patches and footer browser.
@@ -641,7 +706,9 @@ the CLAP tail sentinel.
   instances, execution-plan publication and off-audio reclamation.
 - `ProcessorRoutingState.h`: graph serialization and fixed FX automation mapping.
 - `VoiceBridge.h` / `VoiceMonitor.h`: atomic snapshots and snapshot-only motion UI.
-- `RoutingPanel.h`: native node canvas, inspectors, layout and edit history.
+- `RoutingPanel.h`: native node canvas, inspectors, layout and shared edit history.
+- `MainBusFxRack.h` / `MainBusFxRackPanel.h`: safe serial-segment discovery and
+  Stack's same-node FX rack; topology edits use Routing's undo bridge.
 - `DoublerPanel.h` / `ParameterKnob.h`: shared Lead/voice rotary controls and Chorale.
 - `Modulation.h`: bounded fixed-clock LFO/Random plans, stable state and atomic snapshots.
 - `ModulationPanel.h` / `ModulationUI.h`: source inspector, assignment gestures and feedback.
@@ -662,6 +729,35 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.9.0:** Release CLAP/VST3 builds and all **34 focused CTests passed in
+146.69 s**, including **eight factory-audio shards and 63 editor groups**. Separate
+legacy DSP passed in **81.8347 s**. The prior **33 screenshots plus 12 rack PNGs**
+across Device/Neon/Spectral were visually inspected; a subsequent test-only
+screenshot-output addition passed the GrainSnapshotUi rerun in **0.60 s**, producing
+**three additional actual-grain PNGs**. Root Granular and Stack FX previews now
+show the actual snapshot and same-node rack. Factory fixture headroom/reproducibility
+passed **48 cases / 96 renders**; no preset trim change is evidenced, and no
+subjective audition is claimed.
+
+Tracked CLAP/VST3 packages were copied from Release artifacts and SHA256-matched.
+Packaged CLAP smoke passed: **2087 parameters**, mono/stereo latency, bypass and
+automation. Exact package hashes are in the
+[release validation record](docs/Release-1.9.0-Validation.md).
+
+Informational UI median/p95/max: **7.990/12.903/41.000 ms compact**,
+**13.448/20.044/44.231 ms expanded**, at most **12 mounted cards**. The registered
+full-processor performance probe reports heavy-workload deadline overruns,
+especially two serial instances at 96 kHz; successful execution is not a real-time
+performance pass. The release record preserves measurements and limitations.
+
+**Installation blocked:** installed CLAP locked by another process; no installed
+files changed and **1.8.0 remains installed**. Retry when unlocked. **Actual Bitwig
+listening/transport, automation and session recall remain unchecked.** Commit/push
+is coordinator-owned; no completion or commit identity is claimed here. Earlier
+release results below are historical.
+
+### Historical 1.8.0 verification
 
 **1.8.0:** Release CLAP/VST3 builds and all **19 focused CTest suites passed**,
 including **57 editor/state groups**. New coverage includes separate layout recall,

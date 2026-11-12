@@ -5,20 +5,37 @@
 
 namespace vocalstack {
 
-// Message-thread parameter models only. No reads of live delay/grain DSP state.
+// Message-thread models; granular reads only the Processor's owned audio snapshot.
 class CreativeEffectVisual final : public juce::Component, public juce::SettableTooltipClient {
 public:
     CreativeEffectVisual(Processor& processor, size_t fxSlot, CreativeKind effectKind)
         : owner(processor), slot(fxSlot), kind(effectKind) {
-        setName("Effect parameter model");
+        setName(kind == CreativeKind::granular ? "Live grain snapshot" : "Effect parameter model");
         setWantsKeyboardFocus(false);
         setMouseClickGrabsKeyboardFocus(false);
-        setTooltip("Parameter-derived schematic using coherent effective modulation targets. Unassigned parameters are host base reads; DSP smoothing and signal-dependent behaviour are not simulated. Reverb is not a measured impulse response; grains are not live grain telemetry. Only compressor GR is measured by the DSP.");
+        setTooltip(kind == CreativeKind::granular
+                    ? "Actual DSP grains: circular capture position, lifetime progress, envelope height, stereo pan and playback direction. The capture rail marks valid audio and its write head. Frames are sampled once per host block, not extrapolated."
+                    : "Parameter-derived schematic using coherent effective modulation targets. Unassigned parameters are host base reads; DSP smoothing and signal-dependent behaviour are not simulated. Reverb is not a measured impulse response. Compressor GR is measured by the DSP.");
         refresh();
     }
     void setNeon(bool enabled) { neon = enabled; repaint(); }
     bool delaySynced() const { return value(P::delaySync) >= 0.5f; }
+    bool visibleInHierarchy() const {
+        if (!isShowing()) return false;
+        auto visible = getLocalBounds();
+        for (auto* parent = getParentComponent(); parent != nullptr; parent = parent->getParentComponent()) {
+            visible = visible.getIntersection(getLocalArea(parent, parent->getLocalBounds()));
+            if (visible.isEmpty()) return false;
+        }
+        return !visible.isEmpty();
+    }
     void refresh() {
+        if (!visibleInHierarchy()) return;
+        if (kind == CreativeKind::granular) {
+            grainReady = owner.readGrainSnapshot(slot, grainFrame);
+            repaint();
+            return;
+        }
         auto next = owner.getModulationSnapshot();
         // Preserve the entire previous model on a failed bounded snapshot read.
         if (next.consistent) {
@@ -39,13 +56,19 @@ public:
         repaint();
     }
     void paint(juce::Graphics& g) override {
+        // A hidden view may become visible before its next timer refresh. Never
+        // paint its cached cloud after a reset/removal/reuse in the meantime.
+        if (kind == CreativeKind::granular && grainReady && !owner.isGrainSnapshotCurrent(grainFrame))
+            grainReady = false;
         const auto c = themePalette(*this, neon);
         auto b = getLocalBounds().toFloat();
         g.setColour(c.inset); g.fillRoundedRectangle(b, 5);
         g.setColour(c.border); g.drawRoundedRectangle(b.reduced(0.5f), 5, 1);
         b.reduce(10, 8);
-        text(g, b.removeFromTop(16), enabled ? "PARAMETER MODEL" : "BYPASS | stored parameter model", c.text);
-        text(g, b.removeFromTop(15), ready ? "Effective targets / base if unassigned" : "Waiting for coherent parameter snapshot", c.muted);
+        text(g, b.removeFromTop(16), kind == CreativeKind::granular ? "ACTUAL GRAIN SNAPSHOT" : (enabled ? "PARAMETER MODEL" : "BYPASS | stored parameter model"), c.text);
+        text(g, b.removeFromTop(15), kind == CreativeKind::granular
+            ? (grainReady ? "Audio-thread state / no extrapolation" : "Waiting for current audio snapshot")
+            : (ready ? "Effective targets / base if unassigned" : "Waiting for coherent parameter snapshot"), c.muted);
         auto footer = b.removeFromBottom(43);
         b.removeFromBottom(15); // Dedicated axis-label row.
         auto plot = b.withTrimmedLeft(23).withTrimmedRight(5).reduced(0, 6);
@@ -156,50 +179,56 @@ private:
         text(g, f, "L-seeded repeat schematic; colour / ducking omitted", c.muted);
     }
     void granular(juce::Graphics& g, juce::Rectangle<float> r, juce::Rectangle<float> f, const ThemePalette& c) const {
-        const float length = value(P::granularSize), density = value(P::granularDensity);
-        auto history = r.removeFromTop(22);
-        text(g, history.removeFromLeft(42), "History", c.muted);
-        history.reduce(0, 7);
-        g.setColour(c.border); g.fillRoundedRectangle(history, 2);
-        const float ratio = std::pow(2.f, value(P::granularPitch) / 12);
-        const bool frozen = value(P::granularFreeze) >= .5f;
-        const float guard = float(4000 / toneui::visualSampleRate(owner.getSampleRate()))
-            + length * (frozen ? ratio : std::max(0.f, ratio - 1));
-        const float age = value(P::granularPosition) + guard;
-        const float zone = std::min(3000.f - age, length * ratio + value(P::granularJitter));
-        // Age runs oldest (left, 3 s) to capture head (right, 0 s).
-        auto region = history.withX(history.getRight() - (age + zone) / 3000 * history.getWidth())
-            .withWidth(std::max(2.f, zone / 3000 * history.getWidth()));
-        g.setColour(c.secondary.withAlpha(.35f)); g.fillRoundedRectangle(region, 2);
-        g.setColour(c.accent); g.drawVerticalLine(int(history.getRight() - age / 3000 * history.getWidth()), history.getY() - 2, history.getBottom() + 2);
-        const float span = std::max(500.f, length * 3), spacing = 1000 / density;
-        const bool reverse = value(P::granularReverse) >= .5f;
-        // Fixed evenly-spaced example windows: never animate fictitious grains.
-        const int count = std::min(40, int(span / spacing) + 1);
-        for (int grain = 0; grain < count; ++grain) {
-            juce::Path window;
-            const float start = grain * spacing;
-            for (int i = 0; i <= 48; ++i) {
-                const float phase = float(i) / 48, t = start + phase * length;
-                if (t > span) break;
-                const float w = 16 * phase * phase * (1 - phase) * (1 - phase);
-                const float x = r.getX() + t / span * r.getWidth();
-                const float y = r.getBottom() - w * r.getHeight() * .72f;
-                if (i == 0) window.startNewSubPath(x, y); else window.lineTo(x, y);
-            }
-            if (!window.isEmpty()) {
-                auto fill = window;
-                fill.lineTo(window.getCurrentPosition().x, r.getBottom());
-                fill.lineTo(r.getX() + start / span * r.getWidth(), r.getBottom()); fill.closeSubPath();
-                const auto colour = grain % 2 ? c.accent : c.secondary;
-                g.setColour(colour.withAlpha(.055f)); g.fillPath(fill);
-                g.setColour(colour.withAlpha(.65f)); g.strokePath(window, juce::PathStrokeType(.9f));
-            }
+        if (!grainReady) {
+            text(g, r, "No current granular instance / awaiting audio", c.muted);
+            return;
         }
-        axis(g, r, reverse ? "< reverse windows" : "forward windows >", number(span, 0) + " ms", c);
-        text(g, f.removeFromTop(14), number(length, 0) + " ms  /  " + number(density, 1) + " Hz  /  Overlap ~" + number(length * density * .001) + "x  /  " + pitch(value(P::granularPitch)), c.text);
-        text(g, f.removeFromTop(14), "3 s history / lookback " + number(value(P::granularPosition), 0) + " ms + guard / scatter " + number(value(P::granularJitter), 0) + "%", c.secondary);
-        text(g, f, value(P::granularFreeze) >= .5f ? "SCHEMATIC | capture frozen; windows continue" : "SCHEMATIC | nominal windows, not live grains", c.muted);
+        const auto& frame = grainFrame.grains;
+        auto rail = r.removeFromTop(13);
+        g.setColour(c.border); g.fillRect(rail);
+        // Circular coordinates match DSP storage. Valid audio ends at write head.
+        const float start = frame.captureHead - frame.validFraction;
+        const auto segment = [&](float left, float right) {
+            if (right <= left) return;
+            g.setColour(c.secondary.withAlpha(.45f));
+            g.fillRect(rail.withX(rail.getX() + left * rail.getWidth())
+                .withWidth((right - left) * rail.getWidth()));
+        };
+        if (start < 0) { segment(0, frame.captureHead); segment(1 + start, 1); }
+        else segment(start, frame.captureHead);
+        const float head = rail.getX() + frame.captureHead * rail.getWidth();
+        g.setColour(c.text); g.drawLine(head, rail.getY() - 2, head, rail.getBottom() + 2, 1.5f);
+        r.removeFromTop(7);
+        // Stable DSP slots are rows; x is actual circular position. The small
+        // progress rail is lifetime, not a synthesized trajectory/window.
+        const float rowHeight = r.getHeight() / 32.f;
+        uint32_t reverse = 0, holding = 0;
+        for (uint32_t i = 0; i < std::min<uint32_t>(frame.count, 32); ++i) {
+            const auto& grain = frame.grains[i];
+            const float x = r.getX() + grain.position * r.getWidth();
+            const float y = r.getY() + (float(grain.slot) + .5f) * rowHeight;
+            const auto colour = grain.pan < 0 ? c.secondary : c.accent;
+            const float height = 2 + 7 * grain.envelope;
+            g.setColour(colour.withAlpha(.25f + .75f * grain.envelope));
+            g.drawLine(x, y - height * .5f, x, y + height * .5f, 2);
+            const float direction = grain.step < 0 ? -1.f : 1.f;
+            g.drawLine(x, y, x + direction * 5, y, 1);
+            g.drawLine(x + direction * 5, y, x + direction * 3, y - 2, 1);
+            g.drawLine(x + direction * 5, y, x + direction * 3, y + 2, 1);
+            g.setColour(colour.withAlpha(.5f));
+            g.drawLine(r.getX(), y, r.getX() + grain.progress * r.getWidth(), y, .5f);
+            if (grain.holdingBoundary) {
+                g.setColour(c.text); g.drawEllipse(x - 3, y - 3, 6, 6, 1);
+                ++holding;
+            }
+            if (grain.step < 0) ++reverse;
+        }
+        axis(g, r, "0 / circular capture position", "1", c);
+        text(g, f.removeFromTop(14), juce::String(frame.count) + " active / " + juce::String(reverse)
+            + " reverse / " + juce::String(holding) + " boundary-held", c.text);
+        text(g, f.removeFromTop(14), (frame.frozen ? juce::String("FROZEN") : juce::String(frame.capturing ? "CAPTURING" : "IDLE"))
+            + " / valid " + number(frame.validFraction * 100, 1) + "% / sample " + juce::String(juce::int64(frame.sample)), c.secondary);
+        text(g, f, "Rows: stable slots / rail: lifetime / height: envelope / colour: pan", c.muted);
     }
     void compressor(juce::Graphics& g, juce::Rectangle<float> r, juce::Rectangle<float> f, const ThemePalette& c) const {
         const float threshold = value(P::compressorThreshold), knee = value(P::compressorKnee);
@@ -258,6 +287,8 @@ private:
         text(g, f, "Static stair transfer; hold / filter / noise omitted", c.muted);
     }
     Processor& owner;
+    RoutingGrainFrame grainFrame{};
+    bool grainReady = false;
     size_t slot;
     CreativeKind kind;
     std::array<float, creativeParameterCount> values = CreativeSettings{}.values;

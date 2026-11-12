@@ -16,28 +16,7 @@ inline void passiveControl(juce::Component& component) {
 }
 
 // Signed tracks start at the actual zero value (gain is not symmetric).
-class ParameterLookAndFeel final : public juce::LookAndFeel_V4 {
-public:
-    void drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
-                          float sliderPos, float, float, juce::Slider::SliderStyle,
-                          juce::Slider& slider) override {
-        const auto cy = float(y) + float(height) * 0.5f;
-        const bool signedTrack = slider.getMinimum() < 0 && slider.getMaximum() > 0;
-        const float origin = float(x) + (signedTrack ? float(slider.valueToProportionOfLength(0)) * float(width) : 0.0f);
-        g.setColour(componentTheme(slider) == Theme::device ? juce::Colour(0xff46515b) : themePalette(slider).border);
-        g.drawLine(float(x), cy, float(x + width), cy, 3.0f);
-        g.setColour(slider.findColour(juce::Slider::trackColourId));
-        g.drawLine(origin, cy, sliderPos, cy, 3.0f);
-        if (signedTrack) {
-            g.setColour(componentTheme(slider) == Theme::device ? juce::Colour(0xffd7dfe6) : themePalette(slider).muted);
-            g.drawLine(origin, cy - 5, origin, cy + 5, 1.0f);
-        }
-        g.setColour(slider.findColour(juce::Slider::thumbColourId));
-        g.fillEllipse(sliderPos - 4, cy - 4, 8, 8);
-        if (auto* mod = dynamic_cast<ModulationSlider*>(&slider))
-            mod->drawLinearModulation(g, {float(x), cy, float(width), 1.0f});
-    }
-};
+using ParameterLookAndFeel = ParameterKnob::Style;
 
 inline void styleSlider(juce::Slider& slider, bool neon) {
     const auto p = themePalette(slider, neon);
@@ -115,8 +94,9 @@ class VoiceControls final : public juce::Component {
         void mouseDown(const juce::MouseEvent&) override { if (onClick) onClick(); }
     } selectionClicks;
     public:
-        VoiceControls(Processor& owner, int index)
-            : voiceSlot(index), pitch(owner, index < 0 ? "leadPitch" : voicePitchParameterId(size_t(index)), "PITCH", "st") {
+        enum class ControlMode { knobs, stackSliders };
+        VoiceControls(Processor& owner, int index, ControlMode mode = ControlMode::knobs)
+            : voiceSlot(index), controlMode(mode), pitch(owner, index < 0 ? "leadPitch" : voicePitchParameterId(size_t(index)), "PITCH", "st") {
             jassert(index >= -1 && index < 8);
             setComponentID(index < 0 ? "leadCard" : "voice" + juce::String(index + 1) + "Card");
             const auto parameterId = [index](size_t field) -> juce::String {
@@ -138,6 +118,8 @@ class VoiceControls final : public juce::Component {
                 fields[f] = std::make_unique<ParameterKnob>(owner, parameterId(f + 1), names[f], units[f]);
                 addAndMakeVisible(*fields[f]);
             }
+            pitch.setLinear(controlMode == ControlMode::stackSliders);
+            for (auto& field : fields) field->setLinear(controlMode == ControlMode::stackSliders);
             fields[1]->slider.setTooltip("L / C / R; effective spread also includes main Width");
             fields[3]->slider.setTooltip("Fine Detune in cents, separate from musical Pitch");
             fields[4]->slider.setTooltip("Voice formant +/-24 st; adds to shared formant and remains active when shared Formant is off");
@@ -168,7 +150,7 @@ class VoiceControls final : public juce::Component {
             const int columns = compact ? 2 : 4;
             if (compact) area.removeFromTop(14);
             const int width = area.getWidth() / columns;
-            const int height = compact ? 54 : 104;
+            const int height = compact && controlMode == ControlMode::stackSliders ? 54 : 104;
             for (size_t i = 0; i < controls.size(); ++i)
                 controls[i]->setBounds(area.getX() + int(i % size_t(columns)) * width,
                     area.getY() + int(i / size_t(columns)) * height, width, height);
@@ -198,8 +180,7 @@ class VoiceControls final : public juce::Component {
         }
         void setCompact(bool value) {
                     compact = value;
-                    pitch.setLinear(value);
-                    for (auto& field : fields) field->setLinear(value);
+
                     resized();
                 }
                 void setSelected(bool value) { selected = value; repaint(); }
@@ -216,6 +197,7 @@ class VoiceControls final : public juce::Component {
         std::function<void()> onSelect;
     private:
         const int voiceSlot;
+        const ControlMode controlMode;
         bool neon = false, selected = false, compact = false;
         modulationui::Button enabled;
         juce::TextButton remove;
@@ -232,7 +214,7 @@ class DoublerPanel final : public juce::Component {
         void mouseDown(const juce::MouseEvent& e) override { if (onClick) onClick(e.eventComponent); }
     } clicks;
 public:
-    explicit DoublerPanel(Processor& processor) : owner(processor), lead(processor, -1) {
+    explicit DoublerPanel(Processor& processor) : owner(processor), lead(processor, -1, VoiceControls::ControlMode::stackSliders) {
         setName("Advanced Doubler drawer");
 
         reset.setButtonText("Reset to Basic");
@@ -263,7 +245,7 @@ public:
                 if (c == cards[i].get() || cards[i]->isParentOf(c)) { select(i, false); break; }
         };
         for (size_t v = 0; v < cards.size(); ++v) {
-            cards[v] = std::make_unique<VoiceControls>(owner, int(v));
+            cards[v] = std::make_unique<VoiceControls>(owner, int(v), VoiceControls::ControlMode::stackSliders);
             cards[v]->setCompact(true);
                         cards[v]->onSelect = [this, v] { select(v, false); };
             cards[v]->addMouseListener(&clicks, true);

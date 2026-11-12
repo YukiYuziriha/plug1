@@ -68,8 +68,8 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             } else {
                 slider.owner = &panel.owner; slider.bindModulation(panel.owner, id);
                 slider.setName(name); slider.setLookAndFeel(&style);
-                slider.setSliderStyle(juce::Slider::LinearHorizontal);
-                slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 85, 21);
+                slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+                slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 85, 21);
                 addAndMakeVisible(slider);
                 link = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(panel.owner.parameters, id, slider);
                 if (auto* parameter = panel.owner.parameters.getParameter(id))
@@ -108,7 +108,8 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         }
         void resized() override {
             auto b = getLocalBounds().reduced(2, 1);
-            label.setBounds(b.removeFromTop(17)); slider.setBounds(b); combo.setBounds(b);
+            label.setJustificationType(juce::Justification::centred);
+                        label.setBounds(b.removeFromTop(17)); slider.setBounds(b); combo.setBounds(b.withHeight(24));
             toggle.setBounds(getLocalBounds().reduced(2, 8));
         }
         void setNeon(bool neon) {
@@ -526,7 +527,12 @@ public:
         const int visualHeight = isFilter() ? 238 : kind == UtilityKind::gate ? 110 : 72;
         visual.setBounds(8, y, inner, visualHeight); y += visualHeight + 8;
         overview.setBounds(8, y, inner, 54); y += 60;
-        for (auto& row : rows) { row->setBounds(8, y, inner, 46); y += 48; }
+        const int columns = juce::jmax(1, inner / 130);
+                const int cell = inner / columns;
+                for (size_t i = 0; i < rows.size(); ++i)
+                    rows[i]->setBounds(8 + int(i % size_t(columns)) * cell,
+                        y + int(i / size_t(columns)) * 100, cell, 98);
+                y += int((rows.size() + size_t(columns) - 1) / size_t(columns)) * 100;
         content.setSize(width, juce::jmax(getHeight(), y + 8));
     }
 private:

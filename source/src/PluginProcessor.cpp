@@ -379,6 +379,7 @@ void Processor::prepareToPlay(double sampleRate, int) {
     engine.prepare(sampleRate, getTotalNumInputChannels(), getTotalNumOutputChannels(), settings());
     const auto restored = engine.requestGraph(routingActive);
     if (!restored) routingError = juce::String(restored.message);
+    grainBridge.publish(engine.grainSnapshot());
     voiceBridge.publish(engine.voiceSnapshots());
     voiceBridge.publishLead(engine.leadSnapshot());
     setLatencySamples(engine.latency());
@@ -397,6 +398,7 @@ void Processor::reset() {
         for (auto& target : snapshotTargeted) target.store(false);
         modulationSnapshotSequence.fetch_add(1);
         engine.reset(settings());
+        grainBridge.publish(engine.grainSnapshot());
         voiceBridge.publish(engine.voiceSnapshots());
         voiceBridge.publishLead(engine.leadSnapshot());
         metering.publish(engine.meters());
@@ -430,6 +432,7 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
         engine.process(audio.getArrayOfReadPointers(), audio.getArrayOfWritePointers(),
             audio.getNumSamples(), settings(), hostBypass);
         processedSamples += uint64_t(audio.getNumSamples());
+        grainBridge.publish(engine.grainSnapshot());
         voiceBridge.publish(engine.voiceSnapshots());
         voiceBridge.publishLead(engine.leadSnapshot());
         metering.publish(engine.meters());
@@ -455,9 +458,19 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
         processedSamples += uint64_t(count);
         offset += count;
     }
+    grainBridge.publish(engine.grainSnapshot());
     voiceBridge.publish(engine.voiceSnapshots());
     voiceBridge.publishLead(engine.leadSnapshot());
     metering.publish(engine.meters());
+}
+
+bool Processor::readGrainSnapshot(size_t slot, RoutingGrainFrame& out) const noexcept {
+    const auto revision = engine.requestedGrainRevision();
+    const auto epoch = engine.grainEpoch();
+    const bool valid = grainBridge.read(slot, out, revision, epoch)
+        && revision == engine.requestedGrainRevision() && epoch == engine.grainEpoch();
+    if (!valid) out = {};
+    return valid;
 }
 
 void Processor::retainFxMonitor(size_t slot) { fxMonitor.retain(slot); }

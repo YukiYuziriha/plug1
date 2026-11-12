@@ -169,17 +169,26 @@ void resizeTabs() {
         expect(editor->isShowing() && editor->getPeer(), "Resize fixture has no showing native peer");
         auto& canvas = *ui::slider(*editor, "outputGain").getParentComponent();
         auto& routing = component<vocalstack::RoutingPanel>(*editor);
-        for (const auto size : {juce::Point<int>(940, 560), juce::Point<int>(1480, 1040)}) {
+        // Cover minimum height, a scaled larger window, and surplus space without upscaling.
+        for (const auto size : {juce::Point<int>(940, 560), juce::Point<int>(1480, 1040), juce::Point<int>(1480, 1400)}) {
             editor->setSize(size.x, size.y);
             const int contentHeight = size.y - 52; // Preset toolbar has its own unscaled footer.
-            const float scale = std::min(1.0f, std::min(float(size.x) / 940, float(contentHeight) / 872));
+            const float scale = std::min(1.0f, std::min(float(size.x) / 940, float(contentHeight) / 1052));
             const auto transform = canvas.getTransform();
-            expect(canvas.getWidth() == 940 && canvas.getHeight() == 872,
-                   "Stack must retain its fixed design canvas");
+            expect(canvas.getBounds() == juce::Rectangle<int>(0, 0, 940, 1052),
+                   "Stack must retain its fixed 940x1052 design canvas including the Main Bus rack");
             expectNear(transform.mat00, scale, "Stack horizontal scale must never exceed one");
             expectNear(transform.mat11, scale, "Stack vertical scale must never exceed one");
             expectNear(transform.mat02, (size.x - 940 * scale) * .5f, "Stack horizontal centering");
-            expectNear(transform.mat12, (contentHeight - 872 * scale) * .5f, "Stack vertical centering above preset toolbar");
+            expectNear(transform.mat12, (contentHeight - 1052 * scale) * .5f, "Stack vertical centering above preset toolbar");
+            auto& rack = component<vocalstack::MainBusFxRackPanel>(*editor);
+            auto& stack = component<vocalstack::DoublerPanel>(*editor);
+            expect(rack.getBounds() == juce::Rectangle<int>(18, 344, 904, 244)
+                       && stack.getBounds() == juce::Rectangle<int>(18, 610, 904, 430)
+                       && canvas.getLocalBounds().contains(rack.getBounds())
+                       && canvas.getLocalBounds().contains(stack.getBounds())
+                       && !rack.getBounds().intersects(stack.getBounds()),
+                   "Resizing must preserve the complete rack and Stack design regions without overlap");
             auto& output = ui::slider(*editor, "outputGain");
             expect(editor->getLocalBounds().contains(editor->getLocalArea(&output, output.getLocalBounds())),
                    "Scaled Stack output is outside the window");
@@ -190,13 +199,13 @@ void resizeTabs() {
                    "Routing did not grow with available space");
             action(*editor, "Stack");
             owner.setAdvancedVisible(false); pumpTimers();
-            expect(canvas.getHeight() == 872 && component<vocalstack::DoublerPanel>(*editor).isShowing()
+            expect(canvas.getHeight() == 1052 && component<vocalstack::DoublerPanel>(*editor).isShowing()
                        && editor->getWidth() == size.x && editor->getHeight() == size.y,
                    "Legacy drawer state changed fixed Stack layout or window dimensions");
         }
         editor.reset();
         editor.reset(owner.createEditor());
-        expect(editor->getWidth() == 1480 && editor->getHeight() == 1040 && component<vocalstack::DoublerPanel>(*editor).isVisible(),
+        expect(editor->getWidth() == 1480 && editor->getHeight() == 1400 && component<vocalstack::DoublerPanel>(*editor).isVisible(),
                "Editor reopen lost resized dimensions or always-visible Stack");
     }
 }
@@ -479,16 +488,16 @@ void modulationRailGeometry() {
         auto* random = findButton(routing, "Random 2");
         expect(lfo && random, "Missing rail modulator tiles");
         auto* rail = lfo->findParentComponentOfClass<juce::Viewport>();
-        expect(rail && rail->getBounds() == juce::Rectangle<int>(12, 106, 132, 654)
-                   && lfo->getBounds() == juce::Rectangle<int>(0, 0, 132 - rail->getScrollBarThickness(), 82)
-                   && random->getY() == 88, "Modulator tiles must form a vertical left rail");
+        expect(rail && rail->getBounds() == juce::Rectangle<int>(12, 106, 66, 654)
+                   && lfo->getBounds() == juce::Rectangle<int>(0, 0, 66 - rail->getScrollBarThickness(), 41)
+                   && random->getY() == 44, "Modulator tiles must form a half-width vertical left rail");
         const auto graph = graphText(owner.getRoutingGraph());
         action(routing, "LFO 1");
         expect(retained && retained->isShowing() && routingPolish::labelIs(routing, "VOICE 1"),
                "Selecting LFO destroyed/replaced the node inspector");
         expect(strip.getParentComponent() == &routing && strip.isShowing()
-                   && strip.getBounds() == juce::Rectangle<int>(156, 520, 772, 240)
-                   && canvas.getBounds() == juce::Rectangle<int>(156, 70, 772, 442),
+                   && strip.getBounds() == juce::Rectangle<int>(90, 520, 838, 240)
+                   && canvas.getBounds() == juce::Rectangle<int>(90, 70, 838, 442),
                "LFO bottom strip must span only the audio canvas width");
         expect(nodeInspector.getBounds() == inspectorBounds && !strip.getBounds().intersects(inspectorBounds),
                "Selecting LFO must not shorten or overlap the full-height node inspector");
@@ -531,8 +540,8 @@ void modulationRailGeometry() {
             expect(nodeInspector.getBounds() == juce::Rectangle<int>(size.x - 332, 76, 320, size.y - 124),
                    "Selected LFO must leave inspector at full available height after resizing");
             const int stripHeight = size.y == 442 ? 224 : 240;
-            expect(strip.getBounds() == juce::Rectangle<int>(156, size.y - 40 - stripHeight, size.x - 508, stripHeight)
-                       && canvas.getBounds() == juce::Rectangle<int>(156, 70, size.x - 508, size.y - 118 - stripHeight)
+            expect(strip.getBounds() == juce::Rectangle<int>(90, size.y - 40 - stripHeight, size.x - 442, stripHeight)
+                       && canvas.getBounds() == juce::Rectangle<int>(90, 70, size.x - 442, size.y - 118 - stripHeight)
                        && strip.getY() == canvas.getBottom() + 8 && !strip.getBounds().intersects(nodeInspector.getBounds()),
                    "Resized LFO strip must stay below canvas and outside inspector");
         }
@@ -616,7 +625,7 @@ void resizableInspector() {
             if (width == 480) {
                 saveSnapshot(*routing, neon ? "routing-lfo-inspector-wide-neon.png" : "routing-lfo-inspector-wide-device.png");
                 routing->setSize(600, 800);
-                expect(inspector.getWidth() == 312 && canvas.getWidth() == 100 && strip.getWidth() == 100,
+                expect(inspector.getWidth() == 378 && canvas.getWidth() == 100 && strip.getWidth() == 100,
                        "Narrow window must constrain inspector to preserve 100px canvas");
                 expect(inspector.getHeight() == 676 && strip.isShowing() && retainedSlider && retainedVoice,
                        "Narrow window lost full-height inspector or selected LFO");
@@ -705,8 +714,8 @@ void resizableModulationPanel() {
                 expect(inspector.getBounds() == juce::Rectangle<int>(948, 76, 320, routing->getHeight() - 124),
                        "Vertical divider shortened or moved the full-height inspector");
                 expect(strip.isShowing() && strip.selectedId() == 1
-                           && strip.getBounds() == juce::Rectangle<int>(156, routing->getHeight() - 40 - actualHeight, 772, actualHeight)
-                           && canvas.getBounds() == juce::Rectangle<int>(156, 70, 772, routing->getHeight() - 118 - actualHeight)
+                           && strip.getBounds() == juce::Rectangle<int>(90, routing->getHeight() - 40 - actualHeight, 838, actualHeight)
+                           && canvas.getBounds() == juce::Rectangle<int>(90, 70, 838, routing->getHeight() - 118 - actualHeight)
                            && canvas.getHeight() >= 100 && !strip.getBounds().intersects(inspector.getBounds()),
                        "Vertical divider lost selection, canvas minimum or independent strip geometry");
                 expect(divider->getBounds() == juce::Rectangle<int>(canvas.getX(), canvas.getBottom(), canvas.getWidth(), 8)

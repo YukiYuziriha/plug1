@@ -6,6 +6,7 @@
 #include "MeterPanel.h"
 #include "DoublerPanel.h"
 #include "RoutingPanel.h"
+#include "MainBusFxRackPanel.h"
 #include "PresetManager.h"
 
 namespace vocalstack {
@@ -57,7 +58,7 @@ private:
     bool routingVisible = false;
     bool routingOpened = false;
     DoublerPanel advancedPanel;
-    ChoralePanel choralePanel;
+    MainBusFxRackPanel mainBusFxRack;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, knobParameterIds.size()> knobLinks;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, switchParameterIds.size()> switchLinks;
     std::unique_ptr<juce::ParameterAttachment> bypassUiLink;

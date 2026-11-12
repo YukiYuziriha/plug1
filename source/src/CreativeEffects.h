@@ -111,17 +111,21 @@ struct Ring {
     void allocate(std::size_t n) { data.assign(n, 0.f); head = 0; }
     void release() { std::vector<float>().swap(data); head = 0; }
     void reset() noexcept { std::fill(data.begin(), data.end(), 0.f); head = 0; }
-    void push(float x) noexcept { data[head] = clean(x); if (++head == data.size()) head = 0; }
+    void push(float x) noexcept { if (data.empty()) return; data[head] = clean(x); if (++head == data.size()) head = 0; }
     float at(double position) const noexcept {
         const double n = static_cast<double>(data.size());
-        // Callers constrain position to within two revolutions of the buffer.
-        while (position < 0) position += n;
-        while (position >= n) position -= n;
+        if (data.empty() || !std::isfinite(position)) return 0;
+        // Normal DSP reads are within two revolutions. The fallback also bounds
+        // work for absolute granular capture coordinates after long sessions.
+        if (position < -n || position >= 2 * n) position = std::fmod(position, n);
+        if (position < 0) position += n;
+        if (position >= n) position -= n;
         const auto i = static_cast<std::size_t>(position);
         const auto j = i + 1 == data.size() ? 0 : i + 1;
         return data[i] + static_cast<float>(position - static_cast<double>(i)) * (data[j] - data[i]);
     }
     float read(double delay) const noexcept {
+        if (data.size() < 3 || !std::isfinite(delay)) return 0;
         return at(static_cast<double>(head) - std::clamp(delay, 1.0, static_cast<double>(data.size() - 2)));
     }
 };
@@ -134,7 +138,12 @@ struct Band {
         return low;
     }
 };
-struct Grain { double position = 0, step = 1; float phase = 0, increment = 0, pan = 0; bool active = false; };
+struct Grain {
+    double position = 0, lastPosition = 0, step = 1;
+    float phase = 0, increment = 0, pan = 0, boundaryGain = 1;
+    std::array<float, 2> last{};
+    bool active = false, hasRead = false, retiring = false;
+};
 } // namespace creative_detail
 
 // Single audio-thread owner. prepare() is non-realtime and resets state; reset()
@@ -157,6 +166,40 @@ struct Grain { double position = 0, step = 1; float phase = 0, increment = 0, pa
 // intentionally aliased, with a postfilter, not an antialiased sample-rate converter.
 class CreativeEffect {
 public:
+    struct GrainSnapshot {
+        struct Grain {
+            float position = 0, progress = 0, envelope = 0, pan = 0, step = 0;
+            std::uint32_t slot = 0;
+            bool holdingBoundary = false;
+        };
+        std::array<Grain, 32> grains{};
+        std::uint64_t sample = 0, capturedFrames = 0;
+        std::uint32_t count = 0;
+        float captureHead = 0, validFraction = 0;
+        bool frozen = false, capturing = false;
+    };
+    // AUDIO THREAD ONLY, e.g. once at the end of a host block. Fixed value data,
+    // no allocations/locks. The coordinator must publish through its own bounded
+    // lock-free bridge; calling this concurrently from the UI is a data race.
+    // Positions/progress describe the next render sample, not decorative grains.
+    GrainSnapshot grainSnapshot() const noexcept {
+        GrainSnapshot result;
+        if (!ready_ || kind_ != CreativeKind::granular) return result;
+        const double n = static_cast<double>(rings_[0].data.size());
+        result.sample = tick_; result.capturedFrames = capturedFrames_;
+        result.captureHead = static_cast<float>(rings_[0].head / n);
+        result.validFraction = static_cast<float>(std::min<double>(static_cast<double>(capturedFrames_), n) / n);
+        result.frozen = granularFrozen_; result.capturing = !granularFrozen_;
+        for (std::size_t i = 0; i < grains_.size(); ++i) {
+            const auto& g = grains_[i]; if (!g.active) continue;
+            double p = std::fmod(g.retiring ? g.lastPosition : g.position, n); if (p < 0) p += n;
+            const float t = g.phase * (1 - g.phase);
+            result.grains[result.count++] = {static_cast<float>(p / n), g.phase,
+                g.hasRead ? 16 * t * t * g.boundaryGain : 0.f, g.pan, static_cast<float>(g.step), static_cast<std::uint32_t>(i), g.retiring};
+        }
+        return result;
+    }
+    static constexpr float reverbWetCalibration = 4.f;
     void prepare(double sampleRate, CreativeKind kind) {
         sr_ = std::isfinite(sampleRate) && sampleRate >= 8000 && sampleRate <= 384000 ? sampleRate : 48000;
         kind_ = kind;
@@ -189,6 +232,7 @@ public:
         for (auto& b : allpass_) b.reset();
         for (auto& b : reverbPitchRings_) b.reset();
         swellPeak_ = swellEnvelope_ = 0;
+        capturedFrames_ = 0; granularFrozen_ = false;
         for (auto& b : bands_) b.reset();
         damp_.fill(0); scLow_.fill(0); held_.fill(0); grains_ = {};
         initialized_ = false; tick_ = 0; duckEnv_ = compEnv_ = reduction_ = targetReduction_ = 0;
@@ -221,7 +265,9 @@ public:
         return {creative_detail::clean(out[0]), creative_detail::clean(out[1])};
     }
     // Positive attenuation, before makeup, audio-thread read (publish externally).
-    float gainReductionDb() const noexcept { return kind_ == CreativeKind::compressor ? reduction_ : 0.f; }
+    float gainReductionDb() const noexcept {
+            return kind_ == CreativeKind::compressor ? -20.f * std::log10(std::max(1.e-12f, compGain_)) : 0.f;
+        }
 
 private:
     using P = CreativeParameter;
@@ -241,6 +287,8 @@ private:
     std::array<double, 8> lineTime_{}, currentLineTime_{};
     std::array<float, 2> scLow_{}, held_{};
     std::array<creative_detail::Grain, 32> grains_{};
+    std::uint64_t capturedFrames_ = 0;
+    bool granularFrozen_ = false;
     float smoothStep_ = 0, duckAttack_ = 0, duckRelease_ = 0, duckEnv_ = 0, duckAmount_ = 0;
     float compEnv_ = 0, reduction_ = 0, targetReduction_ = 0, compGain_ = 1, targetCompGain_ = 1;
     float attack_ = 0, release_ = 0, makeup_ = 1, scHP_ = 0;
@@ -417,7 +465,9 @@ private:
         const float swell = swellAttack_ == 0 ? 1.f
             : std::min(1.f, swellEnvelope_ / std::max(1.e-20f, swellPeak_));
         const float mid = (a + b) * .5f, side = (a - b) * .5f * width_, d = duck(l, r) * swell;
-        return {(mid + side) * d, (mid - side) * d};
+        // Fixed output-only calibration, measured in docs/DSP-Audit.md. Never
+        // normalizes the tail, changes loop stability, or adds a hidden dry path.
+        return {(mid + side) * d * reverbWetCalibration, (mid - side) * d * reverbWetCalibration};
     }
     std::array<float, 2> compressor(float l, float r) noexcept {
         const std::array<float, 2> in {l, r}; float peak = 0;
@@ -456,17 +506,22 @@ private:
     }
     std::array<float, 2> granular(float l, float r) noexcept {
         const bool freeze = value(P::granularFreeze) >= .5f;
+        granularFrozen_ = freeze;
         // Existing grains finish normally; new grains address the same frozen
         // history. Freeze stops capture, not grain/window progression.
         if (!freeze) {
             rings_[0].push(creative_detail::saturate(l * drive_, (drive_ - 1) / drive_) * makeup_);
             rings_[1].push(creative_detail::saturate(r * drive_, (drive_ - 1) / drive_) * makeup_);
+            ++capturedFrames_;
         }
+        const double captured = static_cast<double>(capturedFrames_);
+        const double valid = std::min(captured, static_cast<double>(rings_[0].data.size()));
+        const double oldest = captured - valid;
         spawn_ -= density_;
         if (spawn_ <= 0) {
             spawn_ += std::max(.1f, 1.f + (random() * 2 - 1) * value(P::granularJitter) * .008f);
             for (auto& g : grains_) if (!g.active) {
-                g.active = true; g.phase = 0; g.increment = grainIncrement_;
+                g = {}; g.active = true; g.phase = 0; g.increment = grainIncrement_;
                 g.step = pitchRatio_ * (value(P::granularReverse) >= .5f ? -1 : 1);
                 const double length = 1.0 / grainIncrement_;
                 // Keep even a +12 st forward grain behind the write head for its
@@ -474,7 +529,13 @@ private:
                 const double guard = 4 + length * (freeze ? std::abs(g.step) : std::max(0.0, g.step - 1));
                 const double scatter = random() * value(P::granularJitter) * .001 * sr_;
                 const double lookback = guard + value(P::granularPosition) * .001 * sr_ + scatter;
-                g.position = static_cast<double>(rings_[0].head) - lookback;
+                // Clamp requested history to recorded data, not zero-filled
+                // storage. At startup a forward grain may wait for its first
+                // valid sample; reverse/frozen grains never wrap into unwritten
+                // history. Interpolation always requires two captured samples.
+                const double backwardsTravel = length * std::max(0.0, (freeze ? 0.0 : 1.0) - g.step);
+                const double maxLookback = std::max(4.0, valid - 2 - backwardsTravel);
+                g.position = captured - std::min(lookback, maxLookback);
                 g.pan = (random() * 2 - 1) * value(P::granularSpread) * .01f;
                 break;
             }
@@ -484,12 +545,23 @@ private:
             // Hann-like polynomial window: zero value/slope at both boundaries.
             const float t = g.phase * (1 - g.phase), w = 16 * t * t;
             const float weightL = w * (1 - g.pan * .65f), weightR = w * (1 + g.pan * .65f);
-            a += rings_[0].at(g.position) * weightL;
-            b += rings_[1].at(g.position) * weightR;
-            overlapL += weightL; overlapR += weightR;
+            const bool readable = g.position >= oldest && g.position < captured - 1;
+            if (!readable && g.hasRead) g.retiring = true;
+            if (readable && !g.retiring) {
+                const double ringPosition = static_cast<double>(rings_[0].head) - (captured - g.position);
+                g.last = {rings_[0].at(ringPosition), rings_[1].at(ringPosition)};
+                g.lastPosition = g.position; g.hasRead = true;
+            }
+            // A freeze transition can stop the write head in front of an
+            // existing forward grain; unfreeze can overwrite an old reverse
+            // grain. Hold the last valid sample and finish a 2ms linear fade,
+            // rather than reading unrelated history or jumping to digital zero.
+            if (g.retiring) g.boundaryGain = std::max(0.f, g.boundaryGain - static_cast<float>(1 / (.002 * sr_)));
+            a += g.last[0] * weightL * g.boundaryGain;
+            b += g.last[1] * weightR * g.boundaryGain;
+            overlapL += weightL * g.boundaryGain; overlapR += weightR * g.boundaryGain;
             g.position += g.step;
-            const double n = static_cast<double>(rings_[0].data.size());
-            if (g.position < 0) g.position += n; else if (g.position >= n) g.position -= n;
+            if (g.boundaryGain == 0) g.active = false;
             g.phase += g.increment; if (g.phase >= 1) g.active = false;
         }
         // Use surviving grains' actual windows/lifetimes, not the new spawn

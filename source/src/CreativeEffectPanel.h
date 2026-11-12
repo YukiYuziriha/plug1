@@ -73,8 +73,8 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
                 slider.owner = &owner; slider.bindModulation(owner, id);
                 slider.setName(name); slider.setTitle(name); slider.setTooltip(tooltip);
                 slider.setLookAndFeel(&style);
-                slider.setSliderStyle(juce::Slider::LinearHorizontal);
-                slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 82, 21);
+                slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+                slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 82, 21);
                 addAndMakeVisible(slider);
                 sliderLink = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner.parameters, id, slider);
                 if (auto* p = owner.parameters.getParameter(id))
@@ -103,7 +103,8 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
                 }
         void resized() override {
             auto area = getLocalBounds().reduced(2, 1);
-            label.setBounds(area.removeFromTop(17)); slider.setBounds(area);
+            label.setJustificationType(juce::Justification::centred);
+                        label.setBounds(area.removeFromTop(17)); slider.setBounds(area);
             toggle.setBounds(getLocalBounds().reduced(2, 8));
         }
         void setNeon(bool neon) {
@@ -211,7 +212,7 @@ public:
         // Reserve scrollbar width consistently so crossing the height threshold
         // cannot reflow the grid back and forth.
         const int width = juce::jmax(1, getWidth() - viewport.getScrollBarThickness());
-        const int columns = width >= 460 ? 2 : 1;
+        const int columns = juce::jmax(1, (width - 16) / 130);
         const int cell = juce::jmax(1, (width - 16) / columns);
         int y = 8;
         visual.setBounds(8, y, juce::jmax(1, width - 16), 238); y += 246;
@@ -221,8 +222,8 @@ public:
             group.heading->setBounds(8, y, width - 16, 23); y += 25;
             for (size_t i = 0; i < group.rows.size(); ++i)
                 group.rows[i]->setBounds(8 + int(i % size_t(columns)) * cell,
-                    y + int(i / size_t(columns)) * 48, cell, 46);
-            y += int((group.rows.size() + size_t(columns) - 1) / size_t(columns)) * 48 + 8;
+                    y + int(i / size_t(columns)) * 100, cell, 98);
+            y += int((group.rows.size() + size_t(columns) - 1) / size_t(columns)) * 100 + 8;
         }
         content.setSize(width, juce::jmax(getHeight(), y));
     }
@@ -298,7 +299,9 @@ private:
             meter.setText("GAIN REDUCTION   " + juce::String(std::isfinite(reduction) ? juce::jmax(0.0f, reduction) : 0.0f, 1) + " dB", juce::dontSendNotification);
         }
     }
-    void timerCallback() override { updateState(); }
+    void timerCallback() override {
+            if (isShowing()) updateState();
+        }
     Processor& owner;
     size_t slot;
     CreativeKind kind;

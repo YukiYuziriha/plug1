@@ -22,7 +22,7 @@ namespace vocalstack {
 
 // Serializable model. IDs identify machines, not positions in nodes[]. Changing
 // an effect ID or type creates fresh state; retaining both retains DSP history.
-enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18 };
+enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19 };
 inline constexpr bool isCreativeEffect(NodeType type) noexcept {
     return type >= NodeType::delay && type <= NodeType::granular;
 }
@@ -54,7 +54,8 @@ struct RoutingNode {
 struct RoutingLink {
     std::uint32_t source = 0, destination = 0;
     int inputPin = 0; // Mix dry=0/wet=1, Sum=0..15, other processors=0
-    int sourcePin = 0; // crossover: Low=0, Mid=1, High=2; two-band: Low=0, High=1
+    int sourcePin = 0; // splitter: identical full-level outputs 0/1
+                           // crossover: Low=0, Mid=1, High=2; two-band: Low=0, High=1
 };
 struct Graph { std::vector<RoutingNode> nodes; std::vector<RoutingLink> links; };
 struct RoutingValidation {
@@ -159,8 +160,38 @@ struct RoutingControls {
 // Request success means queued, applied on the next process call. Multiple queued
 // edits collapse to the latest. Stable effect IDs AND types share history, but
 // only the current plan renders: state is never advanced twice for a transition.
+struct RoutingGrainFrame {
+    uint32_t nodeId = 0;
+    uint64_t generation = 0;
+    CreativeEffect::GrainSnapshot grains{};
+    uint64_t revision = 0, resetEpoch = 0;
+};
+struct RoutingGrainSnapshot {
+    uint64_t revision = 0, resetEpoch = 0;
+    std::array<RoutingGrainFrame, 16> nodes{};
+};
+
 class RoutingExecutor {
 public:
+    // Audio owner only; call once per host block, never from the GUI.
+    RoutingGrainSnapshot grainSnapshot() const noexcept {
+        RoutingGrainSnapshot result;
+        result.resetEpoch = grainResetEpoch;
+        if (!active) return result;
+        result.revision = active->revision;
+        for (int i = 0; i < active->count; ++i) {
+            const auto& step = active->steps[i];
+            const int slot = routingFxSlot(step.node.id);
+            if (step.node.type == NodeType::granular && step.fx && slot > 0) {
+                result.nodes[size_t(slot)] = {step.node.id, step.fx->grainGeneration,
+                    step.fx->creative.grainSnapshot(), result.revision, result.resetEpoch};
+            }
+        }
+        return result;
+    }
+    // Concurrent readers may reject frames from a not-yet-installed plan/reset.
+    uint64_t requestedGrainRevision() const noexcept { return grainRevision.load(std::memory_order_acquire); }
+    uint64_t grainEpoch() const noexcept { return publishedGrainEpoch.load(std::memory_order_acquire); }
     static constexpr int maxNodes = 48, maxLinks = 128, maxEffects = 16, maxInputs = 16;
     // Added to the engine's own latency, not a replacement for it. Quality is
     // live automation: no off-thread graph compile or latency renegotiation is
@@ -228,6 +259,7 @@ public:
                 if (!step.fx || step.fx->type != step.node.type) {
                     step.fx = std::make_shared<Machine>(step.node.type);
                     step.fx->prepare(rate);
+                    step.fx->grainGeneration = ++nextGrainGeneration;
                     weak = step.fx;
                 }
             }
@@ -236,10 +268,18 @@ public:
             if (step.node.type == NodeType::output) plan->output = i;
         }
 
+        plan->revision = grainRevision.fetch_add(1, std::memory_order_acq_rel) + 1;
         delete pending.exchange(plan.release(), std::memory_order_acq_rel);
         // Do not accumulate expired machine identities after repeated editing.
-        for (auto it = machines.begin(); it != machines.end();)
-            if (it->second.expired()) it = machines.erase(it); else ++it;
+        for (auto it = machines.begin(); it != machines.end();) {
+            const auto machine = it->second.lock();
+            // Retired/active plans may still own deleted effects. Only ID/type
+            // survivors may reuse history, even when pending edits coalesce.
+            const int index = find(g, it->first);
+            if (!machine || index < 0 || g.nodes[size_t(index)].type != machine->type)
+                it = machines.erase(it);
+            else ++it;
+        }
         return {true, {}};
     }
     void collectRetired() {
@@ -252,6 +292,7 @@ public:
         retireRead.store(read, std::memory_order_release);
     }
     void reset() {
+        publishedGrainEpoch.store(++grainResetEpoch, std::memory_order_release);
         // Include old-type machines still owned by active/retired plans, not
         // only the latest identity map. Quiescent audio/control is required.
         std::array<Machine*, maxNodes * 6> seen{};
@@ -312,8 +353,8 @@ private:
         for (int i = 0; i < active->count; ++i) {
             auto& step = active->steps[i];
             auto& ports = values[i];
-            // Non-crossover plans never write ports 1/2; they stay zero from
-            // plan construction. Avoid clearing three full provenance buffers.
+            // Only crossover needs to clear every port (bypassed/unused bands).
+            // Splitter overwrites both outputs with complete routed values.
             if (step.node.type == NodeType::crossover) ports = {};
             else ports[0] = {};
             auto& value = ports[0];
@@ -400,6 +441,12 @@ private:
                 for (size_t s = 0; s < value.lineage.size(); ++s) value.lineage[s] = blend(dry.lineage[s], wet.lineage[s], m);
                 break;
             }
+            case NodeType::splitter:
+                // Copy audio AND provenance: each branch is full-level, but
+                // coherent reconvergence still receives automatic compensation.
+                value = input(0);
+                ports[1] = value;
+                break;
             case NodeType::chorale: {
                 value = input(0);
                 if (monitoring) monitorInput = value.audio;
@@ -529,6 +576,7 @@ private:
     struct RoutedValue { StereoSample audio; std::array<float, 9 * Regions> lineage{}; };
     using Value = RoutedValue<regionCount>;
     struct Machine {
+        uint64_t grainGeneration = 0;
         explicit Machine(NodeType t) : type(t) {}
         void prepare(double sr) {
             switch (type) {
@@ -578,10 +626,11 @@ private:
         std::shared_ptr<Machine> fx;
     };
     struct Plan {
+        uint64_t revision = 0;
         std::array<Step, maxNodes> steps;
         std::array<std::array<Value, 3>, maxNodes> values{};
         // Full-band graphs need nine source weights, not all 33 frequency regions.
-        // Keep the established multiband path unchanged when a splitter is present.
+        // Keep the established multiband path whenever a crossover is present.
         std::array<std::array<RoutedValue<1>, 3>, maxNodes> compactValues{};
         std::array<double, regionCount> boundaries{};
         int regions = 1, count = 0, output = 0;
@@ -733,7 +782,7 @@ private:
                 }
                 ++effects; break;
             case NodeType::output: ++outputs; break;
-            case NodeType::sum: case NodeType::mix: break;
+            case NodeType::sum: case NodeType::mix: case NodeType::splitter: break;
             default: return {false, "unknown node type"};
             }
         }
@@ -743,10 +792,11 @@ private:
             if (s < 0 || d < 0 || s == d) return {false, "invalid link endpoint"};
             const auto type = g.nodes[d].type;
             const int count = type == NodeType::sum ? maxInputs : type == NodeType::mix ? 2 :
-                (type == NodeType::output || isEffect(type)) ? 1 : 0;
+                (type == NodeType::output || type == NodeType::splitter || isEffect(type)) ? 1 : 0;
             if (g.nodes[s].type == NodeType::output || l.inputPin < 0 || l.inputPin >= count)
                 return {false, "invalid input pin or Output used as source"};
-            const int outputPins = g.nodes[s].type == NodeType::crossover ? 3 : 1;
+            const int outputPins = g.nodes[s].type == NodeType::crossover ? 3
+                            : g.nodes[s].type == NodeType::splitter ? 2 : 1;
             if (l.sourcePin < 0 || l.sourcePin >= outputPins) return {false, "invalid source pin"};
             if (++pins[d][l.inputPin] > maxInputs) return {false, "input exceeds 16 incoming branches"};
             int duplicates = 0;
@@ -774,7 +824,9 @@ private:
         reportedTail.store(0, std::memory_order_release);
     }
     static_assert(std::atomic<double>::is_always_lock_free, "tail publication requires lock-free doubles");
-    FxMonitor* fxMonitor = nullptr;
+    uint64_t nextGrainGeneration = 0, grainResetEpoch = 0;
+        std::atomic<uint64_t> grainRevision{0}, publishedGrainEpoch{0};
+        FxMonitor* fxMonitor = nullptr;
     std::atomic<double> reportedTail{0};
     double rate = 0;
     float mixSmoothing = 0;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.8.0 LANGUAGES C CXX)
+project(VocalStack VERSION 1.9.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -83,7 +83,7 @@ if(VOCALSTACK_BUILD_TESTS)
     add_executable(vocalstack_fxmonitor_tests tests/FxMonitorTests.cpp)
     target_link_libraries(vocalstack_fxmonitor_tests PRIVATE vocalstack_dsp)
     add_test(NAME VocalStackFxMonitor COMMAND vocalstack_fxmonitor_tests)
-    foreach(suite IN ITEMS RoutingBackend VoiceBackend FxAutomation PitchResolution FormantRatio ToneEffects Multiband LeadMixBackend WaveshaperExpansion)
+    foreach(suite IN ITEMS RoutingBackend VoiceBackend FxAutomation PitchResolution FormantRatio ToneEffects Multiband LeadMixBackend WaveshaperExpansion MainBusFxRack DspAudit DspAuditRouting GrainSnapshot)
         string(TOLOWER "${suite}" suite_lower)
         add_executable(vocalstack_${suite_lower}_tests tests/${suite}Tests.cpp)
         target_link_libraries(vocalstack_${suite_lower}_tests PRIVATE vocalstack_dsp)
@@ -127,5 +127,37 @@ if(VOCALSTACK_BUILD_TESTS)
         target_link_libraries(VocalStackModulationProcessorTests PRIVATE VocalStack vocalstack_dsp
             juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
         add_test(NAME VocalStackModulationProcessor COMMAND VocalStackModulationProcessorTests)
+
+        juce_add_console_app(VocalStackRoutingSplitterStateTests PRODUCT_NAME "Vocal Stack Routing Splitter State Tests")
+        target_sources(VocalStackRoutingSplitterStateTests PRIVATE tests/RoutingSplitterStateTests.cpp)
+        target_link_libraries(VocalStackRoutingSplitterStateTests PRIVATE VocalStack vocalstack_dsp
+            juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
+        add_test(NAME VocalStackRoutingSplitterState COMMAND VocalStackRoutingSplitterStateTests)
+
+        juce_add_console_app(VocalStackMainBusFxRackUiTests PRODUCT_NAME "Vocal Stack Main Bus FX Rack UI Tests")
+        target_sources(VocalStackMainBusFxRackUiTests PRIVATE tests/MainBusFxRackUiTests.cpp)
+        target_link_libraries(VocalStackMainBusFxRackUiTests PRIVATE VocalStack vocalstack_dsp
+            juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
+        add_test(NAME VocalStackMainBusFxRackUi COMMAND VocalStackMainBusFxRackUiTests)
+
+        juce_add_console_app(VocalStackGrainSnapshotUiTests PRODUCT_NAME "Vocal Stack Grain Snapshot UI Tests")
+        target_sources(VocalStackGrainSnapshotUiTests PRIVATE tests/GrainSnapshotUiTests.cpp)
+        target_link_libraries(VocalStackGrainSnapshotUiTests PRIVATE VocalStack vocalstack_dsp
+            juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
+        add_test(NAME VocalStackGrainSnapshotUi COMMAND VocalStackGrainSnapshotUiTests)
+
+        juce_add_console_app(VocalStackFactoryPresetAudioTests PRODUCT_NAME "Vocal Stack Factory Preset Audio Tests")
+        target_sources(VocalStackFactoryPresetAudioTests PRIVATE tests/FactoryPresetAudioTests.cpp)
+        target_link_libraries(VocalStackFactoryPresetAudioTests PRIVATE VocalStack vocalstack_dsp
+            juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
+        foreach(preset RANGE 0 7)
+            add_test(NAME VocalStackFactoryPresetAudio${preset} COMMAND VocalStackFactoryPresetAudioTests ${preset})
+        endforeach()
+
+        # Informational only; explicitly opt in after stopping concurrent builds/tests.
+        juce_add_console_app(VocalStackReleasePerformanceProbe PRODUCT_NAME "Vocal Stack Release Performance Probe")
+        target_sources(VocalStackReleasePerformanceProbe PRIVATE tests/ReleasePerformanceProbe.cpp)
+        target_link_libraries(VocalStackReleasePerformanceProbe PRIVATE VocalStack vocalstack_dsp
+            juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
     endif()
 endif()
