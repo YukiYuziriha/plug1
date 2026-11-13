@@ -3,6 +3,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 #include <cstdint>
+#include <vector>
+#include <algorithm>
 
 namespace vocalstack {
 
@@ -26,6 +28,8 @@ inline double fluidAnimationSeconds(const juce::Component& component) {
 }
 
 // GUI-thread only. Own one per surface; no timers or component dependencies.
+inline constexpr double proceduralAnimationSpeed = 1.2;
+
 class FluidBackground {
 public:
     void paint(juce::Graphics& g, juce::Rectangle<int> bounds, juce::Colour base,
@@ -46,7 +50,7 @@ public:
             cachedFrame = frame;
             cachedBase = base;
             cachedAccent = accent;
-            const double phase = frame * 0.0025;
+            const double phase = frame * 0.0025 * proceduralAnimationSpeed;
             juce::Image::BitmapData pixels(image, juce::Image::BitmapData::writeOnly);
             // Keep the original dark surface dominant. A desaturated, brightness-
             // matched accent gives only a faint theme tint, never a vivid wash.
@@ -97,6 +101,30 @@ private:
     juce::Image image;
     double cachedFrame = -1.0;
     juce::Colour cachedBase, cachedAccent;
+};
+
+// Look-and-feels are shared by differently sized buttons. Keep a cache per
+// live surface rather than rebuilding one image on every button paint.
+class ButtonFluidBackground {
+public:
+    void paint(juce::Graphics& g, juce::Button& button, juce::Rectangle<int> bounds,
+               juce::Colour base, juce::Colour accent) {
+        entries.erase(std::remove_if(entries.begin(), entries.end(),
+            [](const Entry& entry) { return entry.button == nullptr; }), entries.end());
+        auto found = std::find_if(entries.begin(), entries.end(),
+            [&](const Entry& entry) { return entry.button.getComponent() == &button; });
+        if (found == entries.end()) {
+            entries.push_back({&button, {}});
+            found = std::prev(entries.end());
+        }
+        found->background.paint(g, bounds, base, accent, fluidAnimationSeconds(button));
+    }
+private:
+    struct Entry {
+        juce::Component::SafePointer<juce::Button> button;
+        FluidBackground background;
+    };
+    std::vector<Entry> entries;
 };
 
 } // namespace vocalstack

@@ -366,7 +366,7 @@ public:
             if (texture.isValid() && accent == textureColour && frame == textureFrame) return;
             textureColour = accent; textureFrame = frame;
             if (!texture.isValid()) texture = juce::Image(juce::Image::RGB, 128, 26, false);
-            const float phase = float(std::fmod(frame / 15.0, 4096.0));
+            const float phase = float(std::fmod(frame / 15.0 * proceduralAnimationSpeed, 4096.0));
             juce::Image::BitmapData pixels(texture, juce::Image::BitmapData::writeOnly);
             for (int row = 0; row < 13; ++row) for (int col = 0; col < 64; ++col) {
                 const float noise = .30f * textureNoise(float(col) + phase * 1.3f, float(row) + std::sin(phase * .18f) * 2.f, 8)

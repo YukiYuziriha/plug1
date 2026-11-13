@@ -23,6 +23,7 @@ inline void styleRotary(juce::Slider& slider, bool neon) {
 
 // Scoped to inspector panels; rotary controls retain their own drawing styles.
 class PanelStyle final : public juce::LookAndFeel_V4 {
+    ButtonFluidBackground buttonBackground;
 public:
     void setPalette(const ThemePalette& p) {
         setColour(juce::Label::textColourId, p.text);
@@ -42,8 +43,13 @@ public:
         if (down) fill = fill.interpolatedWith(p.inset, 0.18f);
         if (!button.isEnabled()) fill = fill.withMultipliedAlpha(0.45f);
         const auto area = button.getLocalBounds().toFloat().reduced(0.5f);
-        g.setColour(fill);
-        g.fillRect(area);
+        {
+            juce::Graphics::ScopedSaveState state(g);
+            g.reduceClipRegion(area.toNearestInt());
+            // Preserve translucent disabled treatment over the textured base.
+            g.setOpacity(fill.getFloatAlpha());
+            buttonBackground.paint(g, button, area.toNearestInt(), fill.withAlpha(1.0f), p.accent);
+        }
         g.setColour((active || button.hasKeyboardFocus(false) ? accent : p.border)
                         .withMultipliedAlpha(button.isEnabled() ? 1.0f : 0.45f));
         g.drawRect(area, button.hasKeyboardFocus(false) ? 2.0f : 1.0f);

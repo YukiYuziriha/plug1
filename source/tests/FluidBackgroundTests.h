@@ -2,6 +2,8 @@
 
 #include "FluidBackground.h"
 #include "VisualTheme.h"
+#include "PluginProcessor.h"
+#include "ToneUiTests.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -166,6 +168,40 @@ inline void inheritedTimeAndOverrides() {
     }
 }
 
+inline void stackSurfaces() {
+    require(proceduralAnimationSpeed == 1.2, "Procedural motion must be exactly 20 percent faster");
+    for (int theme : {0, 1, 2}) {
+        auto owner = std::make_unique<Processor>();
+        owner->setSkin(theme);
+        std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor());
+        auto& canvas = *toneUiTests::slider(*editor, "outputGain").getParentComponent();
+        const auto capture = [&](double time) {
+            editor->getProperties().set(vocalstackAnimationTimeOverrideProperty, time);
+            return canvas.createComponentSnapshot(canvas.getLocalBounds());
+        };
+        const auto first = capture(0.0), later = capture(40.0);
+        toneUiTests::screenshot(*editor, "stack-material-197-" + juce::String(theme) + ".png");
+        require(identical(first, capture(0.0)), "Stack freeze did not restore deterministic pixels");
+        // Empty strips inside all four control plates, away from labels/knobs.
+        for (const auto x : {30, 150, 460, 580}) {
+            const juce::Rectangle<int> strip(x, 250, 25, 8);
+            require(!identical(first.getClippedImage(strip), later.getClippedImage(strip)),
+                    "Top Stack control card did not inherit animated material");
+        }
+        auto* button = toneUiTests::find<juce::TextButton>(canvas, [](auto&) { return true; });
+        require(button != nullptr, "Stack button not found");
+        const auto buttonCapture = [&](double time) {
+            editor->getProperties().set(vocalstackAnimationTimeOverrideProperty, time);
+            return button->createComponentSnapshot(button->getLocalBounds());
+        };
+        require(!identical(buttonCapture(0), buttonCapture(40)), "Stack button material did not animate");
+        const auto off = buttonCapture(0);
+        button->setToggleState(true, juce::dontSendNotification);
+        require(!identical(off, buttonCapture(0)), "Button active state disappeared under material");
+        require(!button->getWantsKeyboardFocus(), "Textured button claimed host keyboard focus");
+    }
+}
+
 // Call on the GUI/message thread; no processor, DSP, timer or sleeping required.
 inline void run() {
     deterministicTimeAndMotion();
@@ -173,6 +209,7 @@ inline void run() {
     themeTintStaysMuted();
     proportionalCoarsePixels();
     inheritedTimeAndOverrides();
+    stackSurfaces();
 }
 
 } // namespace vocalstack::fluidBackgroundTests

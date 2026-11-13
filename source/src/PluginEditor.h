@@ -23,6 +23,7 @@ private:
     class Style final : public juce::LookAndFeel_V4 {
     public:
         bool flash = false;
+        ButtonFluidBackground buttonBackground;
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
             return createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
         }
@@ -54,6 +55,7 @@ private:
     };
     LayoutCanvas layoutCanvas;
     FluidBackground rootBackground, canvasBackground;
+    std::array<FluidBackground, 4> controlBackgrounds;
     double animationSeconds = 0.0;
     double lastVisibleTick = -1.0;
     double lastBackgroundFrame = -1.0;

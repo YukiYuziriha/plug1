@@ -1,27 +1,25 @@
-# Vocal Stack 1.9.6
+# Vocal Stack 1.9.7
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.6 is built, tested, packaged and installed.**
-The background grid's longest edge is now **80 cells (from 40)**: approximately
-half-sized pixels, denser multiscale fluid noise and grain, and stronger brightness
-variation. Theme tint remains muted (saturation cap **0.18**, tint blend **0.12**),
-not a vivid gradient. Long FX Mix bars use denser noise with **2 px texels (from 3)**.
-A normal-font **`Mix NN%`** caption sits inside the **25 px bar**, with reverse
-contrast over the filled portion; the row is **44 px (from 94)**. The caption is a
-nonclickable, mouse-passthrough label: clicking or dragging over the text adjusts
-Mix without numeric entry or keyboard focus. Numeric entry for all other knobs
-and voice controls is unchanged. No DSP or host parameter changes.
+**1.9.7 is built, tested, packaged and installed.**
+Procedural fluid backgrounds and slider noise now evolve **20% faster**, without
+increasing the existing 10 Hz background / 15 Hz slider cache cadence or adding
+timers. Buttons and the four top Stack knob cards (Leveler, generated takes,
+Formant and Output) share the muted theme-noise material. Labels, value geometry,
+state colours, borders and focus handling remain intact. No DSP, parameter or
+state-format changes.
 
-The full Release build succeeded and **all 34 focused CTests passed in 161.06 s**,
-including **68 editor groups and rack UI**. Neon Reverb and Spectral Granular rack
-images and Neon/Device full editors were reviewed. Tracked CLAP/VST3 packages and
-`VocalStack-FX-Tabs.png` were refreshed; packaged CLAP smoke passed. Both formats
-reported **Installed and SHA256 verified** via `install-release.ps1`. Actual DAW
-checks remain unverified, and the long legacy DSP suite was not rerun. Release
-commit `cd54c85` is pushed to `origin/main` with matching packages. See the
-[1.9.6 validation record](docs/Release-1.9.6-Validation.md).
+The Release build and **all 34 focused CTests passed (521.33 s)**, including
+**68 editor groups**. New focused checks cover inherited/frozen Stack card and
+button material, active state and passive keyboard focus in all three themes.
+Device, Neon and Spectral Stack captures were reviewed. Packaged CLAP smoke
+passed; both formats were installed and SHA256-verified by the existing installer.
+The broad screenshot runner stopped at `Tone UI: Missing FX tab`; dedicated Stack
+captures succeeded. Actual DAW listening/transport remains unverified, and the
+long legacy DSP suite was not rerun. See the
+[1.9.7 validation record](docs/Release-1.9.7-Validation.md).
 
 **Historical 1.9.5 — built, tested, packaged and installed.**
 Long FX Mix controls now use flat **25 px textured bars**, with theme-colored,
@@ -103,7 +101,7 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.6 installation succeeded:** `source/build/install-release.ps1` reported
+**1.9.7 installation succeeded:** `source/build/install-release.ps1` reported
 **Installed and SHA256 verified for both per-user CLAP and VST3**.
 Packaging and packaged CLAP smoke are complete. Do not terminate Bitwig or overwrite a loaded plugin to force
 replacement. Actual Bitwig listening/transport and native FPS remain unchecked.
@@ -841,7 +839,14 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
-**1.9.6:** full Release build succeeded; **all 34 focused CTests passed in
+**1.9.7:** Release build, all 34 focused CTests (521.33 s), focused Stack material
+captures in all three themes, packaged CLAP smoke and hash-verified CLAP/VST3
+installation succeeded. Broad screenshot runner: `Tone UI: Missing FX tab`;
+legacy DSP and actual DAW checks not rerun. See
+[1.9.7 validation record](docs/Release-1.9.7-Validation.md).
+
+
+**Historical 1.9.6:** full Release build succeeded; **all 34 focused CTests passed in
 161.06 s**, including **68 editor groups and rack UI**. Reviewed images cover
 Neon Reverb and Spectral Granular racks plus Neon/Device full editors. Release
 CLAP/VST3 packages and `VocalStack-FX-Tabs.png` were refreshed. Packaged CLAP smoke

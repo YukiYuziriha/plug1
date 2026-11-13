@@ -434,10 +434,15 @@ void Editor::drawDevice(Graphics& g) {
 
     g.setColour(rgb(0x1c1f1e));
     g.fillRoundedRectangle(14.0f, 72.0f, 656.0f, 222.0f, 6.0f);
-    for (const auto& plate : controlPlates) {
+    for (size_t i = 0; i < controlPlates.size(); ++i) {
+        const auto& plate = controlPlates[i];
         const auto area = plate.toFloat();
-        g.setColour(rgb(0x252826));
-        g.fillRoundedRectangle(area, 4.0f);
+        {
+            Graphics::ScopedSaveState state(g);
+            Path clip; clip.addRoundedRectangle(area, 4.0f);
+            g.reduceClipRegion(clip);
+            controlBackgrounds[i].paint(g, plate, rgb(0x252826), themePalette(*this).accent, fluidAnimationSeconds(*this));
+        }
         g.setColour(rgb(0x343a35));
         g.drawRoundedRectangle(area, 4.0f, 1.0f);
     }
@@ -474,8 +479,12 @@ void Editor::drawFlash(Graphics& g) {
     if (routingVisible)
         return;
 
-    for (const auto& plate : controlPlates)
-        drawPlate(plate);
+    for (size_t i = 0; i < controlPlates.size(); ++i) {
+        const auto& plate = controlPlates[i];
+        controlBackgrounds[i].paint(g, plate, rgb(panel), themePalette(*this).accent, fluidAnimationSeconds(*this));
+        g.setColour(rgb(outline));
+        g.drawRect(plate);
+    }
 
     constexpr std::array<uint32_t, 4> accents{signPink, signPink, signCyan, signPink};
     const std::array<const char*, 4> captions{
@@ -513,8 +522,7 @@ void Editor::drawSpectral(Graphics& g) {
     };
     for (size_t i = 0; i < controlPlates.size(); ++i) {
         const auto& plate = controlPlates[i];
-        g.setColour(p.panel);
-        g.fillRect(plate);
+        controlBackgrounds[i].paint(g, plate, p.panel, p.accent, fluidAnimationSeconds(*this));
         g.setColour(p.border);
         g.drawRect(plate);
         text(g, captions[i], {plate.getX(), 269, plate.getWidth(), 15},
@@ -586,14 +594,21 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
         : selectedTheme == Theme::device ? rgb(0x333733) : p.panel;
     if (hover) fill = fill.brighter(0.12f);
     if (down) fill = fill.darker(0.12f);
-    g.setColour(fill);
+    // Keep lit/pressed/hover colours as the material base, with the existing
+    // border and text painted afterwards. Clip the Device corner silhouette.
+    {
+        Graphics::ScopedSaveState state(g);
+        Path clip;
+        if (selectedTheme == Theme::device) clip.addRoundedRectangle(area, 3.0f);
+        else clip.addRectangle(area);
+        g.reduceClipRegion(clip);
+        buttonBackground.paint(g, button, button.getLocalBounds(), fill, p.accent);
+    }
     const bool focused = button.hasKeyboardFocus(false);
     if (selectedTheme != Theme::device) {
-        g.fillRect(area);
         g.setColour(lit || focused || routingAction || name.startsWith("SKIN") ? accent : p.border);
         g.drawRect(area, focused ? 2.0f : 1.0f);
     } else {
-        g.fillRoundedRectangle(area, 3.0f);
         g.setColour(lit || routingAction ? accent.brighter(0.13f) : rgb(0x515850));
         g.drawRoundedRectangle(area, 3.0f, focused ? 1.6f : 0.7f);
     }
