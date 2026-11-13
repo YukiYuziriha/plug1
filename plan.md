@@ -24,7 +24,7 @@ UI-only: no DSP or host parameter changes.
   2688-sample latency passed.
 - [x] `install-release.ps1`: both per-user formats reported **Installed and
   SHA256 verified**.
-- [ ] Commit and push the release with matching packages (pending next).
+- [x] Commit and push the release with matching packages: `cd54c85` on `origin/main`.
 - [ ] Actual DAW visual/listening/transport/automation/recall and native FPS checks.
 
 The long legacy DSP suite was not rerun. Screenshot review is not actual DAW

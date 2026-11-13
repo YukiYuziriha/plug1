@@ -47,4 +47,5 @@ documentation update.
 - Actual DAW visual, listening, transport, automation, recall and native FPS checks
   remain **unverified**.
 - The long legacy DSP suite was **not rerun**.
-- Release commit and push with matching packages are **pending next**.
+- Release source and matching packages are committed as **`cd54c85`**, pushed to
+  **`origin/main`**.

@@ -20,7 +20,7 @@ images and Neon/Device full editors were reviewed. Tracked CLAP/VST3 packages an
 `VocalStack-FX-Tabs.png` were refreshed; packaged CLAP smoke passed. Both formats
 reported **Installed and SHA256 verified** via `install-release.ps1`. Actual DAW
 checks remain unverified, and the long legacy DSP suite was not rerun. Release
-commit and push are pending. See the
+commit `cd54c85` is pushed to `origin/main` with matching packages. See the
 [1.9.6 validation record](docs/Release-1.9.6-Validation.md).
 
 **Historical 1.9.5 — built, tested, packaged and installed.**
@@ -849,7 +849,7 @@ passed with **2087 parameters at original indices**, stereo **48 kHz**,
 mono-to-stereo **44.1 kHz** with **1344-sample latency**, and mono **96 kHz** with
 **2688-sample latency**. Both per-user formats were **Installed and SHA256
 verified**. Actual DAW checks remain unverified; the long legacy DSP suite was
-not rerun. Commit and push are pending. Package hashes and details are in the
+not rerun. Release commit `cd54c85` is pushed to `origin/main`. Package hashes and details are in the
 [1.9.6 validation record](docs/Release-1.9.6-Validation.md).
 
 **Historical 1.9.5:** initial editor validation passed **68 groups in 90 s**; the subsequent
