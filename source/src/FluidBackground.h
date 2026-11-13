@@ -33,11 +33,11 @@ inline constexpr double proceduralAnimationSpeed = 1.2;
 class FluidBackground {
 public:
     void paint(juce::Graphics& g, juce::Rectangle<int> bounds, juce::Colour base,
-               juce::Colour accent, double seconds, float contrast = 1.f) {
+               juce::Colour accent, double seconds, float contrast = 1.f, int longest = 80) {
         if (bounds.isEmpty()) return;
         // A fixed grid makes the physical pixels grow with the component, while
         // aspect adjustment keeps them approximately square in small FX cards.
-        constexpr int longest = 80;
+        longest = juce::jmax(1, longest);
         const int width = bounds.getWidth() >= bounds.getHeight() ? longest
             : juce::jmax(1, juce::roundToInt(double(longest) * bounds.getWidth() / bounds.getHeight()));
         const int height = bounds.getHeight() >= bounds.getWidth() ? longest

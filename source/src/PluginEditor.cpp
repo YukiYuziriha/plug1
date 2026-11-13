@@ -442,7 +442,7 @@ void Editor::drawDevice(Graphics& g) {
             Graphics::ScopedSaveState state(g);
             Path clip; clip.addRoundedRectangle(area, 4.0f);
             g.reduceClipRegion(clip);
-            controlBackgrounds[i].paint(g, plate, rgb(0x252826), themePalette(*this).accent, fluidAnimationSeconds(*this));
+            controlBackgrounds[i].paint(g, plate, rgb(0x252826), themePalette(*this).accent, fluidAnimationSeconds(*this), 1.f, 24);
         }
         g.setColour(rgb(0x343a35));
         g.drawRoundedRectangle(area, 4.0f, 1.0f);
@@ -482,7 +482,7 @@ void Editor::drawFlash(Graphics& g) {
 
     for (size_t i = 0; i < controlPlates.size(); ++i) {
         const auto& plate = controlPlates[i];
-        controlBackgrounds[i].paint(g, plate, rgb(panel), themePalette(*this).accent, fluidAnimationSeconds(*this));
+        controlBackgrounds[i].paint(g, plate, rgb(panel), themePalette(*this).accent, fluidAnimationSeconds(*this), 1.f, 24);
         g.setColour(rgb(outline));
         g.drawRect(plate);
     }
@@ -523,7 +523,7 @@ void Editor::drawSpectral(Graphics& g) {
     };
     for (size_t i = 0; i < controlPlates.size(); ++i) {
         const auto& plate = controlPlates[i];
-        controlBackgrounds[i].paint(g, plate, p.panel, p.accent, fluidAnimationSeconds(*this));
+        controlBackgrounds[i].paint(g, plate, p.panel, p.accent, fluidAnimationSeconds(*this), 1.f, 24);
         g.setColour(p.border);
         g.drawRect(plate);
         text(g, captions[i], {plate.getX(), 269, plate.getWidth(), 15},

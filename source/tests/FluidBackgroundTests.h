@@ -183,8 +183,30 @@ inline void stackSurfaces() {
             return canvas.createComponentSnapshot(canvas.getLocalBounds());
         };
         const auto first = capture(0.0), later = capture(40.0);
-        toneUiTests::screenshot(*editor, "stack-material-198-" + juce::String(theme) + ".png");
+        toneUiTests::screenshot(*editor, "stack-material-199-" + juce::String(theme) + ".png");
         require(identical(first, capture(0.0)), "Stack freeze did not restore deterministic pixels");
+        // Compare actual empty card pixels to the explicit coarse renderer, not
+        // just the helper: catches a missing opt-in in any theme or plate.
+        const auto palette = themePalette(static_cast<Theme>(theme));
+        const auto base = theme == 0 ? juce::Colour(0xff252826) : palette.panel;
+        for (const auto plate : {juce::Rectangle<int>(18, 76, 104, 214),
+                                 juce::Rectangle<int>(132, 76, 306, 214),
+                                 juce::Rectangle<int>(448, 76, 104, 214),
+                                 juce::Rectangle<int>(562, 76, 104, 214)}) {
+            FluidBackground coarse, ordinary;
+            juce::Image expected(juce::Image::RGB, plate.getWidth(), plate.getHeight(), true);
+            { juce::Graphics g(expected); coarse.paint(g, expected.getBounds(), base, palette.accent, 0, 1.f, 24); }
+            const auto fine = render(ordinary, plate.getWidth(), plate.getHeight(), base, palette.accent, 0);
+            int differences = 0, transitions = 0;
+            for (int y = 261; y < 267; ++y) for (int x = plate.getX() + 12; x < plate.getX() + 30; ++x) {
+                const auto pixel = expected.getPixelAt(x - plate.getX(), y - plate.getY());
+                if (first.getPixelAt(x, y) != pixel)
+                                    throw std::runtime_error(("Card pixel mismatch theme=" + juce::String(theme) + " x=" + juce::String(x) + " y=" + juce::String(y) + " actual=" + first.getPixelAt(x,y).toString() + " expected=" + pixel.toString()).toStdString());
+                differences += pixel != fine.getPixelAt(x - plate.getX(), y - plate.getY());
+                if (x > plate.getX() + 12 && pixel != expected.getPixelAt(x - plate.getX() - 1, y - plate.getY())) ++transitions;
+            }
+            require(differences > 0 && transitions > 0, "Card grid comparison lacks visible block boundaries");
+        }
         // Empty strips inside all four control plates, away from labels/knobs.
         for (const auto x : {30, 150, 460, 580}) {
             const juce::Rectangle<int> strip(x, 250, 25, 8);
@@ -222,6 +244,24 @@ inline void run() {
     themeTintStaysMuted();
     proportionalCoarsePixels();
     inheritedTimeAndOverrides();
+    // At this exact 2:1 size the card opt-in must produce 10x10 pixels,
+    // while switching the same cache back to default restores 3x3 pixels.
+    FluidBackground scoped;
+    const auto defaultBefore = render(scoped, 240, 120, palette.panel, palette.accent, 0);
+    juce::Image chunky(juce::Image::RGB, 240, 120, true);
+    { juce::Graphics g(chunky); scoped.paint(g, chunky.getBounds(), palette.panel, palette.accent, 0, 1.f, 24); }
+    int boundaries = 0;
+    for (int y = 0; y < 120; ++y) for (int x = 0; x < 240; ++x) {
+        require(chunky.getPixelAt(x, y) == chunky.getPixelAt(x / 10 * 10, y / 10 * 10),
+                "Card texel is not a solid nearest-neighbour 10x10 block");
+        if (x > 0 && chunky.getPixelAt(x, y) != chunky.getPixelAt(x - 1, y)) {
+            ++boundaries;
+            require(x % 10 == 0, "Card pixel boundary missed the coarse grid");
+        }
+    }
+    require(boundaries > 0, "Card pixel blocks are not visibly distinct");
+    require(identical(defaultBefore, render(scoped, 240, 120, palette.panel, palette.accent, 0)),
+            "Card opt-in leaked into the default surface grid/cache");
     stackSurfaces();
 }
 

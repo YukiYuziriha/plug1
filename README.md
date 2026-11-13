@@ -1,9 +1,19 @@
-# Vocal Stack 1.9.8
+# Vocal Stack 1.9.9
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.8 is built, tested, packaged and installed.**
+**1.9.9 is built, tested, packaged and installed.**
+Only the four top Stack knob cards use a coarser 24-texel grid (previously 80):
+Leveler, generated takes, Formant and Output now have visibly chunky pixels.
+The same theme noise, rare integrated glints and 20%-faster animation remain;
+plugin-wide, button, arc and slider textures are unchanged. All 35 CTests passed,
+including the legacy DSP suite and actual-card pixel-grid checks in all themes.
+Both formats installed with SHA256 verification; packaged and installed CLAP
+smoke passed. See [1.9.9 validation and before/after captures](docs/Release-1.9.9-Validation.md).
+Actual DAW listening/transport remains unverified.
+
+**Historical 1.9.8 — built, tested, packaged and installed.**
 Pixelify Sans (SIL OFL 1.1, bundled license) brings pixel-inspired labels and
 buttons without copying Minecraft assets. Numeric readouts remain plain and
 readable. Knob progress arcs are 1.6x thicker and textured, modulation dots stay
