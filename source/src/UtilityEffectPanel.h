@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "UtilityFilters.h"
@@ -51,7 +52,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             : panel(p), id(parameterId) {
             setComponentID(id + "Control");
             label.setText(name, juce::dontSendNotification);
-            label.setFont(juce::Font(juce::FontOptions(ParameterKnob::controlFontSize)));
+            label.setFont(juce::Font(pixelFontOptions(ParameterKnob::controlFontSize)));
                         label.setMinimumHorizontalScale(1.f);
             label.setInterceptsMouseClicks(false, false); addAndMakeVisible(label);
             if (mode) {
@@ -215,7 +216,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         }
         void paint(juce::Graphics& g) override {
             const auto c = themePalette(*this, neon);
-            g.fillAll(c.inset); g.setFont(juce::Font(juce::FontOptions(10.f)));
+            g.fillAll(c.inset); g.setFont(juce::Font(pixelFontOptions(10.f)));
             if (!panel.isFilter()) { paintMeters(g, c); return; }
             auto b = getLocalBounds().reduced(7);
             const double rate = responseSampleRate();
@@ -551,7 +552,7 @@ public:
         setName(effectName(kind) + " inspector");
         content.addAndMakeVisible(visual);
         overview.setText(description(kind), juce::dontSendNotification);
-        overview.setFont(juce::Font(juce::FontOptions(11.5f))); overview.setJustificationType(juce::Justification::topLeft);
+        overview.setFont(juce::Font(pixelFontOptions(11.5f))); overview.setJustificationType(juce::Justification::topLeft);
         overview.setInterceptsMouseClicks(false, false); content.addAndMakeVisible(overview);
         addRow(fxParameterId(slot, "Mix"), "Dry / Wet", "%", false, false, utilityParameterCount);
         for (size_t i = 0; i < utilityParameterCount; ++i) {

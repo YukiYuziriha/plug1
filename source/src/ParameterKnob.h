@@ -148,7 +148,7 @@ public:
             if (a.modulatorId == displayedSource && a.targetParameterId == id && a.enabled) { depth = a.depth * sourceAmount; break; }
         const bool assigning = owner && owner->modulationAssignmentId() != 0;
         const bool editable = !assigning && !bool(getProperties()["vocalstackTexturedBar"]);
-                if (isTextBoxEditable() != editable) {
+        if (isTextBoxEditable() != editable) {
             // Only entering Assign cancels deliberate base-value entry. Selection
             // and ordinary feedback ticks must not disturb the transient editor.
             if (assigning) hideTextBox(true);
@@ -240,8 +240,8 @@ public:
                 : juce::Colour(depth < 0 ? 0xffff96c8 : 0xffb798ff));
             g.strokePath(range, juce::PathStrokeType(2.5f));
         }
-        if (hasEffective) {
-            const auto point = centre.getPointOnCircumference(radius + 1, angle(effective));
+        if (hasEffective && std::abs(effective - base) > .001f) {
+            const auto point = centre.getPointOnCircumference(radius + 8, angle(effective));
             g.setColour(componentTheme(*this) == Theme::spectral ? themePalette(*this).secondary : juce::Colour(0xff64f5e3));
             g.fillEllipse(point.x - 2, point.y - 2, 4, 4);
         }
@@ -271,7 +271,7 @@ private:
 class ParameterKnob final : public juce::Component {
 public:
     static constexpr float controlFontSize = 12.5f;
-    class Style final : public juce::LookAndFeel_V4 {
+    class Style final : public PixelLookAndFeel {
     public:
         static constexpr int texturedBarHeight = 25;
         static juce::Rectangle<float> texturedBarBounds(juce::Rectangle<float> area) {
@@ -289,7 +289,7 @@ public:
         }
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
             auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
-                        label->setFont(juce::Font(juce::FontOptions(controlFontSize)));
+            label->setFont(juce::Font(pixelFontOptions(controlFontSize)));
             if (bool(slider.getProperties()["vocalstackTexturedBar"])) label->setInterceptsMouseClicks(false, false);
             return label;
         }
@@ -327,10 +327,15 @@ public:
             const auto arc = [&](float a, float b, juce::Colour colour, float width) {
                 juce::Path path;
                 path.addCentredArc(centre.x, centre.y, radius, radius, 0, juce::jmin(a, b), juce::jmax(a, b), true);
-                g.setColour(colour); g.strokePath(path, juce::PathStrokeType(width));
+                juce::Path stroke;
+                juce::PathStrokeType(width).createStrokedPath(stroke, path);
+                const juce::Graphics::ScopedSaveState save(g);
+                g.reduceClipRegion(stroke);
+                arcTexture.paint(g, stroke.getBounds().getSmallestIntegerContainer(), colour,
+                    themePalette(slider).accent, fluidAnimationSeconds(slider), .45f);
             };
-            arc(start, end, componentTheme(slider) == Theme::spectral ? themePalette(slider).border : juce::Colour(0xff46515b), 2.5f);
-            arc(origin, angle, slider.findColour(juce::Slider::trackColourId), 3);
+            arc(start, end, componentTheme(slider) == Theme::spectral ? themePalette(slider).border : juce::Colour(0xff46515b), 4.0f);
+            arc(origin, angle, slider.findColour(juce::Slider::trackColourId), 4.8f);
             if (signedRange) {
                 g.setColour(componentTheme(slider) == Theme::spectral ? themePalette(slider).muted : juce::Colour(0xffd7dfe6));
                 g.drawLine({centre.getPointOnCircumference(radius + 2, origin),
@@ -373,8 +378,12 @@ public:
                                   + .35f * textureNoise(float(col) - phase * .45f, float(row) + phase * .3f, 2)
                                   + .35f * textureHash(col, row);
                 const float shade = float(juce::jlimit(0, 5, int(noise * 6))) / 5.f;
-                const auto colour = shade < .5f ? accent.interpolatedWith(juce::Colours::black, (.5f - shade) * .52f)
-                                               : accent.interpolatedWith(juce::Colours::white, (shade - .5f) * .28f);
+                auto colour = shade < .5f ? accent.interpolatedWith(juce::Colours::black, (.5f - shade) * .28f)
+                                               : accent.interpolatedWith(juce::Colours::white, (shade - .5f) * .14f);
+                if (textureHash(col + 311, row + 71) > .998f) {
+                    const float glint = std::pow(.5f + .5f * std::sin(phase * .3f + col), 8.f);
+                    colour = colour.interpolatedWith(juce::Colours::white, glint * .12f);
+                }
                 for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx)
                     pixels.setPixelColour(col * 2 + dx, row * 2 + dy, colour);
             }
@@ -405,6 +414,7 @@ public:
             g.setColour(palette.text);
             g.fillRect(juce::Rectangle<float>(thumb - 1.5f, float(track.getY()), 3.f, float(track.getHeight())));
         }
+        FluidBackground arcTexture;
         juce::Image texture;
         juce::Colour textureColour;
         double textureFrame = -1;
@@ -414,13 +424,14 @@ public:
         setComponentID(id + "Control");
         label.setText(title, juce::dontSendNotification);
         label.setJustificationType(juce::Justification::centred);
-        label.setFont(juce::Font(juce::FontOptions(controlFontSize)));
-                label.setMinimumHorizontalScale(1.f);
+        label.setFont(juce::Font(pixelFontOptions(controlFontSize)));
+        label.setMinimumHorizontalScale(1.f);
         label.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
         label.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(label);
         slider.bindModulation(owner, id);
         slider.setName(title); slider.setTitle(title);
+        slider.setTooltip(title + ": drag to change. Double-click to reset. Click the number to type a value.");
         slider.setLookAndFeel(&style);
         slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 68, 19);
@@ -430,7 +441,7 @@ public:
             slider.setDoubleClickReturnValue(true, parameter->convertFrom0to1(parameter->getDefaultValue()));
         const juce::String suffix(unit);
         slider.textFromValueFunction = [suffix](double value) {
-            return juce::String(value, suffix == "%" ? 0 : 2)
+            return juce::String(value, suffix == "%" || suffix == "Hz" || suffix == "ms" ? 0 : 1)
                 + (suffix.isEmpty() ? juce::String() : " " + suffix);
         };
         slider.valueFromTextFunction = [](const juce::String& value) { return value.getDoubleValue(); };

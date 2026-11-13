@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "PluginProcessor.h"
@@ -33,7 +34,7 @@ class ParameterSlider final : public juce::Component {
 public:
     ParameterSlider(Processor& owner, const juce::String& id, const juce::String& title, const char* unit) {
         label.setText(title, juce::dontSendNotification);
-        label.setFont(juce::Font(juce::FontOptions(title == "PITCH" ? 13.0f : 11.5f,
+        label.setFont(juce::Font(pixelFontOptions(title == "PITCH" ? 13.0f : 11.5f,
                                                         title == "PITCH" ? juce::Font::bold : juce::Font::plain)));
         label.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
         label.setInterceptsMouseClicks(false, false);
@@ -178,7 +179,7 @@ class VoiceControls final : public juce::Component {
             g.fillRoundedRectangle(5.0f, 5.0f, float(getWidth() - 10), 32.0f, device ? 3.0f : 0.0f);
             g.setColour(colour);
             g.fillEllipse(12, 10, 22, 22);
-            g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            g.setFont(juce::Font(pixelFontOptions(12.0f, juce::Font::bold)));
             g.setColour(juce::Colour(0xff151b20));
             g.drawText(voiceSlot < 0 ? "L" : juce::String(voiceSlot + 1), 12, 10, 22, 22, juce::Justification::centred);
             g.setColour(p.text);

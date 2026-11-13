@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "CreativeEffects.h"
@@ -121,7 +122,7 @@ private:
     }
     static juce::String pitch(float v) { return (v > 0 ? "+" : "") + number(v) + " st"; }
     static void text(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& s, juce::Colour c) {
-        g.setColour(c); g.setFont(juce::Font(juce::FontOptions(11.f)));
+        g.setColour(c); g.setFont(juce::Font(pixelFontOptions(11.f)));
         g.drawFittedText(s, r.toNearestInt(), juce::Justification::centredLeft, 1, 1.f);
     }
     static void grid(juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) {

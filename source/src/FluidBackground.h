@@ -33,7 +33,7 @@ inline constexpr double proceduralAnimationSpeed = 1.2;
 class FluidBackground {
 public:
     void paint(juce::Graphics& g, juce::Rectangle<int> bounds, juce::Colour base,
-               juce::Colour accent, double seconds) {
+               juce::Colour accent, double seconds, float contrast = 1.f) {
         if (bounds.isEmpty()) return;
         // A fixed grid makes the physical pixels grow with the component, while
         // aspect adjustment keeps them approximately square in small FX cards.
@@ -44,12 +44,13 @@ public:
             : juce::jmax(1, juce::roundToInt(double(longest) * bounds.getHeight() / bounds.getWidth()));
         const double frame = std::floor((std::isfinite(seconds) ? juce::jlimit(0.0, 1.0e9, seconds) : 0.0) * 10.0);
         if (image.isNull() || image.getWidth() != width || image.getHeight() != height
-            || frame != cachedFrame || base != cachedBase || accent != cachedAccent) {
+            || frame != cachedFrame || base != cachedBase || accent != cachedAccent || contrast != cachedContrast) {
             if (image.isNull() || image.getWidth() != width || image.getHeight() != height)
                 image = juce::Image(juce::Image::RGB, width, height, false);
             cachedFrame = frame;
             cachedBase = base;
             cachedAccent = accent;
+            cachedContrast = contrast;
             const double phase = frame * 0.0025 * proceduralAnimationSpeed;
             juce::Image::BitmapData pixels(image, juce::Image::BitmapData::writeOnly);
             // Keep the original dark surface dominant. A desaturated, brightness-
@@ -69,7 +70,13 @@ public:
                     const double gradient = 0.5 + 0.5 * std::sin(nx * 3.5 + ny * 2.0 + phase);
                     const float field = float(.30 * broad + .40 * detail + .20 * grain + .10 * gradient);
                                         const float blend = juce::jlimit(0.f, 1.f, .5f + (field - .5f) * 1.4f);
-                    pixels.setPixelColour(x, y, low.interpolatedWith(high, blend));
+                    auto colour = base.interpolatedWith(low.interpolatedWith(high, blend), contrast);
+                    // Fixed rare seeds, with a slow continuous envelope: no frame-wise sparkle.
+                    if (lattice(x, y, 73) > .9992) {
+                        const float gleam = float(std::pow(.5 + .5 * std::sin(frame / 10.0 * .35 + lattice(x, y, 19) * 6.283), 8));
+                        colour = colour.interpolatedWith(accent, .10f * gleam * contrast);
+                    }
+                    pixels.setPixelColour(x, y, colour);
                 }
         }
         juce::Graphics::ScopedSaveState state(g);
@@ -101,6 +108,7 @@ private:
     juce::Image image;
     double cachedFrame = -1.0;
     juce::Colour cachedBase, cachedAccent;
+    float cachedContrast = -1.f;
 };
 
 // Look-and-feels are shared by differently sized buttons. Keep a cache per
@@ -117,7 +125,7 @@ public:
             entries.push_back({&button, {}});
             found = std::prev(entries.end());
         }
-        found->background.paint(g, bounds, base, accent, fluidAnimationSeconds(button));
+        found->background.paint(g, bounds, base, accent, fluidAnimationSeconds(button), .55f);
     }
 private:
     struct Entry {

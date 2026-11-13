@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "PluginProcessor.h"
@@ -460,7 +461,7 @@ public:
         addAndMakeVisible(browser); addAndMakeVisible(status);
         browser.setEditableText(false); browser.setWantsKeyboardFocus(false); browser.setMouseClickGrabsKeyboardFocus(false);
         status.setInterceptsMouseClicks(false, false);
-        status.setFont(juce::FontOptions(11.0f));
+        status.setFont(pixelFontOptions(11.0f));
         browser.setTooltip("Factory and user presets. Loading replaces the whole patch; Undo load restores the previous patch.");
         undoButton.setTooltip("Restore the entire patch from before the last successful preset load (one step, not parameter undo).");
         folderButton.setTooltip("Choose the user preset folder; remembered locally on this machine, never in host state.");

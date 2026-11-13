@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "MainBusFxRack.h"
@@ -19,7 +20,7 @@ public:
         viewport.setComponentID("mainBusFxRowViewport");
         content.setComponentID("mainBusFxRow");
         viewport.setViewedComponent(&content, false); viewport.setScrollBarsShown(false, true);
-        status.setFont(juce::Font(juce::FontOptions(11.f)));
+        status.setFont(juce::Font(pixelFontOptions(11.f)));
         detail::passiveControl(*this); sync(); startTimerHz(12);
     }
     ~MainBusFxRackPanel() override {

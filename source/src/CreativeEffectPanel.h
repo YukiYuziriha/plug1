@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "CreativeEffects.h"
@@ -61,7 +62,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             setComponentID(id + "Control");
             slider.addMouseListener(this, true);
             label.setText(name, juce::dontSendNotification);
-            label.setFont(juce::Font(juce::FontOptions(ParameterKnob::controlFontSize)));
+            label.setFont(juce::Font(pixelFontOptions(ParameterKnob::controlFontSize)));
             label.setMinimumHorizontalScale(1.f);
             label.setInterceptsMouseClicks(false, false);
             addAndMakeVisible(label);
@@ -155,7 +156,7 @@ public:
         : owner(processor), slot(fxSlot), kind(effectKind), visual(processor, fxSlot, effectKind) {
         setName(effectName(kind) + " inspector");
         overview.setText(description(kind), juce::dontSendNotification);
-        overview.setFont(juce::Font(juce::FontOptions(12.0f)));
+        overview.setFont(juce::Font(pixelFontOptions(12.0f)));
         overview.setMinimumHorizontalScale(1.f);
         overview.setBorderSize(juce::BorderSize<int>(0));
         overview.setJustificationType(juce::Justification::topLeft);
@@ -177,7 +178,7 @@ public:
             if (i == size_t(CreativeParameter::delayTime)) timeRow = groups.back().rows.back().get();
             if (i == size_t(CreativeParameter::delayBeats)) beatsRow = groups.back().rows.back().get();
         }
-        meter.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        meter.setFont(juce::Font(pixelFontOptions(12.0f, juce::Font::bold)));
         meter.setTooltip("Actual gain reduction reported by the compressor DSP; not an estimated transfer curve.");
         content.addChildComponent(meter); meter.setVisible(kind == CreativeKind::compressor);
         viewport.setViewedComponent(&content, false); viewport.setScrollBarsShown(true, false);
@@ -303,7 +304,7 @@ private:
         Group group;
         group.heading = std::make_unique<juce::Label>();
         group.heading->setText(name, juce::dontSendNotification);
-        group.heading->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        group.heading->setFont(juce::Font(pixelFontOptions(11.0f, juce::Font::bold)));
         group.heading->setInterceptsMouseClicks(false, false);
         content.addAndMakeVisible(*group.heading); groups.push_back(std::move(group));
     }

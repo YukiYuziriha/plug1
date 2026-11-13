@@ -1,8 +1,23 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <BinaryData.h>
 
 namespace vocalstack {
+
+// Embedded, unmodified Pixelify Sans; SIL OFL 1.1 in ThirdParty.
+inline juce::Typeface::Ptr pixelTypeface() {
+    static const auto face = juce::Typeface::createSystemTypefaceFor(
+        BinaryData::PixelifySans_ttf, BinaryData::PixelifySans_ttfSize);
+    return face;
+}
+template <typename... Args> inline juce::FontOptions pixelFontOptions(Args&&... args) {
+    return juce::FontOptions(std::forward<Args>(args)...).withTypeface(pixelTypeface());
+}
+class PixelLookAndFeel : public juce::LookAndFeel_V4 {
+public:
+    juce::Typeface::Ptr getTypefaceForFont(const juce::Font&) override { return pixelTypeface(); }
+};
 
 enum class Theme { device = 0, neon = 1, spectral = 2 };
 inline const juce::Identifier vocalstackThemeProperty{"vocalstackTheme"};

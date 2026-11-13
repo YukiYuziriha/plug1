@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "ParameterKnob.h"
@@ -22,7 +23,7 @@ inline void styleRotary(juce::Slider& slider, bool neon) {
 }
 
 // Scoped to inspector panels; rotary controls retain their own drawing styles.
-class PanelStyle final : public juce::LookAndFeel_V4 {
+class PanelStyle final : public PixelLookAndFeel {
     ButtonFluidBackground buttonBackground;
 public:
     void setPalette(const ThemePalette& p) {
@@ -55,7 +56,7 @@ public:
         g.drawRect(area, button.hasKeyboardFocus(false) ? 2.0f : 1.0f);
     }
     juce::Font getTextButtonFont(juce::TextButton& button, int) override {
-        return juce::Font(juce::FontOptions(12.0f,
+        return juce::Font(pixelFontOptions(12.0f,
             componentTheme(button) == Theme::spectral ? juce::Font::plain : juce::Font::bold));
     }
     void drawComboBox(juce::Graphics& g, int width, int height, bool, int, int, int, int,

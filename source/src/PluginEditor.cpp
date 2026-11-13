@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #include "PluginEditor.h"
 
 namespace vocalstack {
@@ -5,7 +6,7 @@ namespace {
 using namespace juce;
 Colour rgb(uint32_t hex) { return Colour(0xff000000u | hex); }
 Font font(float height, bool bold = false) {
-    return Font(FontOptions(height, bold ? Font::bold : Font::plain));
+    return Font(pixelFontOptions(height, bold ? Font::bold : Font::plain));
 }
 
 constexpr int editorWidth = 940, editorHeight = 610, drawerHeight = 442;
@@ -20,12 +21,12 @@ constexpr std::array<const char*, knobParameterIds.size()> knobNames{
     "Leveler", "Lead / Stack", "Human", "Width", "Formant", "Output"
 };
 constexpr std::array<const char*, knobParameterIds.size()> knobTips{
-    "Even out vocal phrases while matching long-term input RMS. 0% off, 100% full riding; not a limiter or output volume",
-    "Lead / Stack balance: 0% processed Lead, 100% generated Stack. Only global Mix accesses untouched input",
+    "Make quiet and loud phrases more even. 0% is off. This does not prevent clipping.",
+    "Blend the processed lead with generated voices. Use Mix for the untouched input.",
     "How far the doubles vary in timing, pitch and tone",
     "How widely the generated takes are panned",
-    "Shared formant -24 to +24 st, added to each voice formant. Double-click for 0 st",
-    "Final output trim: -24 to +12 dB. Double-click for unity (0 dB). Separate from leveler correction"
+    "Make the voice tone deeper or brighter without changing the note. Double-click to reset.",
+    "Turn the final output up or down. Double-click for 0 dB (no change)."
 };
 constexpr std::array<const char*, switchParameterIds.size()> switchNames{"LEVEL", "DOUBLE", "FORMANT", "BYPASS"};
 
@@ -547,14 +548,18 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     Path track, value;
     track.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, start, end, true);
     g.setColour(spectral ? p.border : flash ? rgb(outline) : rgb(0x50564f));
-    g.strokePath(track, PathStrokeType(2.8f, PathStrokeType::curved, PathStrokeType::rounded));
+    g.strokePath(track, PathStrokeType(4.48f, PathStrokeType::curved, PathStrokeType::rounded));
     const float origin = name == "Formant" || name == "Output"
         ? start + static_cast<float>(slider.valueToProportionOfLength(0.0)) * (end - start) : start;
     if (std::abs(angle - origin) > 0.001f) {
         value.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
                             std::min(angle, origin), std::max(angle, origin), true);
-        g.setColour(accent);
-        g.strokePath(value, PathStrokeType(3.2f, PathStrokeType::curved, PathStrokeType::rounded));
+        Path stroke;
+        PathStrokeType(5.12f, PathStrokeType::curved, PathStrokeType::rounded).createStrokedPath(stroke, value);
+        const Graphics::ScopedSaveState save(g);
+        g.reduceClipRegion(stroke);
+        arcTexture.paint(g, stroke.getBounds().getSmallestIntegerContainer(), accent, p.accent,
+                         fluidAnimationSeconds(slider), .45f);
     }
     if (name == "Formant" || name == "Output") {
         g.setColour(accent.withAlpha(0.8f));

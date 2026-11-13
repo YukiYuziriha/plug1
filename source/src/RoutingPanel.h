@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "ToneEffectPanel.h"
@@ -246,7 +247,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             g.setColour(getToggleState() ? accent : accent.withAlpha(.25f));
             g.drawRect(bounds, getToggleState() ? 2.0f : 1.0f);
             g.setColour(findColour(juce::TextButton::textColourOffId));
-            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            g.setFont(juce::Font(pixelFontOptions(12.0f)));
             g.drawFittedText(getButtonText(), bounds.removeFromTop(15).toNearestInt(), juce::Justification::centred, 1);
             const auto plot = bounds.reduced(3, 2);
             g.setColour(accent.withAlpha(.2f));
@@ -301,7 +302,7 @@ public:
                         };
                 modulationPanel.onReveal = [this](const juce::String& id) { revealTarget(id); };
         status.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
-        status.setFont(juce::Font(juce::FontOptions(12.0f)));
+        status.setFont(juce::Font(pixelFontOptions(12.0f)));
         inspectorTitle.setTooltip("Double-click a machine title to rename it. Stable voice/parameter identities do not change.");
         inspectorTitle.onTextChange = [this] {
             const auto* selected = node(selectedNode);
@@ -446,7 +447,7 @@ public:
         if (modulationDivider.isVisible())
             g.drawHorizontalLine(modulationDivider.getBounds().getCentreY(), float(canvas.getX()), float(canvas.getRight()));
         g.setColour(palette.muted);
-        g.setFont(juce::Font(juce::FontOptions(11.5f)));
+        g.setFont(juce::Font(pixelFontOptions(11.5f)));
         g.drawText("Output drag: move / empty drop disconnects  |  Ctrl/Cmd+drag output: source  |  Wheel: zoom  |  Alt/middle drag: pan", 12, 43, getWidth() - 24, 22, juce::Justification::centredLeft);
     }
     void resized() override {
@@ -628,7 +629,7 @@ private:
                 toneViewport.setViewPosition(0, juce::jmax(0, bounds.getY() - 48));
             }
             addChildComponent(revealBubble);
-            juce::AttributedString text; text.append("Target: " + id, juce::Font(juce::FontOptions(12.0f)), juce::Colours::white);
+            juce::AttributedString text; text.append("Target: " + id, juce::Font(pixelFontOptions(12.0f)), juce::Colours::white);
             revealBubble.showAt(target, text, 1600, true, false);
         } else if (onRevealParameter) onRevealParameter(id);
         saveLayout(); syncNodeCards(); canvas.repaint();
@@ -1087,7 +1088,7 @@ private:
             g.fillRect(screen.withHeight(28 * zoom));
             g.setColour(n.id == selectedNode ? accent : palette.border);
             g.drawRect(screen, n.id == selectedNode ? 2.0f : 1.0f);
-            g.setFont(juce::Font(juce::FontOptions(juce::jmax(9.0f, 11.5f * zoom))));
+            g.setFont(juce::Font(pixelFontOptions(juce::jmax(9.0f, 11.5f * zoom))));
             g.setColour(palette.text);
             auto heading = screen.toNearestInt().reduced(8, 0).withHeight(juce::roundToInt(28 * zoom));
             if (expandable(n)) {
@@ -1756,7 +1757,7 @@ private:
         inspector.addAndMakeVisible(inspectorTitle); inspector.addAndMakeVisible(inspectorInfo);
         inspectorTitle.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
         inspectorInfo.setColour(juce::Label::textColourId, juce::Colour(0xffaebaca));
-        inspectorInfo.setFont(juce::Font(juce::FontOptions(12.0f)));
+        inspectorInfo.setFont(juce::Font(pixelFontOptions(12.0f)));
         nodeValue.onValueChange = nullptr; nodeValue.onDragStart = nullptr; nodeValue.onDragEnd = nullptr;
         nodeValue.setLookAndFeel(&nodeStyle);
         const auto* n = node(selectedNode);
@@ -1933,7 +1934,7 @@ private:
             const int available = juce::jmax(0, inspector.getHeight() - 96);
             if (creativePanel) creativePanel->setBounds(0, 68, inspector.getWidth(), available);
             if (utilityPanel) utilityPanel->setBounds(0, 68, inspector.getWidth(), available);
-            inspectorInfo.setFont(juce::Font(juce::FontOptions(11.0f)));
+            inspectorInfo.setFont(juce::Font(pixelFontOptions(11.0f)));
             inspectorInfo.setBounds(0, 72 + available, inspector.getWidth(), 24);
             return;
         }
@@ -1944,7 +1945,7 @@ private:
             toneViewport.setBounds(0, 68, inspector.getWidth(), available);
             const int width = juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness());
                         tonePanel->setBounds(0, 0, width, juce::jmax(available, tonePanel->preferredContentHeight(width)));
-            inspectorInfo.setFont(juce::Font(juce::FontOptions(11.0f)));
+            inspectorInfo.setFont(juce::Font(pixelFontOptions(11.0f)));
             inspectorInfo.setBounds(0, 68 + available + 4, inspector.getWidth(), footerHeight - 4);
             return;
         }

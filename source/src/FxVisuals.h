@@ -142,7 +142,7 @@ protected:
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 5);
         g.setColour(palette.border.withAlpha(0.6f));
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 5, 1);
-        g.setFont(juce::Font(juce::FontOptions(10.0f)));
+        g.setFont(juce::Font(pixelFontOptions(10.0f)));
         g.setColour(palette.muted);
     }
     void paintSpectrum(juce::Graphics& g, juce::Rectangle<float> area, bool withOutput) const {

@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "DoublerPanel.h"
@@ -54,10 +55,10 @@ public:
                 mode.setModulationOwner(owner); quality.setModulationOwner(owner);
                 bandOn.setModulationOwner(owner); adaptive.setModulationOwner(owner); raw.setModulationOwner(owner); levelMatch.setModulationOwner(owner);
         heading.setText(isWave() ? "WAVESHAPER" : isEq() ? "EQ8" : "BAND ROUTING", juce::dontSendNotification);
-        heading.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        heading.setFont(juce::Font(pixelFontOptions(14.0f, juce::Font::bold)));
         heading.setInterceptsMouseClicks(false, false);
         content.addAndMakeVisible(heading);
-        hint.setFont(juce::Font(juce::FontOptions(11.0f)));
+        hint.setFont(juce::Font(pixelFontOptions(11.0f)));
         hint.setJustificationType(juce::Justification::topLeft);
         hint.setInterceptsMouseClicks(false, false);
         content.addAndMakeVisible(hint);
@@ -118,7 +119,7 @@ public:
         setLookAndFeel(device ? nullptr : &panelStyle);
         const auto accent = device ? p.accent : p.secondary;
         heading.setColour(juce::Label::textColourId, accent);
-        heading.setFont(juce::Font(juce::FontOptions(14.0f,
+        heading.setFont(juce::Font(pixelFontOptions(14.0f,
             selectedTheme == Theme::spectral ? juce::Font::plain : juce::Font::bold)));
         hint.setColour(juce::Label::textColourId, device ? juce::Colour(0xffaebbc2) : p.muted);
         for (auto& c : controls) c->setNeon(neon);

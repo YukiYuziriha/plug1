@@ -20,10 +20,11 @@ public:
     void resized() override;
 
 private:
-    class Style final : public juce::LookAndFeel_V4 {
+    class Style final : public PixelLookAndFeel {
     public:
         bool flash = false;
         ButtonFluidBackground buttonBackground;
+        FluidBackground arcTexture;
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
             return createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
         }

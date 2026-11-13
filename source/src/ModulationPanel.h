@@ -1,3 +1,4 @@
+#include "VisualTheme.h"
 #pragma once
 
 #include "DoublerPanel.h"
@@ -13,7 +14,7 @@ inline juce::String modulatorName(const Modulator& m) {
 inline juce::Font modulationFont(float size) {
     static const auto family = juce::Font::findAllTypefaceNames().contains("Cascadia Mono")
         ? juce::String("Cascadia Mono") : juce::Font::getDefaultMonospacedFontName();
-    return juce::Font(juce::FontOptions(family, size, juce::Font::plain));
+    return juce::Font(pixelFontOptions(family, size, juce::Font::plain));
 }
 
 // Control-thread editor. Neither selection nor refresh resets the audio clock.
@@ -43,7 +44,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
                        a.toNearestInt().removeFromTop(18), juce::Justification::centredLeft);
         }
     } output;
-    class NumericStyle final : public juce::LookAndFeel_V4 {
+    class NumericStyle final : public PixelLookAndFeel {
     public:
         void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float value,
                               float start, float end, juce::Slider& slider) override {

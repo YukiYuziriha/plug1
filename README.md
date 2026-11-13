@@ -1,9 +1,21 @@
-# Vocal Stack 1.9.7
+# Vocal Stack 1.9.8
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.7 is built, tested, packaged and installed.**
+**1.9.8 is built, tested, packaged and installed.**
+Pixelify Sans (SIL OFL 1.1, bundled license) brings pixel-inspired labels and
+buttons without copying Minecraft assets. Numeric readouts remain plain and
+readable. Knob progress arcs are 1.6x thicker and textured, modulation dots stay
+outside the base arc, control textures are calmer, and rare slow accent glints
+are integrated into generated pixels. Primary tooltips are simpler. No DSP,
+host parameter or state changes. See the
+[1.9.8 validation and font provenance](docs/Release-1.9.8-Validation.md), including
+parallel-run UI timing failures and the successful standalone editor rerun.
+Both packaged and installed CLAP smoke passed; both formats installed with
+SHA256 verification. Actual DAW listening/transport remains unverified.
+
+**Historical 1.9.7 — built, tested, packaged and installed.**
 Procedural fluid backgrounds and slider noise now evolve **20% faster**, without
 increasing the existing 10 Hz background / 15 Hz slider cache cadence or adding
 timers. Buttons and the four top Stack knob cards (Leveler, generated takes,
@@ -101,7 +113,7 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.7 installation succeeded:** `source/build/install-release.ps1` reported
+**1.9.8 installation succeeded:** `source/build/install-release.ps1` reported
 **Installed and SHA256 verified for both per-user CLAP and VST3**.
 Packaging and packaged CLAP smoke are complete. Do not terminate Bitwig or overwrite a loaded plugin to force
 replacement. Actual Bitwig listening/transport and native FPS remain unchecked.

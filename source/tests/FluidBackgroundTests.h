@@ -102,7 +102,8 @@ inline void themeTintStaysMuted() {
         const auto gray = juce::Colour(0xff202020);
         const auto purple = render(background, 320, 200, gray, juce::Colour(0xffb020ff), seconds);
         const auto green = render(background, 320, 200, gray, juce::Colour(0xff20ff40), seconds);
-        // Even deliberately saturated source accents must yield near-neutral surfaces.
+        // Only the deliberately sparse glints may leave the neutral palette.
+        int highlights = 0;
         for (int y = 0; y < purple.getHeight(); ++y) for (int x = 0; x < purple.getWidth(); ++x) {
             const auto pixel = purple.getPixelAt(x, y);
             const auto other = green.getPixelAt(x, y);
@@ -110,9 +111,11 @@ inline void themeTintStaysMuted() {
                              - std::min({int(pixel.getRed()), int(pixel.getGreen()), int(pixel.getBlue())});
             const int otherSpread = std::max({int(other.getRed()), int(other.getGreen()), int(other.getBlue())})
                                   - std::min({int(other.getRed()), int(other.getGreen()), int(other.getBlue())});
-            require(spread <= 3 && otherSpread <= 3,
-                    "Theme tint turned the dark neutral surface into a saturated gradient");
+            if (spread > 3 || otherSpread > 3) ++highlights;
+            require(spread <= 25 && otherSpread <= 25, "Glint is too saturated");
         }
+        require(highlights < purple.getWidth() * purple.getHeight() / 500,
+                "Theme highlights are not sparse");
     }
 }
 
@@ -180,7 +183,7 @@ inline void stackSurfaces() {
             return canvas.createComponentSnapshot(canvas.getLocalBounds());
         };
         const auto first = capture(0.0), later = capture(40.0);
-        toneUiTests::screenshot(*editor, "stack-material-197-" + juce::String(theme) + ".png");
+        toneUiTests::screenshot(*editor, "stack-material-198-" + juce::String(theme) + ".png");
         require(identical(first, capture(0.0)), "Stack freeze did not restore deterministic pixels");
         // Empty strips inside all four control plates, away from labels/knobs.
         for (const auto x : {30, 150, 460, 580}) {
@@ -204,6 +207,16 @@ inline void stackSurfaces() {
 
 // Call on the GUI/message thread; no processor, DSP, timer or sleeping required.
 inline void run() {
+    PixelLookAndFeel pixelStyle;
+    const auto face = pixelStyle.getTypefaceForFont(juce::Font(juce::FontOptions(13.f)));
+    require(face != nullptr && face->getName().containsIgnoreCase("Pixelify"),
+            "Embedded licensed pixel font was not loaded");
+    FluidBackground quiet, normal;
+    const auto palette = themePalette(Theme::device);
+    const auto controls = render(quiet, 320, 200, palette.background, palette.accent, 12.0);
+    juce::Image calmer(juce::Image::RGB, 320, 200, true);
+    { juce::Graphics g(calmer); normal.paint(g, calmer.getBounds(), palette.background, palette.accent, 12.0, .45f); }
+    require(!identical(controls, calmer), "Control texture contrast did not change");
     deterministicTimeAndMotion();
     subduedNonUniformPixels();
     themeTintStaysMuted();
