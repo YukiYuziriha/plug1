@@ -72,23 +72,28 @@ inline void subduedNonUniformPixels() {
             const std::array<int, 3> base{palette.background.getRed(), palette.background.getGreen(),
                                           palette.background.getBlue()};
             std::set<juce::uint32> colours;
+            int accentPixels = 0;
             for (int y = 0; y < image.getHeight(); ++y)
                 for (int x = 0; x < image.getWidth(); ++x) {
                     const auto pixel = image.getPixelAt(x, y);
                     require(pixel.getAlpha() == 255, "Fluid background left transparent pixels");
                     colours.insert(pixel.getARGB());
+                    if (std::max({std::abs(int(pixel.getRed()) - base[0]),
+                                  std::abs(int(pixel.getGreen()) - base[1]),
+                                  std::abs(int(pixel.getBlue()) - base[2])}) > 32) ++accentPixels;
                     const std::array<int, 3> channels{pixel.getRed(), pixel.getGreen(), pixel.getBlue()};
                     for (size_t channel = 0; channel < channels.size(); ++channel) {
                         minimum[channel] = std::min(minimum[channel], channels[channel]);
                         maximum[channel] = std::max(maximum[channel], channels[channel]);
-                        require(std::abs(channels[channel] - base[channel]) <= 32,
+                        require(std::abs(channels[channel] - base[channel]) <= 72,
                                 "Fluid background strayed too far from its theme base");
                     }
                 }
+            require(accentPixels < image.getWidth() * image.getHeight() / 100, "Bright accents spread beyond rare texels");
             require(colours.size() >= 4, "Fluid background is effectively uniform");
             require(colours.size() <= 6400, "Fluid background exceeded its bounded coarse grid");
             for (size_t channel = 0; channel < minimum.size(); ++channel)
-                require(maximum[channel] - minimum[channel] <= 48,
+                require(maximum[channel] - minimum[channel] <= 88,
                         "Fluid background has distracting high contrast");
             require(std::max({maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]}) >= 8,
                     "Background must retain visible luminance variation, not just a faint tint");
@@ -112,9 +117,9 @@ inline void themeTintStaysMuted() {
             const int otherSpread = std::max({int(other.getRed()), int(other.getGreen()), int(other.getBlue())})
                                   - std::min({int(other.getRed()), int(other.getGreen()), int(other.getBlue())});
             if (spread > 3 || otherSpread > 3) ++highlights;
-            require(spread <= 25 && otherSpread <= 25, "Glint is too saturated");
+            require(spread <= 72 && otherSpread <= 72, "Glint is too saturated");
         }
-        require(highlights < purple.getWidth() * purple.getHeight() / 500,
+        require(highlights < purple.getWidth() * purple.getHeight() / 100,
                 "Theme highlights are not sparse");
     }
 }
@@ -183,7 +188,19 @@ inline void stackSurfaces() {
             return canvas.createComponentSnapshot(canvas.getLocalBounds());
         };
         const auto first = capture(0.0), later = capture(40.0);
-        toneUiTests::screenshot(*editor, "stack-material-199-" + juce::String(theme) + ".png");
+        for (double phase : {0.0, 6.0, 33.3, 46.0}) {
+            editor->getProperties().set(vocalstackAnimationTimeOverrideProperty, phase);
+            toneUiTests::screenshot(*editor, "approval-1910-stack-" + juce::String(theme)
+                + "-phase-" + juce::String(phase, 1) + ".png");
+        }
+        for (const auto* id : {"level", "double", "human", "width", "formant", "outputGain"}) {
+            auto& knob = toneUiTests::slider(*editor, id);
+            auto* valueLabel = toneUiTests::find<juce::Label>(knob, [](auto&) { return true; });
+            require(valueLabel != nullptr, "Knob readout missing");
+            require(valueLabel->getFont().getTypefacePtr() == pixelTypeface(),
+                    "Main knob readout is not the embedded Pixelify typeface");
+            require(valueLabel->getFont().getHeight() >= 14.f, "Main knob readout is too small");
+        }
         require(identical(first, capture(0.0)), "Stack freeze did not restore deterministic pixels");
         // Compare actual empty card pixels to the explicit coarse renderer, not
         // just the helper: catches a missing opt-in in any theme or plate.

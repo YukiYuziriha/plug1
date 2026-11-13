@@ -26,7 +26,10 @@ private:
         ButtonFluidBackground buttonBackground;
         FluidBackground arcTexture;
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
-            return createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
+            auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
+            label->setFont(juce::Font(pixelFontOptions(14.f)));
+            label->setMinimumHorizontalScale(1.f);
+            return label;
         }
         void drawRotarySlider(juce::Graphics&, int, int, int, int, float, float, float, juce::Slider&) override;
         void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;

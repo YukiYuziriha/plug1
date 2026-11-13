@@ -315,7 +315,7 @@ public:
             if (auto* mod = dynamic_cast<ModulationSlider*>(&slider)) mod->drawLinearModulation(g, track);
             // Draw the single base thumb last so range colour cannot split it.
             g.setColour(themePalette(slider).text);
-            g.fillRoundedRectangle(thumb - 2, track.getCentreY() - 5, 4, 10, 1);
+            g.fillRect(thumb - 2, track.getCentreY() - 5, 4.f, 10.f);
         }
         void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float position,
                               float start, float end, juce::Slider& slider) override {
@@ -328,7 +328,7 @@ public:
                 juce::Path path;
                 path.addCentredArc(centre.x, centre.y, radius, radius, 0, juce::jmin(a, b), juce::jmax(a, b), true);
                 juce::Path stroke;
-                juce::PathStrokeType(width).createStrokedPath(stroke, path);
+                juce::PathStrokeType(width, juce::PathStrokeType::curved, juce::PathStrokeType::butt).createStrokedPath(stroke, path);
                 const juce::Graphics::ScopedSaveState save(g);
                 g.reduceClipRegion(stroke);
                 arcTexture.paint(g, stroke.getBounds().getSmallestIntegerContainer(), colour,

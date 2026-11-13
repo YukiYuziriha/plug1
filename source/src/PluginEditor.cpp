@@ -231,8 +231,7 @@ void Editor::applyTheme() {
                        : style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
     for (auto& label : labels) {
         label.setColour(Label::textColourId, foreground);
-        label.setFont(font(selectedTheme == Theme::spectral ? 13.0f : style.flash ? 15.0f : 14.0f,
-                           selectedTheme != Theme::spectral));
+        label.setFont(font(14.0f, false));
     }
     for (auto& knob : knobs) {
         knob.setColour(Slider::textBoxTextColourId, muted);
@@ -548,14 +547,14 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     Path track, value;
     track.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, start, end, true);
     g.setColour(spectral ? p.border : flash ? rgb(outline) : rgb(0x50564f));
-    g.strokePath(track, PathStrokeType(4.48f, PathStrokeType::curved, PathStrokeType::rounded));
+    g.strokePath(track, PathStrokeType(4.48f, PathStrokeType::curved, PathStrokeType::butt));
     const float origin = name == "Formant" || name == "Output"
         ? start + static_cast<float>(slider.valueToProportionOfLength(0.0)) * (end - start) : start;
     if (std::abs(angle - origin) > 0.001f) {
         value.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
                             std::min(angle, origin), std::max(angle, origin), true);
         Path stroke;
-        PathStrokeType(5.12f, PathStrokeType::curved, PathStrokeType::rounded).createStrokedPath(stroke, value);
+        PathStrokeType(5.12f, PathStrokeType::curved, PathStrokeType::butt).createStrokedPath(stroke, value);
         const Graphics::ScopedSaveState save(g);
         g.reduceClipRegion(stroke);
         arcTexture.paint(g, stroke.getBounds().getSmallestIntegerContainer(), accent, p.accent,

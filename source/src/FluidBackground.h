@@ -72,9 +72,10 @@ public:
                                         const float blend = juce::jlimit(0.f, 1.f, .5f + (field - .5f) * 1.4f);
                     auto colour = base.interpolatedWith(low.interpolatedWith(high, blend), contrast);
                     // Fixed rare seeds, with a slow continuous envelope: no frame-wise sparkle.
-                    if (lattice(x, y, 73) > .9992) {
-                        const float gleam = float(std::pow(.5 + .5 * std::sin(frame / 10.0 * .35 + lattice(x, y, 19) * 6.283), 8));
-                        colour = colour.interpolatedWith(accent, .10f * gleam * contrast);
+                    // Keep one seed even on the small 24-texel card grids.
+                    if ((x == width * 2 / 3 && y == height * 3 / 4) || lattice(x, y, 73) > .9992) {
+                        const float gleam = float(std::pow(.5 + .5 * std::sin(frame / 10.0 * .12 + lattice(x, y, 19) * 6.283), 2));
+                        colour = colour.interpolatedWith(accent, .28f * gleam * contrast);
                     }
                     pixels.setPixelColour(x, y, colour);
                 }

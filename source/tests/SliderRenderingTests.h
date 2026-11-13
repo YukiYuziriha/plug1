@@ -313,7 +313,41 @@ inline void texturedFxBars() {
     toneUiTests::require(!bool(voice.slider.getProperties()["vocalstackTexturedBar"]),
         "Compact voice slider was changed by FX styling");
 }
+inline void squareMarkersAndPreview() {
+    auto owner = std::make_unique<Processor>();
+    for (int theme : {0, 1, 2}) for (int width : {110, 340}) {
+        ParameterKnob::Style style;
+        ModulationSlider slider;
+        slider.setLookAndFeel(&style);
+        slider.getProperties().set(vocalstackThemeProperty, theme);
+        slider.setSliderStyle(juce::Slider::LinearHorizontal);
+        slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        slider.setRange(0, 1); slider.setValue(.5); slider.setSize(width, 36);
+        juce::Image image(juce::Image::ARGB, width, 36, true);
+        { juce::Graphics g(image);
+        style.drawLinearSlider(g, 10, 0, width - 20, 34, float(width / 2), 0, 1,
+                               juce::Slider::LinearHorizontal, slider); }
+        const auto text = themePalette(slider).text;
+        for (int y : {13, 21}) for (int x : {width / 2 - 2, width / 2 + 1})
+            if (image.getPixelAt(x, y) != text)
+                throw std::runtime_error(("Square marker x=" + juce::String(x) + " y=" + juce::String(y)
+                    + " actual=" + image.getPixelAt(x,y).toString() + " expected=" + text.toString()).toStdString());
+        toneUiTests::screenshot(slider, "approval-1910-slider-" + juce::String(theme) + "-" + juce::String(width) + ".png");
+        slider.setLookAndFeel(nullptr);
+        ParameterKnob knob(*owner, "voice1Pan", "Pan");
+        knob.getProperties().set(vocalstackThemeProperty, theme);
+        knob.setSize(90, 100);
+        auto* label = toneUiTests::find<juce::Label>(knob.slider, [](auto&) { return true; });
+        toneUiTests::require(label && label->getFont().getTypefacePtr() == pixelTypeface(), "Compact knob font fell back");
+        toneUiTests::screenshot(knob, "approval-1910-compact-knob-" + juce::String(theme) + ".png");
+        ParameterKnob mix(*owner, "fx1Mix", "Mix", "%");
+        mix.getProperties().set(vocalstackThemeProperty, theme);
+        mix.setLinear(true); mix.setSize(width, 44); mix.slider.setValue(50);
+        toneUiTests::screenshot(mix, "approval-1910-mix-" + juce::String(theme) + "-" + juce::String(width) + ".png");
+    }
+}
 inline void run() {
+    squareMarkersAndPreview();
     texturedFxBars();
     selectionAndFeedback();
     alignmentAndSensitivity();

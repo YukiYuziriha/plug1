@@ -1,4 +1,10 @@
-# Vocal Stack 1.9.9
+# Vocal Stack 1.9.10
+
+Approved release: square slider markers and butt-ended circular knob arcs;
+explicit embedded Pixelify Sans Stack readouts and unemboldened labels;
+stronger sparse, slow generated-pixel accent glints, including the coarse Stack
+card grids. Tracked Windows x64 CLAP and VST3 packages are updated to 1.9.10.
+See `docs/Preview-1.9.10.md` for validation, installation hashes and approval screenshots.
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
