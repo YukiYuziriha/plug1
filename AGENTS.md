@@ -47,7 +47,16 @@
 
 ## Validation and delivery
 
-- After changes, always rebuild the affected binaries, run relevant tests, and
+- All Windows configure/build/test/benchmark commands, including those run by
+  subagents, MUST run through `tools/Invoke-HalfCpu.ps1` in a dedicated 64-bit
+  PowerShell process. See `docs/Windows-Resource-Limits.md` for usage. Do not
+  bypass it with direct cmake/compiler/ctest invocations or explicit job flags.
+  Parallel agents must use the same wrapper (the same restricted CPU subset).
+  This limits eligible logical processors, not instantaneous Task Manager CPU.
+  If it refuses the machine topology, stop and report rather than run unrestricted.
+- Tooling/docs-only changes require relevant lightweight validation, not plugin
+  rebuilds, version bumps, packaging, or installation. Commit and push them too.
+- After changes affecting plugin binaries, always rebuild the affected binaries, run relevant tests, and
   commit and push the completed work to the existing private GitHub repository.
   Do not leave source changes on GitHub with stale packaged binaries.
 - Update the version and documentation for user-visible releases. Refresh the

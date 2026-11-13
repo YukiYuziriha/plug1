@@ -786,15 +786,20 @@ and CMake 3.24 or newer installed:
 
 ```powershell
 cd source
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/Invoke-HalfCpu.ps1 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/Invoke-HalfCpu.ps1 cmake --build build --config Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/Invoke-HalfCpu.ps1 ctest --test-dir build -C Release --output-on-failure
 ```
+
+All Windows builds/tests must use the wrapper, including direct test executables
+and benchmarks; see [resource limits](docs/Windows-Resource-Limits.md) for coverage
+and limitations. It reserves at most half the logical processors, not a strict
+instantaneous CPU percentage quota. Do not add explicit parallel/job flags.
 
 The first configure fetches pinned dependencies. The focused release run uses:
 
 ```powershell
-ctest --test-dir build -C Release -E '^VocalStackDSP$' --output-on-failure
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/Invoke-HalfCpu.ps1 ctest --test-dir build -C Release -E '^VocalStackDSP$' --output-on-failure
 ```
 
 The 19 focused suites cover routing/voices, tone/creative/utility DSP and tails,
@@ -1056,7 +1061,7 @@ independent cutoff, resonance, drive, morph, mode and reset changes.
 Reproduce isolated module measurements separately from CTest:
 
 ```powershell
-cmake --build build --config Release --target vocalstack_effects_benchmark
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../tools/Invoke-HalfCpu.ps1 cmake --build build --config Release --target vocalstack_effects_benchmark
 .\build\Release\vocalstack_effects_benchmark.exe
 ```
 
