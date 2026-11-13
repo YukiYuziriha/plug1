@@ -387,18 +387,60 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
         };
         const auto slot = size_t(routingFxSlot(node.id));
         checkParameter(fxParameterId(slot, "Mix"));
+        auto* captionSlider = dynamic_cast<juce::Slider*>(find(*card, fxParameterId(slot, "Mix")));
+        expect(captionSlider != nullptr, "rack Mix has a slider");
+        if (bool(captionSlider->getProperties()["vocalstackTexturedBar"])) {
+            auto* caption = descendant<juce::Label>(*captionSlider);
+            expect(caption && !captionSlider->isTextBoxEditable() && !caption->isEditable(),
+                   "fat rack Mix caption is display-only");
+            set(owner, fxParameterId(slot, "Mix"), 30); pump();
+            const auto point = rack.getLocalPoint(caption, caption->getLocalBounds().getCentre());
+            auto* hit = rack.getComponentAt(point);
+            expect(hit == captionSlider, "rack Mix caption hit passes through to the slider");
+            const auto start = hit->getLocalPoint(&rack, point).toFloat();
+            const auto layout = captionSlider->getLookAndFeel().getSliderLayout(*captionSlider);
+            const auto end = start.translated(layout.sliderBounds.getWidth() * .2f, 0);
+            const auto focus = juce::Component::getCurrentlyFocusedComponent();
+            const auto now = juce::Time::getCurrentTime();
+            const auto mouse = [&](juce::Point<float> position, int modifiers, bool dragged) {
+                return juce::MouseEvent{juce::Desktop::getInstance().getMainMouseSource(), position,
+                    juce::ModifierKeys(modifiers), 1, 0, 0, 0, 0, hit, hit, now, start, now, 1, dragged};
+            };
+            hit->mouseDown(mouse(start, juce::ModifierKeys::leftButtonModifier, false));
+            expect(std::abs(captionSlider->getValue() - 30) < .01, "rack Mix caption mouseDown does not jump");
+            hit->mouseUp(mouse(start, 0, false));
+            expect(std::abs(captionSlider->getValue() - 30) < .01, "rack Mix caption click does not jump");
+            hit->mouseDown(mouse(start, juce::ModifierKeys::leftButtonModifier, false));
+            hit->mouseDrag(mouse(end, juce::ModifierKeys::leftButtonModifier, true));
+            hit->mouseUp(mouse(end, 0, true));
+            expect(std::abs(captionSlider->valueToProportionOfLength(captionSlider->getValue()) - .4) < .001,
+                   "rack Mix caption drag moves at half cursor speed");
+            expect(std::abs(owner.parameters.getRawParameterValue(fxParameterId(slot, "Mix"))->load()
+                                - captionSlider->getValue()) < .01,
+                   "rack Mix caption drag writes its host parameter");
+            expect(caption->getCurrentTextEditor() == nullptr
+                       && juce::Component::getCurrentlyFocusedComponent() == focus,
+                   "rack Mix caption click/drag never opens numeric entry or captures focus");
+        }
         if (node.type == NodeType::chorale || node.type == NodeType::equalizer) {
             auto* mixSlider = dynamic_cast<juce::Slider*>(find(*card, fxParameterId(slot, "Mix")));
             expect(mixSlider && mixSlider->getSliderStyle() == juce::Slider::LinearHorizontal,
                    "rack-owned Mix uses a standalone linear slider");
-            expect(mixSlider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
-                   "rack-owned Mix value is above the control");
             auto* mixControl = dynamic_cast<ParameterKnob*>(mixSlider->getParentComponent());
-            expect(mixControl && mixControl->getHeight() == 94 && mixControl->getWidth() <= 240,
-                   "standalone rack Mix reserves a 94px-high footprint for its textured bar");
+            expect(mixControl && mixControl->getHeight() == 44 && mixControl->getWidth() <= 240,
+                   "standalone rack Mix uses a 44px textured row");
+            for (auto* child : mixControl->getChildren())
+                if (auto* title = dynamic_cast<juce::Label*>(child))
+                    expect(!title->isVisible(), "standalone rack Mix hides its external title");
             expect(bool(mixSlider->getProperties()["vocalstackTexturedBar"]), "standalone rack Mix opts into textured bar styling");
-            expect(mixSlider->getLookAndFeel().getSliderLayout(*mixSlider).sliderBounds.getHeight() >= 25 + 8,
-                   "standalone rack Mix fits its 25px bar and 8px modulation lane");
+            const auto mixLayout = mixSlider->getLookAndFeel().getSliderLayout(*mixSlider);
+            const auto mixBar = ParameterKnob::Style::texturedBarBounds(mixLayout.sliderBounds.toFloat()).toNearestInt();
+            auto* value = descendant<juce::Label>(*mixSlider);
+            expect(mixLayout.sliderBounds.getHeight() == mixSlider->getHeight() && mixBar.getHeight() == 25
+                       && mixBar.getY() >= 8 && mixBar.contains(mixLayout.textBoxBounds)
+                       && value && value->getBounds() == mixLayout.textBoxBounds
+                       && !mixSlider->isTextBoxEditable() && !value->isEditable(),
+                   "standalone rack Mix retains its lane and display-only caption inside the 25px bar");
             if (node.type == NodeType::chorale) {
                 auto* motion = dynamic_cast<juce::Slider*>(find(*card, fxParameterId(slot, "Motion")));
                 expect(motion && motion->getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag
@@ -430,15 +472,22 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
     auto* granular = selectRackNode(rack, 100);
     row->setViewPosition(0, 0);
     auto* body = viewportIn(*granular);
-    auto* mix = find(*granular, fxParameterId(1, "Mix"));
+    auto* mix = dynamic_cast<juce::Slider*>(find(*granular, fxParameterId(1, "Mix")));
+    expect(mix != nullptr, "granular Mix slider exists");
+    auto* mixValue = descendant<juce::Label>(*mix);
+    expect(mixValue && !mix->isTextBoxEditable() && !mixValue->isEditable(),
+               "granular Mix retains its display-only in-bar caption");
     const auto mixBounds = body->getViewedComponent()->getLocalArea(mix, mix->getLocalBounds());
     body->setViewPosition(0, mixBounds.getY());
     const int previousY = body->getViewPositionY(); const int previousX = row->getViewPositionX();
     const int maximumY = body->getViewedComponent()->getHeight() - body->getViewHeight();
     auto* focus = juce::Component::getCurrentlyFocusedComponent();
-    wheelAt(rack, *mix, 0, -.5f);
+    expect(rack.getComponentAt(rack.getLocalPoint(mixValue, mixValue->getLocalBounds().getCentre())) == mix,
+           "granular Mix caption wheel hits the slider, not its display-only label");
+    wheelAt(rack, *mixValue, 0, -.5f);
+    expect(mixValue->getCurrentTextEditor() == nullptr, "hovering the in-bar Mix value never opens numeric entry");
     expect(previousY < maximumY ? body->getViewPositionY() > previousY : body->getViewPositionY() == previousY,
-           "hovered nested knob scrolls the inspector, or stays clamped at its bottom");
+           "hovered in-bar Mix value scrolls the inspector, or stays clamped at its bottom");
     expect(row->getViewPositionX() == previousX, "vertical body wheel leaves horizontal rack alone");
     expect(juce::Component::getCurrentlyFocusedComponent() == focus, "hover wheel does not steal keyboard focus");
     body->setViewPosition(0, 0);

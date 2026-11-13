@@ -1,6 +1,36 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.5 built, tested, packaged and installed
+## Current status — 1.9.6 built, tested, packaged and installed
+
+UI-only: no DSP or host parameter changes.
+
+- [x] Increase the background grid's longest edge from 40 to 80 cells for
+  approximately half-sized pixels; use denser multiscale fluid noise and grain
+  with stronger brightness variation. Keep theme tint muted: saturation capped
+  at 0.18 and tint blend 0.12, not a vivid gradient.
+- [x] Use denser long FX Mix noise with 2 px texels instead of 3 px.
+- [x] Place normal-font `Mix NN%` inside the 25 px bar, with reverse contrast
+  over the filled portion; reduce Mix rows from 94 to 44 px.
+- [x] Make the caption a nonclickable, mouse-passthrough label. Clicking or
+  dragging over its text adjusts Mix without numeric entry or keyboard focus.
+  Keep numeric entry for all other knobs and voice controls unchanged.
+- [x] Full Release build succeeded; all 34 focused CTests passed in 161.06 s,
+  including 68 editor groups and rack UI.
+- [x] Review Neon Reverb and Spectral Granular racks plus Neon/Device full editors.
+- [x] Copy Release CLAP/VST3 packages to tracked `Windows-x64` and refresh
+  `VocalStack-FX-Tabs.png`.
+- [x] Packaged CLAP smoke: 2087 parameters at original indices; stereo 48 kHz,
+  mono-to-stereo 44.1 kHz with 1344-sample latency, and mono 96 kHz with
+  2688-sample latency passed.
+- [x] `install-release.ps1`: both per-user formats reported **Installed and
+  SHA256 verified**.
+- [ ] Commit and push the release with matching packages (pending next).
+- [ ] Actual DAW visual/listening/transport/automation/recall and native FPS checks.
+
+The long legacy DSP suite was not rerun. Screenshot review is not actual DAW
+validation. See [1.9.6 validation](docs/Release-1.9.6-Validation.md) for package hashes.
+
+### Historical 1.9.5 — built, tested, packaged, installed and pushed
 
 UI-only: no DSP or host parameter changes. Release source and matching packages
 are committed as `e9f2b48` and pushed to `origin/main`.

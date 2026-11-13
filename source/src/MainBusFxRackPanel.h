@@ -253,7 +253,7 @@ private:
                     const int extraHeight = knobs.empty() ? 0 : mixHeight + controlGap;
                     controls.setSize(width, juce::jmax(area.getHeight(), panelHeight + extraHeight));
                     // Keep Tone's responsive graph-left/controls-right layout at the top.
-                    // The rack-owned Mix is a narrow footer with full track/label height.
+                    // The rack-owned Mix is a compact footer with in-track text.
                     fullPanel->setBounds(0, 0, width, panelHeight);
                     if (!knobs.empty()) {
                         const int mixWidth = juce::jmin(240, juce::jmax(1, width - 16));
@@ -332,8 +332,8 @@ private:
         MainBusFxRackPanel& rack;
         FluidBackground background;
         bool neon = false;
-        // Mix includes its value, modulation lane, 25px track, and 28px caption.
-        static constexpr int motionWidth = 68, motionHeight = 100, mixHeight = 94, controlGap = 2;
+        // Mix overlays its name and editable value inside the textured track.
+        static constexpr int motionWidth = 68, motionHeight = 100, mixHeight = 44, controlGap = 2;
         modulationui::Button enabled;
         std::atomic<float>* enabledValue = nullptr;
         juce::Component controls;

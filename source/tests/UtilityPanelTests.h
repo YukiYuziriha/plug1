@@ -144,17 +144,30 @@ struct UtilityPanelTests {
                                                                  : juce::Slider::RotaryHorizontalVerticalDrag),
                                 "Utility parameter changed control style");
                         require(row->getWidth() == (mix ? controlWidth : 68)
-                                && row->getHeight() == (mix ? 94 : 100), "Utility control stretched with inspector");
+                                && row->getHeight() == (mix ? 44 : 100), "Utility control stretched with inspector");
                         require(bool(row->slider.getProperties()["vocalstackTexturedBar"]) == mix,
                                 "Only Utility Mix should opt into the textured FX bar");
-                        if (mix)
-                            require(row->slider.getHeight() - row->slider.getTextBoxHeight() >= 8 + 25
-                                        && row->label.getHeight() == 28,
-                                    "Utility Mix clips its modulation lane, 25px track, or caption");
+                        if (mix) {
+                            const auto layout = row->style.getSliderLayout(row->slider);
+                            const auto track = ParameterKnob::Style::texturedBarBounds(layout.sliderBounds.toFloat());
+                            require(!row->label.isVisible()
+                                        && row->slider.getBounds() == row->getLocalBounds().reduced(2, 1),
+                                    "Utility Mix must fill its compact row without an external caption");
+                            require(layout.sliderBounds.getY() == 0 && track.getY() >= 8 && track.getHeight() == 25,
+                                    "Utility Mix clips its modulation lane or 25px track");
+                            require(layout.textBoxBounds.intersects(track.toNearestInt()),
+                                    "Utility Mix numeric entry must overlay its track");
+                            bool valueFound = false;
+                            for (auto* child : row->slider.getChildren())
+                                if (auto* label = dynamic_cast<juce::Label*>(child); label && label->isVisible())
+                                    valueFound = true;
+                            require(valueFound, "Utility Mix lost its native numeric textbox");
+                        }
                         require(row->slider.getTextBoxPosition() == juce::Slider::TextBoxAbove,
-                                "Utility value is not above its control");
-                        require(row->label.getY() >= row->slider.getBottom(), "Utility name is not below its control");
+                                "Utility value must retain the native textbox configuration");
                         if (!mix) {
+                            require(row->label.isVisible() && row->label.getY() >= row->slider.getBottom(),
+                                    "Utility name is not below its control");
                             require((row->getX() - controlX) % 70 == 0,
                                     "Utility rotary columns must have a 2px gap");
                             require(row->slider.getTextBoxWidth() == 64 && row->slider.getTextBoxHeight() == 21,

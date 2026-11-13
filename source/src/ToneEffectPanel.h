@@ -97,7 +97,7 @@ public:
             const int columns = juce::jmax(1, (controlWidth + knobGap) / (knobWidth + knobGap));
             const int count = isEq() ? 5 : isWave() ? 3 : 2;
             const int gridHeight = ((count + columns - 1) / columns) * (knobHeight + knobGap);
-            return juce::jmax(280, (isEq() ? 158 : isWave() ? 198 : 83) + gridHeight);
+            return juce::jmax(280, (isEq() ? 158 : isWave() ? 148 : 83) + gridHeight);
         }
         const int inner = juce::jmax(1, width - 16);
         const int columns = juce::jmax(1, (inner + knobGap) / (knobWidth + knobGap));
@@ -106,7 +106,7 @@ public:
         // Match the fixed rows in layoutContent; short inspectors scroll without shrinking plots.
         const bool compact = width < compactWidth;
         const int fixedHeight = isEq() ? (compact ? 445 : 485)
-                                      : isWave() ? (compact ? 500 : 560) : (compact ? 314 : 394);
+                                      : isWave() ? (compact ? 450 : 510) : (compact ? 314 : 394);
         return juce::jmax(preferredHeight, fixedHeight + gridHeight);
     }
     void setNeon(bool enabled) {
@@ -167,8 +167,8 @@ public:
 private:
     static constexpr int compactWidth = 320;
     static constexpr int knobWidth = 68, knobHeight = 100, knobGap = 2;
-    // Leave room for the value, 8px modulation lane, 25px track, and 28px caption.
-    static constexpr int mixHeight = 94;
+    // The textured track contains its name and editable value.
+    static constexpr int mixHeight = 44;
     void layoutContent() {
         const bool wide = getWidth() >= 620;
         const bool compact = !wide && content.getWidth() < compactWidth;

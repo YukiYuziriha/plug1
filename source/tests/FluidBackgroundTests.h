@@ -79,15 +79,17 @@ inline void subduedNonUniformPixels() {
                     for (size_t channel = 0; channel < channels.size(); ++channel) {
                         minimum[channel] = std::min(minimum[channel], channels[channel]);
                         maximum[channel] = std::max(maximum[channel], channels[channel]);
-                        require(std::abs(channels[channel] - base[channel]) <= 24,
+                        require(std::abs(channels[channel] - base[channel]) <= 32,
                                 "Fluid background strayed too far from its theme base");
                     }
                 }
             require(colours.size() >= 4, "Fluid background is effectively uniform");
-            require(colours.size() <= 1600, "Fluid background exceeded its bounded coarse grid");
+            require(colours.size() <= 6400, "Fluid background exceeded its bounded coarse grid");
             for (size_t channel = 0; channel < minimum.size(); ++channel)
-                require(maximum[channel] - minimum[channel] <= 24,
+                require(maximum[channel] - minimum[channel] <= 48,
                         "Fluid background has distracting high contrast");
+            require(std::max({maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]}) >= 8,
+                    "Background must retain visible luminance variation, not just a faint tint");
         }
     }
 }
@@ -120,11 +122,11 @@ inline void proportionalCoarsePixels() {
     int transitions = 0;
     for (int y = 0; y < small.getHeight(); ++y)
         for (int x = 0; x < small.getWidth(); ++x) {
-            require(small.getPixelAt(x, y) == small.getPixelAt((x / 10) * 10, (y / 10) * 10),
+            require(small.getPixelAt(x, y) == small.getPixelAt((x / 5) * 5, (y / 5) * 5),
                     "Fluid background interpolated inside a coarse pixel");
             if (x > 0 && small.getPixelAt(x, y) != small.getPixelAt(x - 1, y)) {
                 ++transitions;
-                require(x % 10 == 0, "Fluid background horizontal transition missed grid boundary");
+                require(x % 5 == 0, "Fluid background horizontal transition missed grid boundary");
             }
         }
     require(transitions > 0, "Coarse pixel test rendered no visible boundaries");

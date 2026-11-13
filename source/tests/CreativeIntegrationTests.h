@@ -429,13 +429,49 @@ inline void inspectorControls(Processor& p, CreativeEffectPanel& panel, Creative
             write(p, id, original); require(button->getToggleState() == (original >= .5f), "Creative toggle did not follow host");
         } else {
             auto* slider = dynamic_cast<juce::Slider*>(control); require(slider != nullptr, "Continuous creative control is not a slider");
-            require(slider->isTextBoxEditable(), "Creative numeric entry disabled");
+            const bool texturedBar = bool(slider->getProperties()["vocalstackTexturedBar"]);
+            if (!texturedBar) require(slider->isTextBoxEditable(), "Creative numeric entry disabled");
             near(slider->getMinimum(), host.getNormalisableRange().start, "Creative slider minimum");
             near(slider->getMaximum(), host.getNormalisableRange().end, "Creative slider maximum");
             slider->setValue(host.getNormalisableRange().end, juce::sendNotificationSync);
             near(read(p, id), float(slider->getValue()), "Creative slider did not write host");
             write(p, id, original); near(slider->getValue(), original, "Creative slider did not follow host");
-            if (slider->isEnabled()) {
+            if (texturedBar) {
+                auto* caption = find<juce::Label>(*slider, [](const juce::Label&) { return true; });
+                require(caption != nullptr && caption->isVisible() && !slider->isTextBoxEditable()
+                            && !caption->isEditable(), "Creative Mix native caption must be display-only");
+                auto* root = slider->getTopLevelComponent();
+                const auto point = root->getLocalPoint(caption, caption->getLocalBounds().getCentre());
+                auto* hit = root->getComponentAt(point);
+                require(hit == slider, "Creative Mix caption must pass root mouse hits to slider");
+                const auto start = hit->getLocalPoint(root, point).toFloat();
+                const auto focus = juce::Component::getCurrentlyFocusedComponent();
+                if (slider->isEnabled()) {
+                    write(p, id, host.getNormalisableRange().convertFrom0to1(.5f));
+                    const auto before = read(p, id);
+                    const auto end = start.translated(slider->getWidth() * .2f, 0);
+                    const auto now = juce::Time::getCurrentTime();
+                    const auto mouse = [&](juce::Point<float> point, int modifiers, bool dragged) {
+                        return juce::MouseEvent{juce::Desktop::getInstance().getMainMouseSource(), point,
+                            juce::ModifierKeys(modifiers), 1, 0, 0, 0, 0, slider, slider, now, start, now, 1, dragged};
+                    };
+                    slider->mouseDown(mouse(start, juce::ModifierKeys::leftButtonModifier, false));
+                    near(read(p, id), before, "Creative Mix caption mouseDown must not jump");
+                    slider->mouseUp(mouse(start, 0, false));
+                    near(read(p, id), before, "Creative Mix caption click must not jump");
+                    require(caption->getCurrentTextEditor() == nullptr && !caption->isEditable()
+                                && !slider->isTextBoxEditable(), "Creative Mix caption click must remain display-only");
+                    require(juce::Component::getCurrentlyFocusedComponent() == focus, "Creative Mix caption click stole focus");
+                    slider->mouseDown(mouse(start, juce::ModifierKeys::leftButtonModifier, false));
+                    slider->mouseDrag(mouse(end, juce::ModifierKeys::leftButtonModifier, true));
+                    slider->mouseUp(mouse(end, 0, true));
+                    require(std::abs(read(p, id) - before) > .01f, "Creative Mix caption drag did not edit host");
+                    near(read(p, id), float(slider->getValue()), "Creative Mix drag host binding");
+                    require(caption->getCurrentTextEditor() == nullptr, "Creative Mix drag opened numeric entry");
+                    require(juce::Component::getCurrentlyFocusedComponent() == focus, "Creative Mix caption drag stole focus");
+                    write(p, id, original);
+                }
+            } else if (slider->isEnabled()) {
                 slider->showTextBox();
                 auto* entry = find<juce::TextEditor>(*slider, [](const juce::TextEditor&) { return true; });
                 require(entry != nullptr && entry->getWantsKeyboardFocus(), "Creative numeric entry cannot own keys");

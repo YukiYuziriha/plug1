@@ -518,6 +518,43 @@ void checkDrawerControls(Processor& owner, juce::Component& parent, int& sliders
             auto& p = parameter(owner, id);
             slider->setValue(p.getNormalisableRange().end, juce::sendNotificationSync);
             expectNear(parameterValue(owner, id), p.getNormalisableRange().end, "Drawer slider binding: " + id);
+            if (bool(slider->getProperties()["vocalstackTexturedBar"])) {
+                juce::Label* caption = nullptr;
+                for (auto* nested : slider->getChildren())
+                    if (auto* label = dynamic_cast<juce::Label*>(nested)) caption = label;
+                expect(caption != nullptr && caption->isVisible() && !slider->isTextBoxEditable()
+                           && !caption->isEditable(), "Drawer Mix native caption must be display-only");
+                auto* root = slider->getTopLevelComponent();
+                const auto point = root->getLocalPoint(caption, caption->getLocalBounds().getCentre());
+                auto* hit = root->getComponentAt(point);
+                expect(hit == slider, "Drawer Mix caption must pass root mouse hits to slider");
+                const auto start = hit->getLocalPoint(root, point).toFloat();
+                const auto focus = juce::Component::getCurrentlyFocusedComponent();
+                setParameter(owner, id, p.getNormalisableRange().convertFrom0to1(.5f));
+                expectNear(slider->getValue(), parameterValue(owner, id), "Drawer Mix follows host: " + id);
+                const auto before = parameterValue(owner, id);
+                const auto end = start.translated(slider->getWidth() * .2f, 0);
+                const auto now = juce::Time::getCurrentTime();
+                const auto mouse = [&](juce::Point<float> point, int modifiers, bool dragged) {
+                    return juce::MouseEvent{juce::Desktop::getInstance().getMainMouseSource(), point,
+                        juce::ModifierKeys(modifiers), 1, 0, 0, 0, 0, slider, slider, now, start, now, 1, dragged};
+                };
+                slider->mouseDown(mouse(start, juce::ModifierKeys::leftButtonModifier, false));
+                expectNear(parameterValue(owner, id), before, "Drawer Mix caption mouseDown must not jump");
+                slider->mouseUp(mouse(start, 0, false));
+                expectNear(parameterValue(owner, id), before, "Drawer Mix caption click must not jump");
+                expect(caption->getCurrentTextEditor() == nullptr && !caption->isEditable()
+                            && !slider->isTextBoxEditable(), "Drawer Mix caption click must remain display-only");
+                expect(juce::Component::getCurrentlyFocusedComponent() == focus, "Drawer Mix caption click stole focus");
+                slider->mouseDown(mouse(start, juce::ModifierKeys::leftButtonModifier, false));
+                slider->mouseDrag(mouse(end, juce::ModifierKeys::leftButtonModifier, true));
+                slider->mouseUp(mouse(end, 0, true));
+                expect(std::abs(parameterValue(owner, id) - before) > .01, "Drawer Mix caption drag did not edit host: " + id);
+                expectNear(parameterValue(owner, id), slider->getValue(), "Drawer Mix drag host binding: " + id);
+                expect(caption->getCurrentTextEditor() == nullptr, "Drawer Mix drag opened numeric entry");
+                expect(juce::Component::getCurrentlyFocusedComponent() == focus, "Drawer Mix caption drag stole focus");
+                continue;
+            }
             expect(slider->isTextBoxEditable(), "Drawer numeric entry disabled");
             slider->showTextBox();
             juce::TextEditor* entry = nullptr;

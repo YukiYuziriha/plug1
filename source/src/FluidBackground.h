@@ -33,7 +33,7 @@ public:
         if (bounds.isEmpty()) return;
         // A fixed grid makes the physical pixels grow with the component, while
         // aspect adjustment keeps them approximately square in small FX cards.
-        constexpr int longest = 40;
+        constexpr int longest = 80;
         const int width = bounds.getWidth() >= bounds.getHeight() ? longest
             : juce::jmax(1, juce::roundToInt(double(longest) * bounds.getWidth() / bounds.getHeight()));
         const int height = bounds.getHeight() >= bounds.getWidth() ? longest
@@ -51,18 +51,20 @@ public:
             // Keep the original dark surface dominant. A desaturated, brightness-
             // matched accent gives only a faint theme tint, never a vivid wash.
             const float brightness = base.getBrightness();
-            const auto low = base.withBrightness(brightness * .88f);
+            const auto low = base.withBrightness(brightness * .65f);
             const auto tint = accent.withSaturation(juce::jmin(.18f, accent.getSaturation()))
-                .withBrightness(juce::jmin(1.f, brightness * 1.12f + .004f));
-            const auto high = base.withBrightness(juce::jmin(1.f, brightness * 1.18f + .006f))
+                .withBrightness(juce::jmin(1.f, brightness * 1.55f + .012f));
+            const auto high = base.withBrightness(juce::jmin(1.f, brightness * 1.65f + .016f))
                 .interpolatedWith(tint, .12f);
             for (int y = 0; y < height; ++y)
                 for (int x = 0; x < width; ++x) {
                     const double nx = double(x) / width, ny = double(y) / height;
                     const double broad = noise(nx * 3.0 + phase, ny * 3.0, phase * 0.7);
-                    const double detail = noise(nx * 9.0, ny * 9.0 - phase * 0.6, phase);
+                    const double detail = noise(nx * 18.0, ny * 18.0 - phase * 0.6, phase);
+                                        const double grain = noise(nx * 40.0 + phase * .35, ny * 40.0, phase * .5);
                     const double gradient = 0.5 + 0.5 * std::sin(nx * 3.5 + ny * 2.0 + phase);
-                    const float blend = float(0.60 * broad + 0.25 * detail + 0.15 * gradient);
+                    const float field = float(.30 * broad + .40 * detail + .20 * grain + .10 * gradient);
+                                        const float blend = juce::jlimit(0.f, 1.f, .5f + (field - .5f) * 1.4f);
                     pixels.setPixelColour(x, y, low.interpolatedWith(high, blend));
                 }
         }

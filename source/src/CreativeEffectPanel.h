@@ -114,7 +114,10 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
         void resized() override {
             auto area = getLocalBounds().reduced(1, 0);
             label.setJustificationType(juce::Justification::centred);
-            label.setBounds(area.removeFromBottom(28));
+            const bool textured = slider.getSliderStyle() == juce::Slider::LinearHorizontal
+                && bool(slider.getProperties()["vocalstackTexturedBar"]);
+            label.setVisible(!buttonLink && !textured);
+            if (!textured) label.setBounds(area.removeFromBottom(28));
             slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, juce::jmin(82, area.getWidth()), 20);
             slider.setBounds(area);
             // Keep two-state controls button-sized, rather than filling a knob cell.
@@ -257,8 +260,8 @@ public:
             group.heading->setBounds(controlsX, y, controlsWidth, 20);
             y += 22;
             if (&group == &groups.front()) {
-                // Value (20), modulation lane (8), track (25), caption (28), plus padding.
-                constexpr int mixHeight = 94;
+                // The style overlays the editable value and name inside the track.
+                constexpr int mixHeight = 44;
                 group.rows.front()->setBounds(controlsX, y, controlsWidth, mixHeight);
                 y += mixHeight + 6;
                 continue;

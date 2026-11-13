@@ -63,6 +63,25 @@ public:
 inline juce::Label* createPassiveSliderTextBox(juce::Label* originalTextBox) {
     class ValueLabel final : public juce::Label {
     public:
+        void paint(juce::Graphics& g) override {
+            auto* slider = dynamic_cast<juce::Slider*>(getParentComponent());
+            if (!slider || !bool(slider->getProperties()["vocalstackTexturedBar"]) || isBeingEdited()) {
+                juce::Label::paint(g); return;
+            }
+            const auto palette = themePalette(*slider);
+            const auto accent = slider->findColour(juce::Slider::trackColourId);
+            const auto text = "Mix " + getText().trim().replace(" %", "%");
+            const auto area = getLocalBounds().reduced(2, 0);
+            g.setFont(getFont()); g.setColour(palette.text);
+            g.drawText(text, area, juce::Justification::centred);
+            const auto track = slider->getLookAndFeel().getSliderLayout(*slider).sliderBounds;
+            const float valueX = float(track.getX()) + float(track.getWidth()) * float(slider->valueToProportionOfLength(slider->getValue()));
+            const juce::Graphics::ScopedSaveState save(g);
+            g.reduceClipRegion(juce::Rectangle<int>(track.getX() - getX(), 0,
+                juce::jmax(0, juce::roundToInt(valueX) - track.getX()), getHeight()));
+            g.setColour(accent.getPerceivedBrightness() >= .45f ? palette.background : palette.text);
+            g.drawText(text, area, juce::Justification::centred);
+        }
         void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
             forwardPassiveWheel(*this, event, wheel);
         }
@@ -93,8 +112,12 @@ public:
                                  static_cast<juce::ModifierKeys::Flags>(juce::ModifierKeys::shiftModifier | juce::ModifierKeys::ctrlModifier
                                  | juce::ModifierKeys::commandModifier));
     }
+    void setTextBoxStyle(juce::Slider::TextEntryBoxPosition position, bool readOnly, int width, int height) {
+        juce::Slider::setTextBoxStyle(position, readOnly || bool(getProperties()["vocalstackTexturedBar"]), width, height);
+        restoreIdleFocusPolicy();
+    }
     void setTextBoxIsEditable(bool editable) {
-        juce::Slider::setTextBoxIsEditable(editable);
+        juce::Slider::setTextBoxIsEditable(editable && !bool(getProperties()["vocalstackTexturedBar"]));
         restoreIdleFocusPolicy();
     }
     void lookAndFeelChanged() override {
@@ -124,11 +147,12 @@ public:
         for (const auto& a : state.assignments)
             if (a.modulatorId == displayedSource && a.targetParameterId == id && a.enabled) { depth = a.depth * sourceAmount; break; }
         const bool assigning = owner && owner->modulationAssignmentId() != 0;
-        if (isTextBoxEditable() == assigning) {
+        const bool editable = !assigning && !bool(getProperties()["vocalstackTexturedBar"]);
+                if (isTextBoxEditable() != editable) {
             // Only entering Assign cancels deliberate base-value entry. Selection
             // and ordinary feedback ticks must not disturb the transient editor.
             if (assigning) hideTextBox(true);
-            setTextBoxIsEditable(!assigning);
+            setTextBoxIsEditable(editable);
         }
         repaint();
     }
@@ -254,10 +278,20 @@ public:
             const float height = juce::jmin(float(texturedBarHeight), juce::jmax(1.f, area.getHeight() - 8));
             return {area.getX(), area.getY() + 8 + (area.getHeight() - 8 - height) * .5f, area.getWidth(), height};
         }
+        juce::Slider::SliderLayout getSliderLayout(juce::Slider& slider) override {
+            if (!bool(slider.getProperties()["vocalstackTexturedBar"]))
+                return juce::LookAndFeel_V4::getSliderLayout(slider);
+            juce::Slider::SliderLayout layout;
+            layout.sliderBounds = slider.getLocalBounds().reduced(4, 0);
+            const auto bar = texturedBarBounds(layout.sliderBounds.toFloat()).toNearestInt();
+            layout.textBoxBounds = bar.withSizeKeepingCentre(juce::jmin(124, bar.getWidth()), bar.getHeight());
+            return layout;
+        }
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
             auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
                         label->setFont(juce::Font(juce::FontOptions(controlFontSize)));
-                        return label;
+            if (bool(slider.getProperties()["vocalstackTexturedBar"])) label->setInterceptsMouseClicks(false, false);
+            return label;
         }
         void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h,
                               float position, float, float, juce::Slider::SliderStyle,
@@ -331,18 +365,18 @@ public:
             const double frame = std::floor(seconds * 15.0);
             if (texture.isValid() && accent == textureColour && frame == textureFrame) return;
             textureColour = accent; textureFrame = frame;
-            if (!texture.isValid()) texture = juce::Image(juce::Image::RGB, 192, 27, false);
+            if (!texture.isValid()) texture = juce::Image(juce::Image::RGB, 128, 26, false);
             const float phase = float(std::fmod(frame / 15.0, 4096.0));
             juce::Image::BitmapData pixels(texture, juce::Image::BitmapData::writeOnly);
-            for (int row = 0; row < 9; ++row) for (int col = 0; col < 64; ++col) {
-                const float noise = .64f * textureNoise(float(col) + phase * 1.3f, float(row) + std::sin(phase * .18f) * 2.f, 8)
-                                  + .26f * textureNoise(float(col) - phase * .45f, float(row) + phase * .3f, 4)
-                                  + .10f * textureHash(col, row);
+            for (int row = 0; row < 13; ++row) for (int col = 0; col < 64; ++col) {
+                const float noise = .30f * textureNoise(float(col) + phase * 1.3f, float(row) + std::sin(phase * .18f) * 2.f, 8)
+                                  + .35f * textureNoise(float(col) - phase * .45f, float(row) + phase * .3f, 2)
+                                  + .35f * textureHash(col, row);
                 const float shade = float(juce::jlimit(0, 5, int(noise * 6))) / 5.f;
                 const auto colour = shade < .5f ? accent.interpolatedWith(juce::Colours::black, (.5f - shade) * .52f)
                                                : accent.interpolatedWith(juce::Colours::white, (shade - .5f) * .28f);
-                for (int dy = 0; dy < 3; ++dy) for (int dx = 0; dx < 3; ++dx)
-                    pixels.setPixelColour(col * 3 + dx, row * 3 + dy, colour);
+                for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx)
+                    pixels.setPixelColour(col * 2 + dx, row * 2 + dy, colour);
             }
         }
         void drawTexturedBar(juce::Graphics& g, juce::Rectangle<float> area, float position, juce::Slider& slider) {
@@ -436,7 +470,11 @@ public:
         forwardPassiveWheel(*this, event, wheel);
     }
     void resized() override {
-        auto area = getLocalBounds(); label.setBounds(area.removeFromBottom(28)); slider.setBounds(area);
+        auto area = getLocalBounds();
+                const bool merged = bool(slider.getProperties()["vocalstackTexturedBar"]);
+                label.setVisible(!merged);
+                if (!merged) label.setBounds(area.removeFromBottom(28));
+                slider.setBounds(area);
     }
     void setNeon(bool neon) {
         const auto p = themePalette(*this, neon);

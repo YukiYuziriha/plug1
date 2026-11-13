@@ -64,9 +64,19 @@ inline void run() {
                 auto* mixRow = mix->getParentComponent();
                 require(bool(mix->getProperties()["vocalstackTexturedBar"]),
                         "Creative Mix must opt into the textured FX bar");
-                require(mixRow->getHeight() == 94
-                            && mix->getHeight() - mix->getTextBoxHeight() >= 8 + 25,
+                const auto mixLayout = mix->getLookAndFeel().getSliderLayout(*mix);
+                const auto track = ParameterKnob::Style::texturedBarBounds(mixLayout.sliderBounds.toFloat());
+                require(mixRow->getHeight() == 44 && mix->getBounds() == mixRow->getLocalBounds().reduced(1, 0),
+                        "Creative Mix must fill its compact row without an external caption");
+                require(mixLayout.sliderBounds.getY() == 0 && track.getY() >= 8 && track.getHeight() == 25,
                         "Creative Mix clips its modulation lane or 25px track");
+                require(mixLayout.textBoxBounds.intersects(track.toNearestInt()),
+                        "Creative Mix numeric entry must overlay its track");
+                bool mixValueFound = false;
+                for (auto* child : mix->getChildren())
+                    if (auto* label = dynamic_cast<juce::Label*>(child); label && label->isVisible())
+                        mixValueFound = true;
+                require(mixValueFound, "Creative Mix lost its native numeric textbox");
                 const bool split = content->getWidth() - 16 >= 680;
                 require(!split || mixRow->getX() == visual->getRight() + 6,
                         "Wide creative inspector must put controls beside the graph");
@@ -87,7 +97,7 @@ inline void run() {
                     passive(*control);
                     if (auto* slider = dynamic_cast<juce::Slider*>(control)) {
                         require(slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
-                                "Creative values must be above controls");
+                                "Creative values must retain the native textbox configuration");
                         if (slider != mix) {
                             require(row->getWidth() == 68 && row->getHeight() == 100,
                                     "Creative knob geometry changed");
@@ -97,8 +107,13 @@ inline void run() {
                                     "Creative rotary knob opted into the long FX bar");
                         }
                         for (auto* sibling : row->getChildren())
-                            if (auto* label = dynamic_cast<juce::Label*>(sibling))
-                                require(label->getY() >= slider->getBottom(), "Creative caption must be below control");
+                            if (auto* label = dynamic_cast<juce::Label*>(sibling)) {
+                                if (slider == mix)
+                                    require(!label->isVisible(), "Creative Mix must not show an external caption");
+                                else
+                                    require(label->isVisible() && label->getY() >= slider->getBottom(),
+                                            "Creative caption must be below control");
+                            }
                     } else {
                         require(control->getWidth() <= 58 && control->getHeight() == 28,
                                 "Creative two-state button must remain compact");

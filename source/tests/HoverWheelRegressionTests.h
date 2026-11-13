@@ -183,23 +183,38 @@ inline void fxHoveredSurfaces() {
                                                                : juce::Slider::RotaryHorizontalVerticalDrag),
                         "FX wheel fixture has the wrong control mode");
                 auto* controlRow = slider->getParentComponent();
-                require(slider->getWidth() >= 64 && controlRow->getHeight() == (id == mixId ? 94 : 100),
+                require(slider->getWidth() >= 64 && controlRow->getHeight() == (id == mixId ? 44 : 100),
                         "FX wheel target lost its readable compact control geometry: " + id);
                 require((id == mixId || controlRow->getWidth() == 68)
                             && bool(slider->getProperties()["vocalstackTexturedBar"]) == (id == mixId),
                         "Only the long FX Mix wheel target should use the textured bar: " + id);
                 juce::Label* value = nullptr;
                 for (auto* child : slider->getChildren()) if (auto* label = dynamic_cast<juce::Label*>(child)) value = label;
-                require(value && slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
-                        "Missing value-above wheel target");
-                panel.revealParameter(id); dispatch(*value, *value);
+                require(value != nullptr, "Missing native numeric wheel target");
+                if (id == mixId) {
+                    const auto layout = slider->getLookAndFeel().getSliderLayout(*slider);
+                    const auto bar = ParameterKnob::Style::texturedBarBounds(layout.sliderBounds.toFloat()).toNearestInt();
+                    require(layout.sliderBounds.getHeight() == slider->getHeight() && bar.getHeight() == 25
+                                && bar.getY() >= 8 && bar.contains(layout.textBoxBounds)
+                                && value->getBounds() == layout.textBoxBounds,
+                            "FX Mix display-only caption must sit inside its 25px bar with a modulation lane");
+                    require(!slider->isTextBoxEditable() && !value->isEditable(),
+                            "FX Mix caption must not allow numeric entry");
+                } else require(slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
+                               "Rotary numeric wheel target must remain above the knob");
+                panel.revealParameter(id); dispatch(*value, id == mixId ? static_cast<juce::Component&>(*slider) : *value);
                 require(value->getCurrentTextEditor() == nullptr, "Hover wheel opened numeric entry");
                 auto* row = slider->getParentComponent();
                 juce::Label* title = nullptr;
                 for (auto* child : row->getChildren())
                     if (auto* label = dynamic_cast<juce::Label*>(child); label && label->isVisible()) title = label;
-                require(title && title->getY() >= slider->getBottom(), "Missing label-below wheel surface");
-                panel.revealParameter(id); dispatch(*title, *row);
+                if (id == mixId) {
+                    require(title == nullptr, "Compact FX Mix must hide its external title");
+
+                } else {
+                    require(title && title->getY() >= slider->getBottom(), "Missing label-below rotary wheel surface");
+                    panel.revealParameter(id); dispatch(*title, *row);
+                }
             }
             auto* toggle = dynamic_cast<juce::Button*>(find(find, panel, toggleId));
             require(toggle && toggle->getWidth() >= 24 && toggle->getWidth() <= 64

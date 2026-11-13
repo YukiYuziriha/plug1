@@ -442,8 +442,19 @@ inline void waveAndCrossover(bool neon) {
         menu.setSelectedId(type == NodeType::waveshaper ? 4 : 2, juce::sendNotificationSync);
         near(read(owner, choice), 3.0f, "choice raw parameter mapping");
         if (type == NodeType::waveshaper) {
-            enterValue(slider(panel, fxParameterId(1, "Mix")), 63);
-            near(read(owner, fxParameterId(1, "Mix")), 63, "waveshaper dry/wet attachment");
+            auto& mix = slider(panel, fxParameterId(1, "Mix"));
+            require(!mix.isTextBoxEditable(), "Waveshaper Mix caption must be display-only");
+            write(owner, fxParameterId(1, "Mix"), 50);
+            const auto track = mix.getLookAndFeel().getSliderLayout(mix).sliderBounds.toFloat();
+            const auto start = track.getCentre();
+            const auto end = start.translated(track.getWidth() * .26f, 0);
+            mix.mouseDown(mouse(mix, start, start));
+            near(read(owner, fxParameterId(1, "Mix")), 50, "Mix caption click jumped the value");
+            mix.mouseDrag(mouse(mix, end, start, true));
+            mix.mouseUp(mouse(mix, end, start, true, 0));
+            near(read(owner, fxParameterId(1, "Mix")), 63, "waveshaper dry/wet drag attachment", .2f);
+            require(find<juce::TextEditor>(mix, [](auto&) { return true; }) == nullptr,
+                    "Mix caption drag opened a numeric editor");
             screenshot(panel, neon ? "tone-wave-neon.png" : "tone-wave-device.png");
         } else {
             require(slider(panel, toneParameterId(1, "CrossoverHigh")).isEnabled(), "3-band high crossover disabled");

@@ -1,9 +1,29 @@
-# Vocal Stack 1.9.5
+# Vocal Stack 1.9.6
 
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.5 is built, tested, packaged and installed.**
+**1.9.6 is built, tested, packaged and installed.**
+The background grid's longest edge is now **80 cells (from 40)**: approximately
+half-sized pixels, denser multiscale fluid noise and grain, and stronger brightness
+variation. Theme tint remains muted (saturation cap **0.18**, tint blend **0.12**),
+not a vivid gradient. Long FX Mix bars use denser noise with **2 px texels (from 3)**.
+A normal-font **`Mix NN%`** caption sits inside the **25 px bar**, with reverse
+contrast over the filled portion; the row is **44 px (from 94)**. The caption is a
+nonclickable, mouse-passthrough label: clicking or dragging over the text adjusts
+Mix without numeric entry or keyboard focus. Numeric entry for all other knobs
+and voice controls is unchanged. No DSP or host parameter changes.
+
+The full Release build succeeded and **all 34 focused CTests passed in 161.06 s**,
+including **68 editor groups and rack UI**. Neon Reverb and Spectral Granular rack
+images and Neon/Device full editors were reviewed. Tracked CLAP/VST3 packages and
+`VocalStack-FX-Tabs.png` were refreshed; packaged CLAP smoke passed. Both formats
+reported **Installed and SHA256 verified** via `install-release.ps1`. Actual DAW
+checks remain unverified, and the long legacy DSP suite was not rerun. Release
+commit and push are pending. See the
+[1.9.6 validation record](docs/Release-1.9.6-Validation.md).
+
+**Historical 1.9.5 — built, tested, packaged and installed.**
 Long FX Mix controls now use flat **25 px textured bars**, with theme-colored,
 coarse mineral noise, an exact value marker and a separate upper modulation lane.
 Subtle, low-saturation fluid backgrounds extend across the editor and FX surfaces;
@@ -83,10 +103,9 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.5 installation succeeded:** `source/build/install-release.ps1` reported
-**Installed and SHA256 verified for both per-user CLAP and VST3** on retry.
-The initial installed-CLAP file lock is resolved. Packaging and packaged CLAP
-smoke are complete. Do not terminate Bitwig or overwrite a loaded plugin to force
+**1.9.6 installation succeeded:** `source/build/install-release.ps1` reported
+**Installed and SHA256 verified for both per-user CLAP and VST3**.
+Packaging and packaged CLAP smoke are complete. Do not terminate Bitwig or overwrite a loaded plugin to force
 replacement. Actual Bitwig listening/transport and native FPS remain unchecked.
 
 1. Extract the ZIP.
@@ -822,7 +841,18 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
-**1.9.5:** initial editor validation passed **68 groups in 90 s**; the subsequent
+**1.9.6:** full Release build succeeded; **all 34 focused CTests passed in
+161.06 s**, including **68 editor groups and rack UI**. Reviewed images cover
+Neon Reverb and Spectral Granular racks plus Neon/Device full editors. Release
+CLAP/VST3 packages and `VocalStack-FX-Tabs.png` were refreshed. Packaged CLAP smoke
+passed with **2087 parameters at original indices**, stereo **48 kHz**,
+mono-to-stereo **44.1 kHz** with **1344-sample latency**, and mono **96 kHz** with
+**2688-sample latency**. Both per-user formats were **Installed and SHA256
+verified**. Actual DAW checks remain unverified; the long legacy DSP suite was
+not rerun. Commit and push are pending. Package hashes and details are in the
+[1.9.6 validation record](docs/Release-1.9.6-Validation.md).
+
+**Historical 1.9.5:** initial editor validation passed **68 groups in 90 s**; the subsequent
 full Release build succeeded and all **34 focused CTests passed in 225.47 s**,
 including 68 editor groups. Independent static review found no blockers.
 Reviewed screenshots cover Neon Reverb rack, Spectral Granular, and full editors

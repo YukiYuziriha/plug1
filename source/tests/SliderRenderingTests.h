@@ -202,20 +202,23 @@ inline void controlModes() {
                 toneUiTests::require(slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
                     "FX numeric value must be above its control");
                 const auto layout = slider->getLookAndFeel().getSliderLayout(*slider);
+                const bool merged = bool(slider->getProperties()["vocalstackTexturedBar"]);
+                const auto bar = ParameterKnob::Style::texturedBarBounds(layout.sliderBounds.toFloat()).toNearestInt();
                 toneUiTests::require(!layout.textBoxBounds.isEmpty()
-                        && layout.textBoxBounds.getBottom() <= layout.sliderBounds.getY(),
-                    "FX value overlaps its slider");
+                        && (merged ? bar.contains(layout.textBoxBounds)
+                                   : layout.textBoxBounds.getBottom() <= layout.sliderBounds.getY()),
+                    "FX value must be inside Mix or above its rotary control");
                 auto* row = slider->getParentComponent();
                 auto* title = toneUiTests::find<juce::Label>(*row, [&](auto& label) {
                     return label.getParentComponent() == row && label.isVisible();
                 });
-                toneUiTests::require(title && title->getY() >= slider->getBottom()
-                        && row->getLocalBounds().contains(title->getBounds()),
-                    "FX parameter title must be below, without clipping");
-                                    auto* value = toneUiTests::find<juce::Label>(*slider, [](auto&) { return true; });
-                                    toneUiTests::require(value && std::abs(value->getFont().getHeight() - ParameterKnob::controlFontSize) < .01f
-                                            && std::abs(title->getFont().getHeight() - value->getFont().getHeight()) < .01f,
-                                        "FX names and values must share the intermediate 12.5px font size");
+                toneUiTests::require(merged ? title == nullptr : (title && title->getY() >= slider->getBottom()
+                        && row->getLocalBounds().contains(title->getBounds())),
+                    "Only rotary FX controls should have an external caption");
+                auto* value = toneUiTests::find<juce::Label>(*slider, [](auto&) { return true; });
+                toneUiTests::require(value && std::abs(value->getFont().getHeight() - ParameterKnob::controlFontSize) < .01f
+                        && (merged || std::abs(title->getFont().getHeight() - value->getFont().getHeight()) < .01f),
+                    "FX text must retain its consistent intermediate 12.5px font size");
             }
             if (auto* button = dynamic_cast<juce::Button*>(&component);
                 button && button->isVisible() && button->getComponentID().startsWith("fx1")) {
@@ -256,29 +259,31 @@ inline void texturedFxBars() {
     for (int theme : {0, 1, 2}) for (int width : {190, 340, 800}) {
         ParameterKnob control(*owner, "fx1Mix", "Mix", "%");
         control.getProperties().set(vocalstackThemeProperty, theme);
-        control.setLinear(true); control.setSize(width, 94); control.setNeon(theme == 1);
+        control.setLinear(true); control.setSize(width, 44); control.setNeon(theme == 1);
         auto& slider = control.slider;
         toneUiTests::require(bool(slider.getProperties()["vocalstackTexturedBar"]), "FX Mix did not opt into its textured bar");
         const auto layout = slider.getLookAndFeel().getSliderLayout(slider);
-        const auto bar = ParameterKnob::Style::texturedBarBounds(layout.sliderBounds.toFloat());
+        const auto bar = ParameterKnob::Style::texturedBarBounds(layout.sliderBounds.toFloat()).toNearestInt().toFloat();
         toneUiTests::require(std::abs(bar.getHeight() - 25.f) < .01f
-            && bar.getY() - 7 >= layout.textBoxBounds.getBottom(),
-            "25px FX bar or its modulation lane overlaps numeric text");
+            && bar.getY() - 7 >= 0 && bar.toNearestInt().contains(layout.textBoxBounds),
+            "25px FX bar must contain its caption and keep modulation above");
         slider.setValue(50, juce::dontSendNotification);
         const auto baseline = render(slider);
         toneUiTests::require(identical(baseline, render(slider)), "Procedural slider texture flickers between repaints");
         std::set<juce::uint32> shades;
         const auto sample = bar.toNearestInt().withTrimmedLeft(8).withTrimmedRight(int(bar.getWidth() * .6f));
         for (int y = sample.getY() + 2; y < sample.getBottom() - 2; ++y)
-            for (int x = sample.getX(); x < sample.getRight(); ++x) shades.insert(baseline.getPixelAt(x, y).getARGB());
+            for (int x = sample.getX(); x < sample.getRight(); ++x)
+                            if (!layout.textBoxBounds.contains(x, y)) shades.insert(baseline.getPixelAt(x, y).getARGB());
         toneUiTests::require(shades.size() >= 2 && shades.size() <= 6,
             "FX texture must have a small blocky palette, not a gradient or flat fill");
         slider.setValue(80, juce::dontSendNotification);
         const auto extended = render(slider);
         for (int y = sample.getY() + 2; y < sample.getBottom() - 2; ++y)
             for (int x = sample.getX(); x < sample.getRight(); ++x)
-                toneUiTests::require(baseline.getPixelAt(x, y) == extended.getPixelAt(x, y),
-                    "Texture swims/rescales when the value changes");
+                if (!layout.textBoxBounds.contains(x, y))
+                    toneUiTests::require(baseline.getPixelAt(x, y) == extended.getPixelAt(x, y),
+                        "Texture swims/rescales when the value changes");
         slider.setValue(50, juce::dontSendNotification);
         control.getProperties().set(vocalstackAnimationTimeOverrideProperty, 4.0);
         const auto animated = render(slider);

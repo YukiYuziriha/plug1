@@ -59,12 +59,16 @@ inline void checkContent(ToneEffectPanel& panel) {
             ui::require(knob->getX() >= controlX, "Wide Tone control escaped its right-hand group");
             const bool linear = knob->slider.getSliderStyle() == juce::Slider::LinearHorizontal;
             if (linear) {
-                ui::require(knob->getWidth() == controlWidth && knob->getHeight() == 94,
+                ui::require(knob->getWidth() == controlWidth && knob->getHeight() == 44,
                             "Mix must be a standalone horizontal slider row");
                 ui::require(bool(knob->slider.getProperties()["vocalstackTexturedBar"]),
                             "Tone Mix must opt into the textured FX bar");
-                ui::require(knob->slider.getHeight() - knob->slider.getTextBoxHeight() >= 8 + 25,
+                const auto layout = knob->slider.getLookAndFeel().getSliderLayout(knob->slider);
+                const auto track = ParameterKnob::Style::texturedBarBounds(layout.sliderBounds.toFloat());
+                ui::require(layout.sliderBounds.getY() == 0 && track.getY() >= 8 && track.getHeight() == 25,
                             "Tone Mix clips its modulation lane or 25px track");
+                ui::require(layout.textBoxBounds.intersects(track.toNearestInt()),
+                            "Tone Mix numeric entry must overlay its track");
             } else {
                 ui::require(knob->getWidth() == 68 && knob->getHeight() == 100,
                             "Responsive knob must retain its compact fixed size");
@@ -225,9 +229,9 @@ inline void passiveGraphWheel() {
     juce::Viewport outer;
     outer.setBounds(0, 0, 220, 240);
     outer.setScrollBarsShown(true, false);
-    body.setSize(204, panel.preferredContentHeight(204) + 104);
+    body.setSize(204, panel.preferredContentHeight(204) + 54);
     body.addAndMakeVisible(panel);
-    panel.setBounds(0, 104, 204, panel.preferredContentHeight(204));
+    panel.setBounds(0, 54, 204, panel.preferredContentHeight(204));
     outer.setViewedComponent(&body, false);
     {
         hoverWheelRegressionTests::ParameterChanges changes(*owner);

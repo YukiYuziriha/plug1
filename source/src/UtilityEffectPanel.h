@@ -125,11 +125,14 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         void resized() override {
             auto b = getLocalBounds().reduced(2, 1);
             label.setJustificationType(juce::Justification::centred);
+            const bool textured = slider.getSliderStyle() == juce::Slider::LinearHorizontal
+                && bool(slider.getProperties()["vocalstackTexturedBar"]);
+            label.setVisible(!toggle.isVisible() && !textured);
             if (combo.isVisible()) {
                 label.setBounds(b.removeFromTop(17));
                 combo.setBounds(b.withHeight(24));
             } else {
-                label.setBounds(b.removeFromBottom(28));
+                if (!textured) label.setBounds(b.removeFromBottom(28));
                 slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, juce::jmin(76, b.getWidth()), 21);
                 slider.setBounds(b);
             }
@@ -623,8 +626,8 @@ public:
             if (row->combo.isVisible() || (row->slider.isVisible()
                             && row->slider.getSliderStyle() == juce::Slider::LinearHorizontal)) {
                 flush();
-                // Mix reserves value (21), modulation lane (8), track (25), caption (28), and padding.
-                const int height = row->combo.isVisible() ? 46 : 94;
+                // Mix's editable value and name are overlaid inside the track.
+                const int height = row->combo.isVisible() ? 46 : 44;
                 row->setBounds(controlX, y, controlWidth, height); y += height + knobGap;
             } else {
                 const bool toggle = row->toggle.isVisible();
