@@ -18,10 +18,12 @@
 namespace vocalstack {
 
 struct UtilityPanelTests;
+struct UtilityVisualUpdateTests;
 
 // Presentation only: models use effective targets, edits always address host bases.
 class UtilityEffectPanel final : public juce::Component, private juce::Timer {
     friend struct UtilityPanelTests;
+    friend struct UtilityVisualUpdateTests;
     class EditSlider final : public ModulationSlider {
     public:
         std::function<void()> beginEdit, endEdit;
@@ -189,7 +191,13 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                     targets[i].parameter = monitorOwner.parameters.getParameter(utilityParameterId(monitorSlot, i));
             onTarget.parameter = monitorOwner.parameters.getParameter(fxParameterId(monitorSlot, "On"));
             mixTarget.parameter = monitorOwner.parameters.getParameter(fxParameterId(monitorSlot, "Mix"));
-            setTooltip("Filter: drag horizontally for cutoff, vertically for resonance. Curve uses effective modulation targets, not live smoothed DSP state. PRE/POST FFT is stereo power, Hann-normalized peak dBFS; it is not the response curve. Synth curves are cached, finite-impulse small-signal estimates, not exact nonlinear transfer functions. Comb delay is frozen.");
+            setTooltip(panel.kind == UtilityKind::gate
+                ? "Measured 4-second history: oldest left, newest right. Input (secondary) and final output (text) stereo RMS use fixed -72..0 dBFS; threshold is the muted line. Actual DSP GR (accent) uses the right 0..36 dB scale, increasing downward; values beyond either guide are clipped visually, not in audio. The existing GR meter retains its full 0..96 dB range. No history is synthesized when telemetry is absent."
+                : panel.kind == UtilityKind::stereo
+                ? "Final output L/R RMS activity, fixed -72..0 dBFS. Correlation is normalized L/R cross-power of this copied audio window: +1 correlated, -1 anti-phase. Silence or one silent channel is undefined, not mono. PRE/POST stereo RMS below is secondary; these meters do not measure stereo width."
+                : panel.kind == UtilityKind::gain
+                ? "Measured stereo input and final output RMS. Utility Gain spans exact mute to +24 dB; global Output range is unchanged."
+                : "Filter: drag horizontally for cutoff, vertically for resonance. Curve uses effective modulation targets, not live smoothed DSP state. PRE/POST FFT is stereo power, Hann-normalized peak dBFS; it is not the response curve. Synth curves are cached, finite-impulse small-signal estimates, not exact nonlinear transfer functions. Comb delay is frozen.");
         }
         ~Visual() override {
             if (curveScheduler) curveScheduler->cancel(curveTicket);
@@ -217,7 +225,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         void paint(juce::Graphics& g) override {
             const auto c = themePalette(*this, neon);
             g.fillAll(c.inset); g.setFont(juce::Font(pixelFontOptions(10.f)));
-            if (!panel.isFilter()) { paintMeters(g, c); return; }
+            if (!panel.isFilter()) { paintBackground(g); paintMeters(g, c); return; }
             auto b = getLocalBounds().reduced(7);
             const double rate = responseSampleRate();
             const bool synth = panel.kind == UtilityKind::synthFilter;
@@ -502,10 +510,79 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             cutoff->endChangeGesture(); resonance->endChangeGesture(); dragging = false;
             cutoff = resonance = nullptr; panel.end();
         }
+        void paintGateHistory(juce::Graphics& g, juce::Rectangle<int> bounds, const ThemePalette& c) {
+            const auto* history = utility_visual_detail::history(frame);
+            g.setColour(c.muted);
+            g.drawText("4 s | IN / OUT RMS dBFS | threshold | GR dB", bounds.removeFromTop(16), juce::Justification::centredLeft);
+            auto axis = bounds.removeFromBottom(14);
+            g.drawText("-4 s", axis, juce::Justification::centredLeft);
+            g.drawText("NOW", axis, juce::Justification::centredRight);
+            const auto plot = bounds.withTrimmedLeft(27).withTrimmedRight(28).toFloat();
+            const auto levelY = [&](float db) { return plot.getBottom() - plot.getHeight() * std::clamp((db + 72.f) / 72.f, 0.f, 1.f); };
+            const auto grY = [&](float db) { return plot.getY() + plot.getHeight() * std::clamp(db / 36.f, 0.f, 1.f); };
+            for (int db : {0, -24, -48, -72}) {
+                const float y = levelY(float(db));
+                g.setColour(c.border.withAlpha(.5f)); g.drawHorizontalLine(int(y), plot.getX(), plot.getRight());
+                g.setColour(c.muted); g.drawText(juce::String(db), int(plot.getX()) - 27, int(y) - 6, 24, 12, juce::Justification::centredRight);
+            }
+            for (int db : {0, 18, 36}) {
+                g.setColour(c.accent); g.drawText(juce::String(db), int(plot.getRight()) + 3, int(grY(float(db))) - 6, 25, 12, juce::Justification::centredLeft);
+            }
+            if (!hasLiveFrame() || !history || history->used == 0) {
+                g.setColour(c.muted); g.drawText("Waiting for measured history", plot.toNearestInt(), juce::Justification::centred);
+                return;
+            }
+            const juce::Graphics::ScopedSaveState clip(g);
+            g.reduceClipRegion(plot.toNearestInt());
+            std::array<juce::Path, 4> traces;
+            const size_t used = std::min(history->used, history->capacity);
+            for (size_t i = history->capacity - used; i < history->capacity; ++i) {
+                const auto& bin = history->bins[i];
+                const float x = plot.getRight() - float(history->capacity - 1 - i) * float(history->binSeconds / 4.) * plot.getWidth();
+                const std::array<float, 4> ys{{levelY(bin.inputDb), levelY(bin.outputDb), levelY(bin.thresholdDb), grY(bin.gainReductionDb)}};
+                for (size_t trace = 0; trace < traces.size(); ++trace) {
+                    if (i == history->capacity - used) traces[trace].startNewSubPath(x, ys[trace]);
+                    else traces[trace].lineTo(x, ys[trace]);
+                }
+            }
+            const std::array<juce::Colour, 4> colours{{c.secondary, c.text, c.muted, c.accent}};
+            for (size_t i = 0; i < traces.size(); ++i) {
+                // Same fine connected-path compositor primitives as ReactiveMaterial;
+                // no enlarged decorative raster, interpolation or synthetic audio.
+                g.setColour(colours[i].withAlpha(opacity * (i == 2 ? .55f : .9f)));
+                g.strokePath(traces[i], juce::PathStrokeType(1.f));
+            }
+        }
+        void paintStereo(juce::Graphics& g, juce::Rectangle<int>& b, const ThemePalette& c) {
+            const auto activity = UtilityStereoActivity::measure(frame.output);
+            g.setColour(c.text); g.drawText("OUTPUT L / R ACTIVITY", b.removeFromTop(16), juce::Justification::centredLeft);
+            for (size_t channel = 0; channel < 2; ++channel) {
+                auto row = b.removeFromTop(19);
+                g.setColour(c.muted); g.drawText(channel == 0 ? "L" : "R", row.removeFromLeft(18), juce::Justification::centredLeft);
+                const float db = juce::Decibels::gainToDecibels(activity.rms[channel], -72.f);
+                g.drawText(hasLiveFrame() ? juce::String(db, 1) + " dBFS" : "--", row.removeFromRight(76), juce::Justification::centredRight);
+                auto bar = row.toFloat().reduced(2, 6);
+                g.setColour(c.border); g.fillRect(bar);
+                g.setColour((channel == 0 ? c.secondary : c.accent).withAlpha(opacity));
+                if (hasLiveFrame()) g.fillRect(bar.withWidth(bar.getWidth() * std::clamp((db + 72) / 72, 0.f, 1.f)));
+            }
+            g.setColour(c.text);
+            g.drawText(hasLiveFrame() && activity.correlationValid ? "L/R correlation " + juce::String(activity.correlation, 2) : "L/R correlation -- (silent channel / no data)", b.removeFromTop(17), juce::Justification::centredLeft);
+            auto scale = b.removeFromTop(7).toFloat().reduced(4, 0);
+            g.setColour(c.border); g.fillRect(scale.withHeight(1));
+            if (hasLiveFrame() && activity.correlationValid) {
+                const float x = scale.getX() + (activity.correlation + 1) * .5f * scale.getWidth();
+                g.setColour(c.accent); g.fillRect(x - 1, scale.getY(), 2.f, 6.f);
+            }
+            g.setColour(c.muted); auto labels = b.removeFromTop(14);
+            g.drawText("-1 anti-phase", labels, juce::Justification::centredLeft);
+            g.drawText("+1 mono", labels, juce::Justification::centredRight);
+        }
         void paintMeters(juce::Graphics& g, const ThemePalette& c) {
             auto b = getLocalBounds().reduced(8);
+            if (panel.kind == UtilityKind::stereo) paintStereo(g, b, c);
             g.setColour(c.text);
-            g.drawText(hasLiveFrame() ? "LIVE STEREO RMS | pre / post" : "No live pre / post monitor", b.removeFromTop(18), juce::Justification::centredLeft);
+            g.drawText(hasLiveFrame() ? "STEREO RMS | pre / post" : "No live pre / post monitor", b.removeFromTop(18), juce::Justification::centredLeft);
             for (int post = 0; post < 2; ++post) {
                 double power = 0;
                 if (hasLiveFrame()) for (const auto& channel : post ? frame.output : frame.input)
@@ -521,10 +598,11 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                 g.fillRect(bar.withWidth(bar.getWidth() * juce::jlimit(0.f, 1.f, (db + 72) / 72)));
             }
             if (panel.kind == UtilityKind::gate) {
-                const float reduction = std::max(0.f, monitorOwner.getCreativeGainReduction(monitorSlot));
+                const float reduction = hasLiveFrame() ? std::max(0.f, monitorOwner.getCreativeGainReduction(monitorSlot)) : 0.f;
                 g.setColour(c.accent); g.drawText("Actual gate GR: " + juce::String(reduction, 1) + " dB", b.removeFromTop(20), juce::Justification::centredLeft);
                 auto bar = b.removeFromTop(5).toFloat(); g.setColour(c.border); g.fillRect(bar);
                 g.setColour(c.accent); g.fillRect(bar.withWidth(bar.getWidth() * juce::jlimit(0.f, 1.f, reduction / 96)));
+                b.removeFromTop(5); paintGateHistory(g, b, c);
             }
         }
         UtilityEffectPanel& panel;
@@ -554,7 +632,21 @@ public:
         overview.setText(description(kind), juce::dontSendNotification);
         overview.setFont(juce::Font(pixelFontOptions(11.5f))); overview.setJustificationType(juce::Justification::topLeft);
         overview.setInterceptsMouseClicks(false, false); content.addAndMakeVisible(overview);
-        addRow(fxParameterId(slot, "Mix"), "Dry / Wet", "%", false, false, utilityParameterCount);
+        addRow(fxParameterId(slot, "Mix"), kind == UtilityKind::gain ? "Wet (legacy)" : "Dry / Wet", "%", false, false, utilityParameterCount);
+        mixRow = rows.back().get();
+        if (kind == UtilityKind::gain) {
+            const juce::String help = "Legacy dry/wet blend retained from this state or automation. 100% Wet is normal Gain operation; hidden at 100%. No recalled value is reset.";
+            mixRow->slider.setTooltip(help);
+        }
+        if (kind == UtilityKind::stereo) {
+            monoAudition.setButtonText("Mono Audition"); monoAudition.setName("Mono Audition");
+            monoAudition.setComponentID("utilityMonoAudition");
+            monoAudition.setModulationOwner(owner); monoAudition.setClickingTogglesState(true);
+            monoAudition.setEnabled(false);
+            monoAudition.setTooltip("Unavailable until the persisted per-slot Mono Audition parameter is connected. No width or Mix values are overwritten.");
+            monoAudition.onClick = [this] { changed(); };
+            content.addAndMakeVisible(monoAudition);
+        }
         for (size_t i = 0; i < utilityParameterCount; ++i) {
             const auto& d = utilityParameters[i];
             if (d.kind == kind) addRow(utilityParameterId(slot, i), d.label, d.unit, d.discrete,
@@ -571,6 +663,15 @@ public:
     }
     ~UtilityEffectPanel() override { stopTimer(); viewport.setViewedComponent(nullptr, false); }
     bool responseReady() const { return visual.responseReady(); }
+    // Coordinator supplies an appended host parameter; no unpersisted UI latch.
+    bool bindMonoAuditionParameter(const juce::String& parameterId) {
+        if (kind != UtilityKind::stereo || !owner.parameters.getParameter(parameterId)) return false;
+        monoLink.reset();
+        monoAudition.setComponentID(parameterId); monoAudition.setEnabled(true);
+        monoAudition.setTooltip("Audition the final slot output as (L + R) / 2 in both channels, after balance, polarity and Mix. Toggle off to hear stereo again. Width, balance, polarity and Mix settings are preserved. Anti-phase content may cancel.");
+        monoLink = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner.parameters, parameterId, monoAudition);
+        return true;
+    }
     std::function<void(const juce::String&)> onBeginEdit;
     std::function<void()> onEndEdit, onValueChanged;
     static juce::String effectName(UtilityKind kind) {
@@ -585,8 +686,8 @@ public:
     }
     static juce::String description(UtilityKind kind) {
         switch (kind) {
-            case UtilityKind::gain: return "Level trim. The minimum is exact mute (-infinity), not -120 dB. Dry / Wet blends with the original signal.";
-            case UtilityKind::stereo: return "Mid/side width: 0% mono, 100% unchanged, 200% double side. Balance attenuates the opposite side; swap and polarity follow.";
+            case UtilityKind::gain: return "Level trim: mute (-infinity) to +24 dB. Wet is normally 100%; recalled or automated legacy blends remain editable, never reset.";
+            case UtilityKind::stereo: return "Output L/R RMS and correlation, not a width estimate. +1 correlated, 0 uncorrelated, -1 anti-phase. Width 0% removes side before balance/polarity; Mono Audition folds the final output without changing those settings.";
             case UtilityKind::gate: return "Stereo-linked downward expansion with opening attack, hold and closing release. Meter shows actual DSP gain reduction.";
             case UtilityKind::xpFilter: return "Cascaded state-variable filter. Response is the settled wet model; drive is a local small-signal approximation.";
             case UtilityKind::synthFilter: return "13 filter modes: digital, ladder, dirty, diode, analog, comb and four-formant morph. Cached finite-impulse estimate; nonlinear and moving-delay responses are approximate.";
@@ -597,6 +698,11 @@ public:
         neon = value; visual.setNeon(value);
         overview.setColour(juce::Label::textColourId, themePalette(*this, neon).muted);
         for (auto& row : rows) row->setNeon(value);
+        const auto c = themePalette(*this, neon);
+        monoAudition.setColour(juce::TextButton::buttonColourId, c.inset);
+        monoAudition.setColour(juce::TextButton::buttonOnColourId, c.accent);
+        monoAudition.setColour(juce::TextButton::textColourOffId, c.text);
+        monoAudition.setColour(juce::TextButton::textColourOnId, c.background);
         repaint();
     }
     void revealParameter(const juce::String& id) {
@@ -616,7 +722,7 @@ public:
         const int controlX = wide ? 8 + visualWidth + 6 : 8;
         const int controlWidth = wide ? inner - visualWidth - 6 : inner;
         int y = 8;
-        const int visualHeight = isFilter() ? 238 : kind == UtilityKind::gate ? 110 : 72;
+        const int visualHeight = isFilter() ? 238 : kind == UtilityKind::gate ? 292 : kind == UtilityKind::stereo ? 188 : 84;
         visual.setBounds(8, y, visualWidth, visualHeight); y += visualHeight + 6;
         const int overviewHeight = juce::jmax(54, int(std::ceil(
             juce::GlyphArrangement::getStringWidth(overview.getFont(), overview.getText())
@@ -624,12 +730,14 @@ public:
         overview.setBounds(8, y, visualWidth, overviewHeight); y += overviewHeight + 6;
         const int visualBottom = y;
         if (wide) y = 8;
+        if (kind == UtilityKind::stereo) { monoAudition.setBounds(controlX, y, controlWidth, 28); y += 34; }
         constexpr int knobWidth = 68, knobHeight = 100, knobGap = 2;
         int x = controlX, rowHeight = 0;
         const auto flush = [&] {
             if (rowHeight != 0) { y += rowHeight + knobGap; x = controlX; rowHeight = 0; }
         };
         for (const auto& row : rows) {
+            if (!row->isVisible()) continue;
             if (row->combo.isVisible() || (row->slider.isVisible()
                             && row->slider.getSliderStyle() == juce::Slider::LinearHorizontal)) {
                 flush();
@@ -679,7 +787,15 @@ private:
             begin(id); p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1(value)); p->endChangeGesture(); changed(); end();
         }
     }
-    void timerCallback() override { for (auto& row : rows) row->refresh(); visual.refresh(); }
+    void timerCallback() override {
+        for (auto& row : rows) row->refresh();
+        if (kind == UtilityKind::gain && mixRow && !editing) {
+            const bool showLegacyWet = mixRow->slider.getValue() < 99.9999
+                || toneui::visualParameter(owner, mixRow->id) < 99.9999f;
+            if (mixRow->isVisible() != showLegacyWet) { mixRow->setVisible(showLegacyWet); resized(); }
+        }
+        visual.refresh();
+    }
     Processor& owner;
     size_t slot;
     UtilityKind kind;
@@ -690,6 +806,9 @@ private:
     PassiveViewport viewport;
     juce::Label overview;
     std::vector<std::unique_ptr<Row>> rows;
+    Row* mixRow = nullptr;
+    modulationui::Button monoAudition;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monoLink;
 };
 
 } // namespace vocalstack

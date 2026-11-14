@@ -10,6 +10,7 @@
 #include <limits>
 #include <vector>
 #include "VitalFilterDSP.h"
+#include "UtilityTelemetry.h"
 
 namespace vocalstack {
 enum class UtilityKind { gain, stereo, gate, xpFilter, synthFilter };
@@ -166,7 +167,7 @@ public:
     void reset() noexcept {
         clearFilters();
         initialized_ = false; reduction_ = 0; hold_ = 0;
-        gain_ = 1; last_ = {}; bridge_ = {}; bridgeAmount_ = 0; mode_ = -1;
+        gain_ = 1; monoAmount_ = 0; last_ = {}; bridge_ = {}; bridgeAmount_ = 0; mode_ = -1;
     }
     std::array<float, 2> process(float left, float right, const UtilitySettings& settings) noexcept {
         using namespace utility_detail;
@@ -229,11 +230,28 @@ public:
             bridgeAmount_ *= bridgeStep_;
             if (bridgeAmount_ < 1.e-12) bridgeAmount_ = 0;
         }
+
         initialized_ = true;
         last_ = {{safe(y[0]), safe(y[1])}};
         return {{output(last_[0]), output(last_[1])}};
     }
     float gainReductionDb() const noexcept { return kind_ == UtilityKind::gate ? static_cast<float>(reduction_) : 0.f; }
+    // AUDIO thread only: small bounded value copy, never a GUI getter.
+    UtilityDynamicsSnapshot dynamicsSnapshot() const noexcept {
+        return {initialized_ && kind_ == UtilityKind::gate
+                    ? static_cast<float>(get(P::gateThreshold)) : -40.f, gainReductionDb()};
+    }
+    // AUDIO thread integration hook: call once per sample AFTER slot Mix,
+    // before final output telemetry. Persist enabled per slot; bypass passes false.
+    // Width, balance, polarity and Mix remain untouched; no hidden restore state.
+    std::array<float, 2> applyMonoAudition(std::array<float, 2> postMix, bool enabled) noexcept {
+        if (!ready_ || kind_ != UtilityKind::stereo) return postMix;
+        monoAmount_ += step_ * ((enabled ? 1. : 0.) - monoAmount_);
+        const double mid = (double(postMix[0]) + double(postMix[1])) * .5;
+        for (auto& channel : postMix)
+            channel = utility_detail::output(channel + monoAmount_ * (mid - channel));
+        return postMix;
+    }
 
     // UI/worker ONLY, allocating O(N) storage and doing O(N log N) work. Returns
     // N/2+1 linear magnitudes at bin * sampleRate/N (DC through Nyquist).
@@ -320,7 +338,7 @@ private:
     std::array<double, 3> switches_{};
     std::array<std::array<utility_detail::SVF, 3>, 2> svf_{};
     vital_filter::Filter vital_;
-    double reduction_ = 0, hold_ = 0, gain_ = 1, bridgeAmount_ = 0;
+    double reduction_ = 0, hold_ = 0, gain_ = 1, bridgeAmount_ = 0, monoAmount_ = 0;
     std::array<double, 2> last_{}, bridge_{};
 };
 } // namespace vocalstack

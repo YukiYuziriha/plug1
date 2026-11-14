@@ -190,7 +190,7 @@ void resizeTabs() {
                    "Stack vertical scrollbar follows overflow");
             auto& rack = component<vocalstack::MainBusFxRackPanel>(*editor);
             auto& stack = component<vocalstack::DoublerPanel>(*editor);
-            expect(rack.getBounds() == juce::Rectangle<int>(18, 344, 904, 340)
+            expect(rack.getBounds() == juce::Rectangle<int>(18, 344, 904, vocalstack::MainBusFxRackPanel::preferredHeight)
                        && stack.getBounds() == juce::Rectangle<int>(18, vocalstack::editorLayout::stackPanelY, 904,
                                                                                        vocalstack::editorLayout::stackPanelHeight)
                        && canvas.getLocalBounds().contains(stack.getBounds())
@@ -422,24 +422,72 @@ void modulationInspector() {
 void peerClick(juce::Component& root, juce::Component& target, juce::Point<int> point) {
     auto* peer = root.getPeer();
     expect(peer != nullptr, "Mouse fixture needs a native peer");
+    // A native peer cannot receive clicks on logical children clipped by an
+    // ancestor viewport, even if the child's own isShowing() is true.
+    for (auto* parent = target.getParentComponent(); parent; parent = parent->getParentComponent()) {
+        if (auto* viewport = dynamic_cast<juce::Viewport*>(parent)) {
+            auto* content = viewport->getViewedComponent();
+            expect(content != nullptr, "Card click viewport has no content");
+            const auto inContent = content->getLocalPoint(&target, point);
+            if (!viewport->getViewArea().reduced(8).contains(inContent))
+                viewport->setViewPosition(inContent.x - viewport->getViewWidth() / 2,
+                                          inContent.y - viewport->getViewHeight() / 2);
+        }
+    }
     root.setAlwaysOnTop(true);
-        root.toFront(true);
-        const auto local = root.getLocalPoint(&target, point).toFloat();
-        expect(root.getComponentAt(local) == &target, "Card click fixture did not hit intended component");
-        const auto p = local * root.getDesktopScaleFactor();
+    root.toFront(true);
+    const auto local = root.getLocalPoint(&target, point).toFloat();
+    const auto p = peer->globalToLocal(root.localPointToGlobal(local));
+    struct Probe final : juce::MouseListener {
+        int downs = 0;
+        void mouseDown(const juce::MouseEvent&) override { ++downs; }
+    } probe;
+    target.addMouseListener(&probe, false);
+    std::cout << "COMPACT CLICK target=" << target.getComponentID() << " local=" << local.toString()
+              << " peer=" << p.toString() << " screen=" << peer->localToGlobal(p).toString()
+              << " componentScreen=" << root.localPointToGlobal(local).toString()
+              << " scale=" << root.getDesktopScaleFactor() << " contains=" << root.contains(local)
+              << " peerContains=" << peer->contains(p.toInt(), true)
+              << " modal=" << juce::Component::getNumCurrentlyModalComponents()
+              << " dragging=" << juce::Desktop::getInstance().getMainMouseSource().isDragging() << '\n';
+#if JUCE_WINDOWS
+    const auto screen = peer->localToGlobal(p).roundToInt();
+    const auto native = static_cast<HWND>(peer->getNativeHandle());
+    const auto windowAtPoint = WindowFromPoint(POINT{screen.x, screen.y});
+    RECT nativeBounds{}; GetWindowRect(native, &nativeBounds);
+    wchar_t windowClass[256]{}; GetClassNameW(windowAtPoint, windowClass, 256);
+    std::cout << "COMPACT WIN32 native=" << native << " hit=" << windowAtPoint
+              << " hitClass=" << juce::String(windowClass) << " visible=" << IsWindowVisible(native)
+              << " enabled=" << IsWindowEnabled(native) << " capture=" << GetCapture()
+              << " bounds=" << nativeBounds.left << ',' << nativeBounds.top << ',' << nativeBounds.right << ',' << nativeBounds.bottom << '\n';
+#endif
+    auto* hit = root.getComponentAt(local);
+    std::cout << "COMPACT HIT id=" << (hit ? hit->getComponentID() : "NULL")
+              << " name=" << (hit ? hit->getName() : "NULL") << " targetShowing=" << target.isShowing() << '\n';
+    target.removeMouseListener(&probe);
+    expect(hit == &target, "Card click fixture did not hit intended component");
+    expect(root.getLocalBounds().toFloat().contains(local) && root.contains(local)
+               && peer->contains(p.toInt(), true), "Card click must hit the visible native window, not a clipped/offscreen child");
+    target.addMouseListener(&probe, false);
     const auto now = juce::Time::currentTimeMillis();
     peer->handleMouseEvent(juce::MouseInputSource::mouse, p, {}, 1, 0, now);
     peer->handleMouseEvent(juce::MouseInputSource::mouse, p,
                           juce::ModifierKeys::leftButtonModifier, 1, 0, now + 1);
     peer->handleMouseEvent(juce::MouseInputSource::mouse, p, {}, 1, 0, now + 2);
+    std::cout << "COMPACT DISPATCH downs=" << probe.downs << " underMouse="
+              << (juce::Desktop::getInstance().getMainMouseSource().getComponentUnderMouse() == &target) << '\n';
+    target.removeMouseListener(&probe);
+    expect(probe.downs == 1, "Native peer did not dispatch exactly one real mouseDown to the card");
 }
 
 void compactCards() {
+    vocalstack::guiTestDisplay::enumerate();
     for (const bool neon : {false, true}) {
         std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
         Processor& owner = *ownerStorage; owner.setFlash(neon);
         std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
-        editor->addToDesktop(0); editor->setVisible(true);
+        editor->setSize(1280, 800);
+        vocalstack::guiTestDisplay::attach(*editor);
         auto& stack = component<vocalstack::DoublerPanel>(*editor);
         for (const auto* prefix : {"lead", "voice1", "voice2"}) {
             auto* card = ui::find<vocalstack::VoiceControls>(stack, [&](auto& c) {
@@ -480,7 +528,9 @@ void compactCards() {
                        "Voice inspector must retain four columns and two fixed 104px rows");
             }
         };
-        checkInspector(); editor->setSize(1480, 1600); checkInspector();
+        checkInspector();
+        editor->removeFromDesktop(); // Oversized layout assertion is offscreen.
+        editor->setSize(1480, 1600); checkInspector();
         expectPassiveControls(*editor);
     }
 }

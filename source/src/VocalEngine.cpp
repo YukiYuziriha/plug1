@@ -96,7 +96,7 @@ float VocalEngine::coefficient(double seconds) const {
     return static_cast<float>(-std::expm1(-1.0 / (rate * seconds)));
 }
 
-void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChannels, const Settings& settings) {
+void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChannels, const Settings& settings, int routingLatencyReserve) {
     if (!std::isfinite(sampleRate) || sampleRate <= 0 || sampleRate > std::numeric_limits<int>::max()
         || inputChannels < 1 || inputChannels > 2 || outputChannels < 1 || outputChannels > 2)
         throw std::invalid_argument("invalid engine sample rate or channel layout");
@@ -118,7 +118,7 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
         voice.delay.prepare(maxDoubleDelay + 2);
         voice.harmony.prepare(rate, latencySamples);
     }
-    for (auto* delays : {&dryDelay, &levelDelay})
+    for (auto* delays : {&dryDelay, &levelDelay, &auxiliaryDelay})
         for (auto& delay : *delays)
             delay.prepare(latencySamples + 2);
     for (size_t channel = 0; channel < 2; ++channel) {
@@ -143,7 +143,9 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     bodyStep = coefficient(0.045);
     articulationStep = coefficient(0.009);
     longStep = coefficient(3.0);
-    routing.prepare(rate);
+    routingReserve = std::clamp(routingLatencyReserve, 0, SpectralMorph::latencySamples);
+    for (auto& delay : rackDryDelay) delay.prepare(routingReserve + 2);
+    routing.prepare(rate, routingReserve);
     reset(settings);
 }
 
@@ -189,7 +191,7 @@ void VocalEngine::reset(const Settings& requested) {
         voice.random = voice.initialSeed;
         voice.time = voice.pitch = voice.tone = voice.remaining = 0;
     }
-    for (auto* delays : {&dryDelay, &levelDelay})
+    for (auto* delays : {&dryDelay, &levelDelay, &auxiliaryDelay, &rackDryDelay})
         for (auto& delay : *delays)
             delay.clear();
     articulationDelay.clear();
@@ -306,7 +308,8 @@ float VocalEngine::matchedGain(LevelMatch& state, float referencePower, float re
 }
 
 void VocalEngine::process(const float* const* input, float* const* output, int count,
-                          const Settings& settings, bool hostBypass) {
+                          const Settings& settings, bool hostBypass,
+                          const float* const* auxiliary, int auxiliaryChannels) {
     updateControls(settings, hostBypass);
     for (int offset = 0; offset < count;) {
         if (untilUpdate == 0) {
@@ -347,15 +350,16 @@ void VocalEngine::process(const float* const* input, float* const* output, int c
             untilUpdate = quantum;
         }
         const int chunk = std::min(untilUpdate, count - offset);
-        processChunk(input, output, offset, chunk);
+        processChunk(input, output, offset, chunk, auxiliary, auxiliaryChannels);
         untilUpdate -= chunk;
         offset += chunk;
     }
 }
 
-void VocalEngine::processChunk(const float* const* input, float* const* output, int offset, int count) {
+void VocalEngine::processChunk(const float* const* input, float* const* output, int offset, int count,
+                               const float* const* auxiliary, int auxiliaryChannels) {
     // Capture the whole chunk first because a host may use the same buffer for input and output.
-    std::array<Buffer, 2> alignedDry{}, alignedLevel{};
+    std::array<Buffer, 2> alignedDry{}, alignedLevel{}, alignedAuxiliary{};
     for (int i = 0; i < count; ++i) {
         const float levelTarget = targets.levelOn ? targets.level : 0.0f;
         controls.level = mix(controls.level, levelTarget, parameterStep);
@@ -372,6 +376,12 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
             levelDelay[channel].push(leadInput[channel][i]);
             alignedDry[channel][i] = dryDelay[channel].read(static_cast<float>(latencySamples));
             alignedLevel[channel][i] = levelDelay[channel].read(static_cast<float>(latencySamples));
+        }
+        for (int channel = 0; channel < 2; ++channel) {
+            const float sample = auxiliary && auxiliaryChannels > 0
+                ? sampleAt(auxiliary[auxiliaryChannels == 1 ? 0 : channel], offset + i) : 0.f;
+            auxiliaryDelay[channel].push(sample);
+            alignedAuxiliary[channel][i] = auxiliaryDelay[channel].read(float(latencySamples));
         }
         const float mid = 0.5f * (left + right);
         monoInput[i] = mid * multiplier;
@@ -454,6 +464,7 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
     // rebuild or module reset is needed for live FX automation.
     routingControls.fxSettings = targets.fxSettings;
     routingControls.fxAutomation = targets.fxAutomation;
+    routingControls.monitorWetEnabled = !targets.bypass;
     routingControls.localMix = targets.localMix;
     routingControls.localMixAutomation = targets.localMixAutomation;
     routingControls.tempoBpm = targets.tempoBpm;
@@ -503,6 +514,8 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         const float timeStep = (6.0f + 5.0f * controls.human) / static_cast<float>(rate);
         const auto voiceTargets = targets.advanced ? targets.voiceSettings : basicVoiceSettings(controls.human);
         RoutingSources sources;
+        sources.sidechainAvailable = auxiliary && auxiliaryChannels > 0;
+        sources.sidechain = {alignedAuxiliary[0][i], alignedAuxiliary[1][i]};
         const float timeStepLead = (6.0f + 5.0f * controls.human) / float(rate);
         leadMotion.time = mix(leadMotion.time, leadMotion.targetTime, std::min(1.0f, timeStepLead * lv.rateHz));
         const float leadDelayTarget = std::clamp(float(rate * 0.001) *
@@ -568,18 +581,23 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
 
         routingControls.mix = controls.doubles;
         const auto routed = routing.process(sources, routingControls);
+        std::array<float, 2> finalDry{};
+        for (int c = 0; c < 2; ++c) {
+            rackDryDelay[c].push(alignedDry[c == 0 ? 0 : rightChannel][i]);
+            finalDry[c] = rackDryDelay[c].read(float(routingReserve));
+        }
         const float left = routed.left, right = routed.right;
         globalMix = mix(globalMix, targets.globalMix, parameterStep);
         if (std::abs(globalMix - targets.globalMix) < 0.00001f) globalMix = targets.globalMix;
-        const float wetLeft = globalMix == 0 ? alignedDry[0][i]
-            : globalMix == 1 ? left * outputGain : mix(alignedDry[0][i], left * outputGain, globalMix);
-        const float wetRight = globalMix == 0 ? alignedDry[rightChannel][i]
-            : globalMix == 1 ? right * outputGain : mix(alignedDry[rightChannel][i], right * outputGain, globalMix);
+        const float wetLeft = globalMix == 0 ? finalDry[0]
+            : globalMix == 1 ? left * outputGain : mix(finalDry[0], left * outputGain, globalMix);
+        const float wetRight = globalMix == 0 ? finalDry[1]
+            : globalMix == 1 ? right * outputGain : mix(finalDry[1], right * outputGain, globalMix);
         // Whole-plugin bypass remains untouched, independent of saved global Mix.
-        const float finalLeft = controls.bypass == 1.0f ? alignedDry[0][i]
-            : mix(wetLeft, alignedDry[0][i], controls.bypass);
-        const float finalRight = controls.bypass == 1.0f ? alignedDry[rightChannel][i]
-            : mix(wetRight, alignedDry[rightChannel][i], controls.bypass);
+        const float finalLeft = controls.bypass == 1.0f ? finalDry[0]
+            : mix(wetLeft, finalDry[0], controls.bypass);
+        const float finalRight = controls.bypass == 1.0f ? finalDry[1]
+            : mix(wetRight, finalDry[1], controls.bypass);
         if (outChannels == 1) {
             const float result = 0.5f * (finalLeft + finalRight);
             output[0][offset + i] = result;

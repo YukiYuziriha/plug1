@@ -82,6 +82,7 @@ juce::String eqBandParameterId(size_t slot, size_t band, const char* field) {
 Processor::Processor()
     : AudioProcessor(BusesProperties()
         .withInput("Vocal In", juce::AudioChannelSet::stereo(), true)
+                .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)
         .withOutput("Stack Out", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, stateType, makeParameters()) {
     engine.setFxMonitor(&fxMonitor);
@@ -304,6 +305,17 @@ State::ParameterLayout Processor::makeParameters() {
             const auto& d = creativeParameters[p];
             appendDescriptor(creativeParameterId(slot, p), "FX " + juce::String(int(slot)) + " " + d.label, d);
         }
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t p = 0; p < spectralMorphParameterCount; ++p) {
+            const auto id = spectralMorphParameterId(slot, p);
+            const auto name = "FX " + juce::String(int(slot)) + " Spectral " + spectralMorphParameters[p].label;
+            if (p == 1 || p == 2) {
+                const auto choices = p == 1 ? juce::StringArray{"Magnitude", "Envelope"}
+                                           : juce::StringArray{"1024", "2048", "4096"};
+                layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id, 1}, name, choices,
+                    int(spectralMorphParameters[p].initial)));
+            } else appendDescriptor(id, name, spectralMorphParameters[p]);
+        }
     return layout;
 }
 
@@ -344,6 +356,9 @@ Settings Processor::settingsFromValues(const std::array<float, parameterIds.size
         processorRouting::applyToneSettings(result.fxSettings[slot], [&](size_t field) {
             return value(toneParameterIndex(slot, field));
         });
+        std::array<float, spectralMorphParameterCount> spectralValues{};
+        for (size_t p = 0; p < spectralValues.size(); ++p) spectralValues[p] = value(spectralMorphParameterIndex(slot, p));
+        result.fxSettings[slot].spectralMorph = spectralMorphFromValues(spectralValues);
         result.fxSettings[slot].waveshaper.raw = value(waveExtraParameterStart + (slot - 1) * 2) >= 0.5f;
         result.fxSettings[slot].waveshaper.shapeAmount = value(waveExtraParameterStart + (slot - 1) * 2 + 1) * 0.01f;
         // Raw overrides quality in Waveshaper; keep the requested quality saved.
@@ -371,12 +386,15 @@ bool Processor::isBusesLayoutSupported(const BusesLayout& layout) const {
     const auto valid = [](juce::AudioChannelSet channels) {
         return channels == juce::AudioChannelSet::mono() || channels == juce::AudioChannelSet::stereo();
     };
-    return valid(layout.getMainInputChannelSet()) && valid(layout.getMainOutputChannelSet());
+    return layout.inputBuses.size() == 2 && layout.outputBuses.size() == 1
+            && valid(layout.getMainInputChannelSet()) && valid(layout.getMainOutputChannelSet())
+            && (layout.inputBuses[1].isDisabled() || valid(layout.inputBuses[1]));
 }
 
 void Processor::prepareToPlay(double sampleRate, int) {
     const std::lock_guard<std::recursive_mutex> lock(controlMutex);
     processingSampleRate = sampleRate;
+    sidechainChannels.store(getChannelCountOfBus(true, 1), std::memory_order_relaxed);
     modulationSnapshotSequence.fetch_add(1);
     modulation.prepare(sampleRate);
     discreteHoldUntil.fill(0);
@@ -385,15 +403,29 @@ void Processor::prepareToPlay(double sampleRate, int) {
     for (auto& target : snapshotTargeted) target.store(false);
     modulationSnapshotSequence.fetch_add(1);
     transportPlaying = false;
-    engine.prepare(sampleRate, getTotalNumInputChannels(), getTotalNumOutputChannels(), settings());
+    // Host activation is the only boundary at which integer graph latency may
+    // change. A transport stop/reset is not a host deactivation.
+    prepared = false;
+    juce::String activationError;
+    // Commit deferred lifecycle cleanup only now, never against running audio.
+    if (!setRoutingGraphLocked(routingDraft, activationError)) routingError = activationError;
+    preparedRoutingLatency = RoutingExecutor::graphLatency(routingActive);
+    engine.prepare(sampleRate, getMainBusNumInputChannels(), getMainBusNumOutputChannels(), settings(), preparedRoutingLatency);
     const auto restored = engine.requestGraph(routingActive);
+    restartPending = false;
     if (!restored) routingError = juce::String(restored.message);
     grainBridge.publish(engine.grainSnapshot());
+        spectralBridge.publish(engine.spectralSnapshots());
     voiceBridge.publish(engine.voiceSnapshots());
     voiceBridge.publishLead(engine.leadSnapshot());
     setLatencySamples(engine.latency());
     metering.publish(engine.meters());
     prepared = true;
+}
+
+void Processor::releaseResources() {
+    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+    prepared = false; // Called by the host with processing quiescent.
 }
 
 void Processor::reset() {
@@ -408,6 +440,7 @@ void Processor::reset() {
         modulationSnapshotSequence.fetch_add(1);
         engine.reset(settings());
         grainBridge.publish(engine.grainSnapshot());
+        spectralBridge.publish(engine.spectralSnapshots());
         voiceBridge.publish(engine.voiceSnapshots());
         voiceBridge.publishLead(engine.leadSnapshot());
         metering.publish(engine.meters());
@@ -435,13 +468,20 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
             transportPlaying = playing;
         }
     }
+    auto mainInput = getBusBuffer(audio, true, 0);
+    auto mainOutput = getBusBuffer(audio, false, 0);
+    const int auxiliaryChannels = getChannelCountOfBus(true, 1);
+    auto auxiliary = getBusBuffer(audio, true, 1);
+    sidechainChannels.store(auxiliaryChannels, std::memory_order_relaxed);
     // With no modulators there is no control work or re-chunking of the legacy
     // engine path. A newly published plan is picked up on the next host block.
     if (modulation.isIdle()) {
-        engine.process(audio.getArrayOfReadPointers(), audio.getArrayOfWritePointers(),
-            audio.getNumSamples(), settings(), hostBypass);
+        engine.process(mainInput.getArrayOfReadPointers(), mainOutput.getArrayOfWritePointers(),
+            audio.getNumSamples(), settings(), hostBypass,
+            auxiliaryChannels > 0 ? auxiliary.getArrayOfReadPointers() : nullptr, auxiliaryChannels);
         processedSamples += uint64_t(audio.getNumSamples());
         grainBridge.publish(engine.grainSnapshot());
+        spectralBridge.publish(engine.spectralSnapshots());
         voiceBridge.publish(engine.voiceSnapshots());
         voiceBridge.publishLead(engine.leadSnapshot());
         metering.publish(engine.meters());
@@ -459,15 +499,18 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
         if (modulation.samplesUntilTick() <= 0) updateModulationValues();
         int count = std::min(modulation.samplesUntilTick(), audio.getNumSamples() - offset);
         if (event != midi.end()) count = std::min(count, std::max(1, (*event).samplePosition - offset));
-        const float* input[2] = {audio.getReadPointer(0, offset), audio.getReadPointer(std::min(1, audio.getNumChannels() - 1), offset)};
-        float* output[2] = {audio.getWritePointer(0, offset), audio.getWritePointer(std::min(1, audio.getNumChannels() - 1), offset)};
+        const float* input[2] = {mainInput.getReadPointer(0, offset), mainInput.getReadPointer(std::min(1, mainInput.getNumChannels() - 1), offset)};
+                const float* donor[2] = {auxiliaryChannels > 0 ? auxiliary.getReadPointer(0, offset) : nullptr,
+                    auxiliaryChannels > 0 ? auxiliary.getReadPointer(std::min(1, auxiliaryChannels - 1), offset) : nullptr};
+        float* output[2] = {mainOutput.getWritePointer(0, offset), mainOutput.getWritePointer(std::min(1, mainOutput.getNumChannels() - 1), offset)};
         engine.process(input, output, count, modulation.targets().empty()
-            ? blockBaseSettings : settingsFromValues(effectiveValues), hostBypass);
+            ? blockBaseSettings : settingsFromValues(effectiveValues), hostBypass, donor, auxiliaryChannels);
         modulation.advance(count);
         processedSamples += uint64_t(count);
         offset += count;
     }
     grainBridge.publish(engine.grainSnapshot());
+        spectralBridge.publish(engine.spectralSnapshots());
     voiceBridge.publish(engine.voiceSnapshots());
     voiceBridge.publishLead(engine.leadSnapshot());
     metering.publish(engine.meters());
@@ -704,13 +747,20 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                     if (isCreativeEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
                         initial = node.creative.values[field];
             }
-            if (graphTree.isValid() && i >= newCreativeParameterStart) {
+            if (graphTree.isValid() && i >= newCreativeParameterStart && i < spectralMorphParameterStart) {
                 const size_t width = creativeParameterCount - releasedCreativeParameterCount;
                 const size_t slot = 1 + (i - newCreativeParameterStart) / width;
                 const size_t field = releasedCreativeParameterCount + (i - newCreativeParameterStart) % width;
                 for (const auto& node : active.nodes)
                     if (isCreativeEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
                         initial = node.creative.values[field];
+            }
+            if (i >= spectralMorphParameterStart) {
+                const size_t slot = 1 + (i - spectralMorphParameterStart) / spectralMorphParameterCount;
+                const size_t field = (i - spectralMorphParameterStart) % spectralMorphParameterCount;
+                initial = spectralMorphParameters[field].initial;
+                for (const auto& node : active.nodes) if (node.type == NodeType::spectralMorph && routingFxSlot(node.id) == int(slot))
+                    initial = spectralMorphValues(node.spectralMorph)[field];
             }
             if (graphTree.isValid() && i >= utilityParameterStart && i < newCreativeParameterStart) {
                 const size_t slot = 1 + (i - utilityParameterStart) / utilityParameterCount;
@@ -736,12 +786,15 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
     active = removeLegacySumNodes(active);
     if (!processorRouting::validate(active)) active = defaultGraph();
     routingDraft = active;
-    routingActive = std::move(active);
     routingLayout = std::move(layout);
     routingError = graphError;
-    if (prepared) {
-        const auto requested = engine.requestGraph(routingActive);
-        if (!requested) routingError = juce::String(requested.message);
+    restartPending = prepared && RoutingExecutor::graphLatency(active) != preparedRoutingLatency;
+    if (!restartPending) {
+        if (prepared) {
+            const auto requested = engine.requestGraph(active);
+            if (!requested) { routingError = juce::String(requested.message); return false; }
+        }
+        routingActive = std::move(active);
     }
     return true;
 }
@@ -843,6 +896,14 @@ Graph Processor::qualitySnapshot(Graph graph) const {
     for (auto& node : graph.nodes) {
         if (node.type == NodeType::mix && !node.mainControls && node.id >= 200 && node.id < 248)
             node.mix = values[localMixParameterStart + node.id - 200]->load(std::memory_order_relaxed) * .01f;
+        if (node.type == NodeType::spectralMorph) {
+            const int spectralSlot = routingFxSlot(node.id);
+            if (spectralSlot > 0) {
+                std::array<float, spectralMorphParameterCount> v{};
+                for (size_t p = 0; p < v.size(); ++p) v[p] = values[spectralMorphParameterIndex(size_t(spectralSlot), p)]->load(std::memory_order_relaxed);
+                node.spectralMorph = spectralMorphFromValues(v);
+            }
+        }
         if (node.type != NodeType::waveshaper) continue;
         const int slot = processorRouting::fxSlot(node.id);
         if (slot > 0 && slot < 16) {
@@ -864,9 +925,14 @@ juce::String Processor::getRoutingError() const {
     return routingError;
 }
 
+bool Processor::routingRestartPending() const {
+    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+    return restartPending;
+}
+
 bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {
-    // Visible topology is always the accepted running topology. Rejected edits
-    // never leave fake cables in the editor or a separately saved draft.
+    // Accepted latency-changing edits are explicit drafts, never audio plans.
+    // Rejected edits leave both the running graph and draft untouched.
     Graph boundedGraph = graph;
     for (auto& node : boundedGraph.nodes) boundProcessorTone(node);
     const auto sourceValidation = processorRouting::validate(boundedGraph);
@@ -880,7 +946,21 @@ bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {
         error = routingError = juce::String(validation.message);
         return false;
     }
-    if (prepared) {
+    const bool defer = prepared && RoutingExecutor::graphLatency(candidate) != preparedRoutingLatency;
+    if (defer) {
+        // Host parameters share effect slots. A pending replacement must not
+        // initialize controls belonging to a different, still-running machine.
+        for (const auto& old : routingActive.nodes) {
+            if (!processorRouting::isEffect(old.type)) continue;
+            const auto replacement = std::find_if(candidate.nodes.begin(), candidate.nodes.end(),
+                [&](const RoutingNode& n) { return n.id == old.id; });
+            if (replacement != candidate.nodes.end() && replacement->type != old.type) {
+                error = routingError = "Deactivate the plugin before replacing an occupied FX slot in a latency-changing graph";
+                return false;
+            }
+        }
+    }
+    if (prepared && !defer) {
         const auto requested = engine.requestGraph(candidate);
         if (!requested) {
             error = routingError = juce::String(requested.message);
@@ -891,6 +971,7 @@ bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {
     // host slot IDs must never make a replacement inherit another machine's map.
     auto retainedModulation = modulationState;
     for (const auto& old : routingActive.nodes) {
+        if (defer) break; // Do not remove modulation from the still-running graph.
         if (!processorRouting::isEffect(old.type) && old.type != NodeType::mix) continue;
         const auto same = std::find_if(candidate.nodes.begin(), candidate.nodes.end(),
             [&](const RoutingNode& n) { return n.id == old.id && n.type == old.type; });
@@ -918,7 +999,8 @@ bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {
         setModulationState(retainedModulation, ignored);
     }
     routingDraft = candidate;
-    routingActive = std::move(candidate);
+    restartPending = defer;
+    if (!defer) routingActive = std::move(candidate);
     routingError.clear();
     error.clear();
     return true;
@@ -928,12 +1010,12 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
     bool accepted;
     {
         const std::lock_guard<std::recursive_mutex> lock(controlMutex);
-        const auto previous = qualitySnapshot(routingActive);
+        const auto previous = qualitySnapshot(routingDraft);
         accepted = setRoutingGraphLocked(graph, error);
         if (accepted) {
             // Only intentional inspector edits/new nodes update automation.
             // A cable-only edit must not overwrite host-automated FX values.
-            for (const auto& node : routingActive.nodes) {
+            for (const auto& node : routingDraft.nodes) {
                 if (node.type == NodeType::mix && !node.mainControls && node.id >= 200 && node.id < 248) {
                     const auto oldMix = std::find_if(previous.nodes.begin(), previous.nodes.end(), [&](const RoutingNode& n) {
                         return n.id == node.id && n.type == NodeType::mix && !n.mainControls;
@@ -951,6 +1033,13 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
                     setParameterValue(fxParameterId(slot, size_t(1)), node.mix * 100);
                 if (old == previous.nodes.end() || old->motion != node.motion)
                     setParameterValue(fxParameterId(slot, size_t(2)), node.motion * 100);
+                if (slot > 0 && node.type == NodeType::spectralMorph) {
+                    const auto next = spectralMorphValues(node.spectralMorph);
+                    const auto before = old == previous.nodes.end() ? next : spectralMorphValues(old->spectralMorph);
+                    for (size_t p = 0; p < next.size(); ++p)
+                        if (old == previous.nodes.end() || next[p] != before[p])
+                            setParameterValue(parameterIds[spectralMorphParameterIndex(slot, p)], next[p]);
+                }
                 if (slot > 0 && isCreativeEffect(node.type)) {
                     for (size_t p = 0; p < creativeParameterCount; ++p)
                         if (old == previous.nodes.end() || node.creative.values[p] != old->creative.values[p])
@@ -961,7 +1050,7 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
                         if (old == previous.nodes.end() || node.utility.values[p] != old->utility.values[p])
                             setParameterValue(parameterIds[utilityParameterStart + (slot - 1) * utilityParameterCount + p], node.utility.values[p]);
                 }
-                if (slot > 0 && node.type != NodeType::chorale && !isCreativeEffect(node.type) && !isUtilityEffect(node.type)) {
+                if (slot > 0 && node.type != NodeType::chorale && node.type != NodeType::spectralMorph && !isCreativeEffect(node.type) && !isUtilityEffect(node.type)) {
                     const auto next = processorToneValues(node);
                     const auto before = old == previous.nodes.end() ? next : processorToneValues(*old);
                     if (node.type == NodeType::waveshaper && (old == previous.nodes.end() || node.waveshaper.shape != old->waveshaper.shape))
@@ -1121,6 +1210,10 @@ bool Processor::setModulationState(const ModulationState& state, juce::String& e
         for (size_t i = 0; i < plan.modulatorCount; ++i) if (plan.modulators[i].id == a.modulatorId) source = i;
         for (size_t i = 0; i < parameterIds.size(); ++i) if (a.targetParameterId == parameterIds[i]) target = i;
         if (source == plan.modulatorCount || target == parameterIds.size()) return fail("Unknown modulation source or parameter ID");
+        if (target >= spectralMorphParameterStart) {
+            const auto field = (target - spectralMorphParameterStart) % spectralMorphParameterCount;
+            if (spectralMorphParameters[field].discrete) return fail("Spectral Mode, FFT and Freeze are host automation only, not continuous modulation targets");
+        }
         if (target == 8 || target == 10 || (target >= 86 && target < 94))
             return fail("Bypass and structural controls cannot be modulation targets");
         if (!std::isfinite(a.depth) || std::abs(a.depth) > 1) return fail("Assignment depth must be -1..1");
@@ -1215,6 +1308,7 @@ ModulationSnapshot Processor::getModulationSnapshot() const {
         if (!sourcesConsistent) continue;
         for (size_t i = 0; i < values.size(); ++i) {
             if (i == 8 || i == 10 || (i >= 86 && i < 94)) continue;
+            if (i >= spectralMorphParameterStart && spectralMorphParameters[(i - spectralMorphParameterStart) % spectralMorphParameterCount].discrete) continue;
             const bool assigned = snapshotTargeted[i].load();
             const float raw = assigned ? snapshotBase[i].load() : values[i]->load(std::memory_order_relaxed);
             baseRaw[i] = raw;
@@ -1225,6 +1319,7 @@ ModulationSnapshot Processor::getModulationSnapshot() const {
         // a stable frame; a UI read need not fit those operations between ticks.
         for (size_t i = 0; i < values.size(); ++i) {
             if (i == 8 || i == 10 || (i >= 86 && i < 94)) continue;
+            if (i >= spectralMorphParameterStart && spectralMorphParameters[(i - spectralMorphParameterStart) % spectralMorphParameterCount].discrete) continue;
             const float base = rangedParameters[i]->convertTo0to1(baseRaw[i]);
             const float effective = rangedParameters[i]->convertTo0to1(effectiveRaw[i]);
             result.targets.push_back({parameterIds[i], base, effective, effective - base});

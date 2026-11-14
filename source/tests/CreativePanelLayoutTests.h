@@ -99,10 +99,15 @@ inline void run() {
                         require(slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
                                 "Creative values must retain the native textbox configuration");
                         if (slider != mix) {
-                            require(row->getWidth() == 68 && row->getHeight() == 100,
-                                    "Creative knob geometry changed");
-                            require(slider->getTextBoxWidth() == 66 && slider->getTextBoxHeight() == 20,
-                                    "Creative rotary value must fit the narrower cell");
+                            require(row->getWidth() >= 68 && row->getWidth() <= 110 && row->getHeight() >= 100,
+                                    "Creative knob must use bounded face-sized cells");
+                            const auto dial = slider->getLookAndFeel().getSliderLayout(*slider);
+                            require(!dial.textBoxBounds.intersects(dial.sliderBounds)
+                                && slider->getLocalBounds().contains(dial.sliderBounds), "Creative value/dial overlap");
+                            const float face = (float(std::min(dial.sliderBounds.getWidth(), dial.sliderBounds.getHeight())) * .5f - 8.f) * 1.55f;
+                            require(face >= 38.f, "Creative face is too small for its allocated cell");
+                            require(slider->getTextBoxWidth() == std::min(82, row->getWidth() - 2) && slider->getTextBoxHeight() == 20,
+                                    "Creative rotary value must fit the responsive cell");
                             require(!bool(slider->getProperties()["vocalstackTexturedBar"]),
                                     "Creative rotary knob opted into the long FX bar");
                         }

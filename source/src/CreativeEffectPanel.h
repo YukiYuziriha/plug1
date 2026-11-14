@@ -139,7 +139,8 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             label.setVisible(!buttonLink && !textured);
             const bool inspectorRotary = inspectorLayout && sliderLink && !textured;
             slider.getProperties().set("vocalstackInspectorRotary", inspectorRotary);
-            if (!textured) label.setBounds(area.removeFromBottom(inspectorRotary ? captionHeight(getWidth()) : 28));
+            slider.getProperties().set("vocalstackCellRotary", sliderLink && !textured);
+            if (!textured) label.setBounds(area.removeFromBottom(sliderLink ? captionHeight(getWidth()) : 28));
             slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, juce::jmin(82, area.getWidth()), 20);
             slider.setBounds(area);
             if (inspectorRotary) for (auto* child : slider.getChildren())
@@ -207,6 +208,7 @@ public:
         content.addAndMakeVisible(visual);
         addGroup("BLEND");
         addRow(fxParameterId(slot, "Mix"), "Mix", "True dry/wet blend for this FX slot: 0% dry, 100% wet.", "%", false);
+        configureCrossfadeDisplay(groups.back().rows.back()->slider);
         groups.back().rows.back()->slider.getProperties().set("vocalstackTexturedBar", true);
         groups.back().rows.back()->slider.setSliderStyle(juce::Slider::LinearHorizontal);
         const char* previous = "";
@@ -327,9 +329,9 @@ public:
                 }
                 continue;
             }
-            if (inspectorLayout) {
-                // Pack by readable minimum widths, then share leftover width within
-                // each line. Cap short final lines rather than creating huge dials.
+            {
+                // Share existing row width with the dial faces rather than leaving
+                // blank cells. Dedicated value/caption lanes stay outside the face.
                 std::vector<Row*> line;
                 int used = 0;
                 const auto flush = [&] {
@@ -338,7 +340,7 @@ public:
                     int x = 0, height = 0;
                     int rotaryCount = int(std::count_if(line.begin(), line.end(), [](auto* row) { return row->sliderLink != nullptr; }));
                     for (auto* row : line) {
-                        int cellWidth = juce::jmin(controlsWidth, row->sliderLink ? 88 : row->preferredWidth());
+                        int cellWidth = juce::jmin(controlsWidth, row->sliderLink && inspectorLayout ? 88 : row->preferredWidth());
                         if (row->sliderLink) {
                             const int growth = juce::jmin(110 - cellWidth, extra / juce::jmax(1, rotaryCount--));
                             cellWidth += growth; extra -= growth;
@@ -350,7 +352,7 @@ public:
                     y += height + 2; line.clear(); used = 0;
                 };
                 for (auto& row : group.rows) if (row->isVisible()) {
-                    const int minimum = juce::jmin(controlsWidth, row->sliderLink ? 88 : row->preferredWidth());
+                    const int minimum = juce::jmin(controlsWidth, row->sliderLink && inspectorLayout ? 88 : row->preferredWidth());
                     if (!line.empty() && used + 2 + minimum > controlsWidth) flush();
                     used += (line.empty() ? 0 : 2) + minimum;
                     line.push_back(row.get());
@@ -358,18 +360,7 @@ public:
                 flush(); y += 4;
                 continue;
             }
-            int x = 0, lineHeight = 0;
-            for (auto& row : group.rows) {
-                const int cellWidth = juce::jmin(controlsWidth, row->preferredWidth());
-                const int cellHeight = row->spaceChoice ? 60 : row->buttonLink ? 44 : 100;
-                if (x > 0 && x + cellWidth > controlsWidth) {
-                    y += lineHeight + 2; x = 0; lineHeight = 0;
-                }
-                row->setBounds(controlsX + x, y, cellWidth, cellHeight);
-                x += cellWidth + 2;
-                lineHeight = juce::jmax(lineHeight, cellHeight);
-            }
-            y += lineHeight + 6;
+
         }
         content.setSize(width, juce::jmax(getHeight(), juce::jmax(visualBottom, y)));
         // Retain the preferred anchor even if a wide/tall view temporarily has

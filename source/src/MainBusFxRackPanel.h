@@ -5,6 +5,7 @@
 #include "ToneEffectPanel.h"
 #include "CreativeEffectPanel.h"
 #include "UtilityEffectPanel.h"
+#include "SpectralMorphVisual.h"
 
 namespace vocalstack {
 
@@ -26,9 +27,10 @@ public:
     ~MainBusFxRackPanel() override {
         stopTimer(); viewport.setViewedComponent(nullptr, false); setLookAndFeel(nullptr);
     }
-    static constexpr int tabGap = 2, preferredHeight = 340;
+    static constexpr int tabGap = 2, preferredHeight = 388;
     // The editor supplies RoutingPanel's validated, one-step graph undo path.
     std::function<bool(const Graph&, juce::String&)> commitGraph;
+    std::function<void()> onOpenRouting;
     void setNeon(bool value) {
         neon = value;
         const auto p = themePalette(*this, neon);
@@ -118,6 +120,7 @@ public:
     }
 private:
     static juce::String name(NodeType type) {
+        if (type == NodeType::spectralMorph) return "Spectral Morph";
         if (isCreativeEffect(type)) return CreativeEffectPanel::effectName(creativeKind(type));
         if (isUtilityEffect(type)) return UtilityEffectPanel::effectName(utilityKind(type));
         if (type == NodeType::chorale) return "Chorale";
@@ -208,7 +211,13 @@ private:
                     addKnob(fxParameterId(size_t(slot), "Mix"), "Mix", "%", true);
                     addKnob(fxParameterId(size_t(slot), "Motion"), "Motion", "%", true);
                 } else if (slot > 0) {
-                    if (isCreativeEffect(model.type)) fullPanel = std::make_unique<CreativeEffectPanel>(rack.owner, size_t(slot), creativeKind(model.type));
+                    if (model.type == NodeType::spectralMorph) {
+                        auto spectral = std::make_unique<SpectralMorphPanel>(rack.owner, size_t(slot));
+                        spectral->setInspectorLayout(false);
+                        spectral->onOpenRouting = [this] { if (rack.onOpenRouting) rack.onOpenRouting(); };
+                        fullPanel = std::move(spectral);
+                    }
+                    else if (isCreativeEffect(model.type)) fullPanel = std::make_unique<CreativeEffectPanel>(rack.owner, size_t(slot), creativeKind(model.type));
                     else if (isUtilityEffect(model.type)) fullPanel = std::make_unique<UtilityEffectPanel>(rack.owner, size_t(slot), utilityKind(model.type));
                     else {
                         fullPanel = std::make_unique<ToneEffectPanel>(rack.owner, size_t(slot), model.type);
@@ -279,6 +288,7 @@ private:
             }
             syncTabState();
             for (auto& knob : knobs) knob->setNeon(neon);
+            if (auto* spectral = dynamic_cast<SpectralMorphPanel*>(fullPanel.get())) spectral->setNeon(value);
             if (auto* panel = dynamic_cast<CreativeEffectPanel*>(fullPanel.get())) panel->setNeon(neon);
             if (auto* panel = dynamic_cast<UtilityEffectPanel*>(fullPanel.get())) panel->setNeon(neon);
             if (auto* panel = dynamic_cast<ToneEffectPanel*>(fullPanel.get())) panel->setNeon(neon);
@@ -378,9 +388,9 @@ private:
         sync();
     }
     void timerCallback() override { sync(); }
-    inline static constexpr std::array<NodeType, 15> types{NodeType::chorale, NodeType::waveshaper,
+    inline static constexpr std::array<NodeType, 16> types{NodeType::chorale, NodeType::waveshaper,
         NodeType::bitcrusher, NodeType::compressor, NodeType::delay, NodeType::reverb, NodeType::granular,
-        NodeType::equalizer, NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter, NodeType::convolution, NodeType::saturator};
+        NodeType::equalizer, NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter, NodeType::convolution, NodeType::saturator, NodeType::spectralMorph};
 
     modulationui::PanelStyle panelStyle;
     FluidBackground background;

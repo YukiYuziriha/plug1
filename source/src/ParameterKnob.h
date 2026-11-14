@@ -59,15 +59,30 @@ public:
     }
 };
 
-// Takes ownership of the base look-and-feel's label and returns a replacement
-// owned by JUCE's Slider. Calling the base factory at the call site avoids
-// virtual recursion and preserves the caller's look-and-feel defaults.
+// Presentation only: the underlying parameter remains an unsigned 0..100 crossfade.
+inline void configureCrossfadeDisplay(juce::Slider& slider, bool leadStack = false) {
+    slider.getProperties().set("vocalstackMidpointCrossfade", true);
+    slider.textFromValueFunction = [leadStack](double value) {
+        return juce::String(juce::jlimit(0.0, 100.0, value), 0) + (leadStack ? "% Stack" : "% Wet");
+    };
+    slider.valueFromTextFunction = [](const juce::String& text) {
+        const auto wet = text.contains("/") ? text.fromLastOccurrenceOf("/", false, false) : text;
+        return juce::jlimit(0.0, 100.0, wet.retainCharacters("0123456789.+-").getDoubleValue());
+    };
+    slider.updateText();
+}
+
+inline bool hasMidpointCrossfade(const juce::Slider& slider) {
+    return bool(slider.getProperties()["vocalstackMidpointCrossfade"]);
+}
+
+// Takes ownership of the base look-and-feel label; JUCE's Slider owns the result.
 inline juce::Label* createPassiveSliderTextBox(juce::Label* originalTextBox) {
     class ValueLabel final : public juce::Label {
     public:
         void paint(juce::Graphics& g) override {
             auto* slider = dynamic_cast<juce::Slider*>(getParentComponent());
-            if (!slider || !bool(slider->getProperties()["vocalstackTexturedBar"]) || isBeingEdited()) {
+            if (!slider || !bool(slider->getProperties()["vocalstackTexturedBar"]) || bool(slider->getProperties()["vocalstackSeparateBarValue"]) || isBeingEdited()) {
                 juce::Label::paint(g); return;
             }
             const auto palette = themePalette(*slider);
@@ -80,7 +95,7 @@ inline juce::Label* createPassiveSliderTextBox(juce::Label* originalTextBox) {
             const float valueX = float(track.getX()) + float(track.getWidth()) * float(slider->valueToProportionOfLength(slider->getValue()));
             const juce::Graphics::ScopedSaveState save(g);
             const bool bipolar = slider->getMinimum() < 0 && slider->getMaximum() > 0;
-            const float origin = bipolar ? float(track.getX()) + float(track.getWidth()) * float(slider->valueToProportionOfLength(0)) : float(track.getX());
+            const float origin = hasMidpointCrossfade(*slider) ? float(track.getCentreX()) : bipolar ? float(track.getX()) + float(track.getWidth()) * float(slider->valueToProportionOfLength(0)) : float(track.getX());
             g.reduceClipRegion(juce::Rectangle<float>(juce::jmin(origin, valueX) - float(getX()), 0.f,
                 std::abs(valueX - origin), float(getHeight())).getSmallestIntegerContainer());
             g.setColour(accent.getPerceivedBrightness() >= .45f ? palette.background : palette.text);
@@ -134,6 +149,11 @@ public:
     }
     // displayedSource may be selected without being in assignment mode.
     void refreshModulation(const ModulationSnapshot& snapshot, const ModulationState& state, uint32_t displayedSource) {
+        const auto oldAssignment = assignment;
+        const auto oldDepth = depth;
+        const auto oldEffective = effective;
+        const auto oldBipolar = bipolar;
+        const auto oldHasEffective = hasEffective;
         assignment = displayedSource;
         if (snapshot.consistent) {
             effective = float(valueToProportionOfLength(getValue()));
@@ -158,7 +178,14 @@ public:
             if (assigning) hideTextBox(true);
             setTextBoxIsEditable(editable);
         }
-        repaint();
+        displayDirty = displayDirty || oldAssignment != assignment || oldDepth != depth
+            || oldEffective != effective || oldBipolar != bipolar || oldHasEffective != hasEffective;
+        const auto frame = std::floor(fluidAnimationSeconds(*this) * 10.0);
+        if (isShowing() && (displayDirty || frame != displayedFrame)) {
+            displayDirty = false;
+            displayedFrame = frame;
+            repaint();
+        }
     }
     void mouseDown(const juce::MouseEvent& e) override {
         dragAssignment = owner ? owner->modulationAssignmentId() : 0;
@@ -263,6 +290,8 @@ private:
         };
         passive(passive, *this);
     }
+    bool displayDirty = true;
+    double displayedFrame = -1;
     Processor* owner = nullptr;
     juce::String id;
     uint32_t assignment = 0, dragAssignment = 0;
@@ -278,13 +307,14 @@ public:
     class Style final : public PixelLookAndFeel {
     public:
         static constexpr float linearPointerHeight = 10.f;
+        static float rotaryRingWidth(float outerRadius) { return juce::jmin(8.f, outerRadius * .38f); }
         static constexpr int texturedBarHeight = 25;
         static juce::Rectangle<float> texturedBarBounds(juce::Rectangle<float> area) {
             const float height = juce::jmin(float(texturedBarHeight), juce::jmax(1.f, area.getHeight() - 8));
             return {area.getX(), area.getY() + 8 + (area.getHeight() - 8 - height) * .5f, area.getWidth(), height};
         }
         juce::Slider::SliderLayout getSliderLayout(juce::Slider& slider) override {
-            if (bool(slider.getProperties()["vocalstackInspectorRotary"])) {
+            if (bool(slider.getProperties()["vocalstackInspectorRotary"]) || bool(slider.getProperties()["vocalstackCellRotary"])) {
                 juce::Slider::SliderLayout layout;
                 auto area = slider.getLocalBounds();
                 layout.textBoxBounds = area.removeFromTop(20);
@@ -294,6 +324,12 @@ public:
             if (!bool(slider.getProperties()["vocalstackTexturedBar"]))
                 return juce::LookAndFeel_V4::getSliderLayout(slider);
             juce::Slider::SliderLayout layout;
+            if (bool(slider.getProperties()["vocalstackSeparateBarValue"])) {
+                auto area = slider.getLocalBounds();
+                layout.textBoxBounds = area.removeFromTop(20);
+                layout.sliderBounds = area.reduced(4, 0);
+                return layout;
+            }
             layout.sliderBounds = slider.getLocalBounds().reduced(4, 0);
             const auto bar = texturedBarBounds(layout.sliderBounds.toFloat()).toNearestInt();
             layout.textBoxBounds = bar.withSizeKeepingCentre(juce::jmin(juce::jmax(124, juce::roundToInt(float(slider.getName().length()) * 8.f + 75.f)), juce::jmax(1, bar.getWidth() - 8)), bar.getHeight());
@@ -316,14 +352,15 @@ public:
             const auto track = juce::Rectangle<float>(float(x), float(y) + float(h) * .5f + 1.f - linearPointerHeight * .5f,
                                                                    float(juce::jmax(1, w)), linearPointerHeight);
             const bool bipolar = slider.getMinimum() < 0 && slider.getMaximum() > 0;
-            const float origin = bipolar ? track.getX() + float(slider.valueToProportionOfLength(0)) * track.getWidth() : track.getX();
+            const float origin = hasMidpointCrossfade(slider) ? track.getCentreX()
+                            : bipolar ? track.getX() + float(slider.valueToProportionOfLength(0)) * track.getWidth() : track.getX();
             const float thumb = juce::jlimit(track.getX(), track.getRight(), position);
             const auto palette = themePalette(slider);
             linearRail.paint(g, track.toNearestInt(), palette.inset, palette.accent, fluidAnimationSeconds(slider), .65f);
             const auto fill = juce::Rectangle<float>(juce::jmin(origin, thumb), track.getY(), std::abs(thumb - origin), track.getHeight());
             linearFill.paint(g, fill.toNearestInt(), slider.findColour(juce::Slider::trackColourId),
                              palette.accent, fluidAnimationSeconds(slider), .45f);
-            if (bipolar) {
+            if (bipolar || hasMidpointCrossfade(slider)) {
                 g.setColour(componentTheme(slider) == Theme::device ? juce::Colour(0xffd7dfe6) : themePalette(slider).muted);
                 g.drawVerticalLine(juce::roundToInt(origin), track.getY(), track.getBottom());
             }
@@ -352,39 +389,42 @@ public:
             const auto centre = juce::Rectangle<float>(float(x), float(y), float(w), float(h)).getCentre();
             // The inspector supplies separate value/caption lanes. Reserve ten
             // pixels around its dial for the modulation arc and effective marker.
-            const float radius = bool(slider.getProperties()["vocalstackInspectorRotary"])
-                ? juce::jmax(1.f, float(juce::jmin(w, h)) * .5f - 10.f)
+            const float radius = (bool(slider.getProperties()["vocalstackInspectorRotary"]) || bool(slider.getProperties()["vocalstackCellRotary"]))
+                ? juce::jmax(1.f, float(juce::jmin(w, h)) * .5f - 8.f)
                 : float(juce::jmin(w, h)) * 0.34f;
             const float angle = start + position * (end - start);
             const bool signedRange = slider.getMinimum() < 0 && slider.getMaximum() > 0;
-            const float origin = signedRange ? start + float(slider.valueToProportionOfLength(0)) * (end - start) : start;
-            const auto arc = [&](float a, float b, juce::Colour colour, float width) {
-                juce::Path path;
-                path.addCentredArc(centre.x, centre.y, radius, radius, 0, juce::jmin(a, b), juce::jmax(a, b), true);
-                juce::Path stroke;
-                juce::PathStrokeType(width, juce::PathStrokeType::curved, juce::PathStrokeType::butt).createStrokedPath(stroke, path);
+            const float origin = hasMidpointCrossfade(slider) ? (start + end) * .5f
+                : signedRange ? start + float(slider.valueToProportionOfLength(0)) * (end - start) : start;
+            const float outer = radius + 2.4f; // Previous 4.8px progress stroke's outer edge.
+            const float width = rotaryRingWidth(outer);
+            const float ringRadius = outer - width * .5f;
+            const auto textureBounds = juce::Rectangle<float>(outer * 2, outer * 2).withCentre(centre).getSmallestIntegerContainer();
+            const auto arc = [&](ArcGeometry& cache, FluidBackground& material, float a, float b, juce::Colour colour) {
+                const auto& stroke = cache.get(centre, ringRadius, a, b, width);
                 const juce::Graphics::ScopedSaveState save(g);
                 g.reduceClipRegion(stroke);
-                arcTexture.paint(g, stroke.getBounds().getSmallestIntegerContainer(), colour,
-                    themePalette(slider).accent, fluidAnimationSeconds(slider), .45f);
+                // Stable full-dial bounds keep value movement from resizing/reseeding the material.
+                material.paint(g, textureBounds, colour, themePalette(slider).accent, fluidAnimationSeconds(slider), .45f);
             };
-            arc(start, end, componentTheme(slider) == Theme::spectral ? themePalette(slider).border : juce::Colour(0xff46515b), 4.0f);
-            arc(origin, angle, slider.findColour(juce::Slider::trackColourId), 4.8f);
-            if (signedRange) {
+            arc(trackGeometry, trackTexture, start, end, componentTheme(slider) == Theme::spectral ? themePalette(slider).border : juce::Colour(0xff46515b));
+            arc(valueGeometry, valueTexture, origin, angle, slider.findColour(juce::Slider::trackColourId));
+            if (signedRange || hasMidpointCrossfade(slider)) {
                 g.setColour(componentTheme(slider) == Theme::spectral ? themePalette(slider).muted : juce::Colour(0xffd7dfe6));
                 g.drawLine({centre.getPointOnCircumference(radius + 2, origin),
                             centre.getPointOnCircumference(radius + 5, origin)}, 1);
             }
             g.setColour(componentTheme(slider) == Theme::spectral ? themePalette(slider).inset : juce::Colour(0xff20262d));
-            const auto face = juce::Rectangle<float>(radius * 1.55f, radius * 1.55f).withCentre(centre);
+            const float faceRadius = juce::jmax(0.f, juce::jmin(radius * .775f, outer - width - 1.f));
+            const auto face = juce::Rectangle<float>(faceRadius * 2, faceRadius * 2).withCentre(centre);
                         { juce::Path clip; clip.addEllipse(face); juce::Graphics::ScopedSaveState state(g);
                           g.reduceClipRegion(clip);
                           faceMaterials.paint(g, slider, face.toNearestInt(),
                               componentTheme(slider) == Theme::spectral ? themePalette(slider).inset : juce::Colour(0xff20262d),
                               themePalette(slider).accent); }
             g.setColour(slider.findColour(juce::Slider::thumbColourId));
-            g.drawLine({centre.getPointOnCircumference(radius * 0.35f, angle),
-                        centre.getPointOnCircumference(radius * 0.7f, angle)}, 2);
+            g.drawLine({centre.getPointOnCircumference(faceRadius * .45f, angle),
+                        centre.getPointOnCircumference(faceRadius * .9f, angle)}, 2);
             if (auto* mod = dynamic_cast<ModulationSlider*>(&slider)) mod->drawModulation(g, centre, radius, start, end);
         }
     private:
@@ -407,8 +447,8 @@ public:
             prepareTexture(accent, fluidAnimationSeconds(slider));
             const float thumb = juce::jlimit(float(track.getX()), float(track.getRight()), position);
             const bool bipolar = slider.getMinimum() < 0 && slider.getMaximum() > 0;
-            const float origin = bipolar ? float(track.getX()) + float(slider.valueToProportionOfLength(0)) * float(track.getWidth())
-                                         : float(track.getX());
+            const float origin = hasMidpointCrossfade(slider) ? float(track.getCentreX())
+                : bipolar ? float(track.getX()) + float(slider.valueToProportionOfLength(0)) * float(track.getWidth()) : float(track.getX());
             g.setColour(palette.inset); g.fillRect(track);
             {
                 const juce::Graphics::ScopedSaveState save(g);
@@ -418,16 +458,40 @@ public:
                 for (int left = track.getX(); left < track.getRight(); left += texture.getWidth())
                     g.drawImageAt(texture, left, track.getY());
             }
+            if (bool(slider.getProperties()["vocalstackSeparateBarValue"])) {
+                const auto id = slider.getComponentID();
+                const auto caption = id == "outputGain" || id == "globalOutput" ? "Output"
+                    : id == "double" ? "Blend" : "Mix";
+                g.setFont(juce::Font(pixelFontOptions(controlFontSize)));
+                g.setColour(palette.text);
+                g.drawText(caption, track.reduced(4, 0), juce::Justification::centred, false);
+            }
             g.setColour(palette.border); g.drawRect(track, 1);
-            if (bipolar) { g.setColour(palette.muted); g.drawVerticalLine(juce::roundToInt(origin), float(track.getY()), float(track.getBottom())); }
+            if (bipolar || hasMidpointCrossfade(slider)) { g.setColour(palette.muted); g.drawVerticalLine(juce::roundToInt(origin), float(track.getY()), float(track.getBottom())); }
             if (auto* mod = dynamic_cast<ModulationSlider*>(&slider)) mod->drawLinearModulation(g, track.toFloat());
             // One flat base marker, drawn after the modulation range. Effective
             // feedback stays in its own lane above the entire thick bar.
             g.setColour(palette.text);
             g.fillRect(juce::Rectangle<float>(thumb - 1.5f, float(track.getY()), 3.f, float(track.getHeight())));
         }
+        struct ArcGeometry {
+            const juce::Path& get(juce::Point<float> c, float r, float a, float b, float w) {
+                if (valid && centre == c && radius == r && start == a && end == b && width == w) return stroke;
+                valid = true; centre = c; radius = r; start = a; end = b; width = w;
+                juce::Path path;
+                path.addCentredArc(c.x, c.y, r, r, 0, juce::jmin(a, b), juce::jmax(a, b), true);
+                stroke.clear();
+                juce::PathStrokeType(w, juce::PathStrokeType::curved, juce::PathStrokeType::butt).createStrokedPath(stroke, path);
+                return stroke;
+            }
+            juce::Point<float> centre;
+            float radius = 0, start = 0, end = 0, width = 0;
+            bool valid = false;
+            juce::Path stroke;
+        };
         ButtonFluidBackground faceMaterials;
-                FluidBackground arcTexture{FluidBackground::Material::control};
+        ArcGeometry trackGeometry, valueGeometry;
+        FluidBackground trackTexture{FluidBackground::Material::control}, valueTexture{FluidBackground::Material::control};
         juce::Image texture;
         juce::Colour textureColour;
         double textureFrame = -1;
@@ -458,14 +522,10 @@ public:
                 + (suffix.isEmpty() ? juce::String() : " " + suffix);
         };
         slider.valueFromTextFunction = [](const juce::String& value) { return value.getDoubleValue(); };
-        if (id == "double") {
-            slider.textFromValueFunction = [](double value) {
-                return juce::String(100 - value, 0) + " / " + juce::String(value, 0);
-            };
-            slider.valueFromTextFunction = [](const juce::String& text) {
-                return text.contains("/") ? text.fromFirstOccurrenceOf("/", false, false).getDoubleValue() : text.getDoubleValue();
-            };
-        }
+        if (id == "globalMix" || id == "choraleMix" || (id.startsWith("fx") && id.endsWith("Mix"))
+                    || (id.startsWith("mix") && id.endsWith("Balance")))
+            configureCrossfadeDisplay(slider);
+        if (id == "double") configureCrossfadeDisplay(slider);
         if (id.endsWith("Pan")) {
             slider.textFromValueFunction = [](double value) {
                 return std::abs(value) < 0.005 ? juce::String("C")
@@ -479,13 +539,18 @@ public:
                 return value;
             };
         }
+        if (id == "outputGain" || id == "globalOutput") {
+            slider.getProperties().set("vocalstackSeparateBarValue", true);
+            setLinear(true);
+        }
         slider.updateText(); setNeon(false);
         setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
     }
     void setLinear(bool value) {
         slider.setSliderStyle(value ? juce::Slider::LinearHorizontal : juce::Slider::RotaryHorizontalVerticalDrag);
         slider.getProperties().set("vocalstackTexturedBar", value &&
-            (slider.getComponentID().startsWith("fx") || slider.getComponentID() == "choraleMix" || slider.getComponentID() == "choraleMotion"
+            (slider.getComponentID() == "globalOutput" || slider.getComponentID() == "outputGain" || slider.getComponentID() == "globalMix" || slider.getComponentID() == "double"
+                         || slider.getComponentID().startsWith("fx") || slider.getComponentID() == "choraleMix" || slider.getComponentID() == "choraleMotion"
                          || (slider.getComponentID().startsWith("mix") && slider.getComponentID().endsWith("Balance"))));
         slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 68, value ? 18 : 19);
         resized();

@@ -191,8 +191,23 @@ inline juce::String utilityParameterId(size_t slot, size_t p) {
     return slot > 0 && slot < 16 && p < utilityParameterCount
         ? juce::String(utilityParameterIdStorage[(slot - 1) * utilityParameterCount + p]) : juce::String();
 }
+inline constexpr size_t spectralMorphParameterStart = 2252;
+static_assert(newCreativeParameterStart + 15 * (creativeParameterCount - releasedCreativeParameterCount) == spectralMorphParameterStart);
+inline constexpr size_t spectralMorphParameterIndex(size_t slot, size_t field) noexcept {
+    return spectralMorphParameterStart + (slot - 1) * spectralMorphParameterCount + field;
+}
+inline const auto spectralMorphIdStorage = [] {
+    std::array<std::string, 15 * spectralMorphParameterCount> ids;
+    for (size_t slot = 1; slot < 16; ++slot) for (size_t p = 0; p < spectralMorphParameterCount; ++p)
+        ids[(slot - 1) * spectralMorphParameterCount + p] = "fx" + std::to_string(slot) + spectralMorphParameters[p].id;
+    return ids;
+}();
+inline juce::String spectralMorphParameterId(size_t slot, size_t field) {
+    return slot > 0 && slot < 16 && field < spectralMorphParameterCount
+        ? juce::String(spectralMorphIdStorage[(slot - 1) * spectralMorphParameterCount + field]) : juce::String();
+}
 inline const auto parameterIds = [] {
-    std::array<const char*, newCreativeParameterStart + 15 * (creativeParameterCount - releasedCreativeParameterCount)> ids{};
+    std::array<const char*, spectralMorphParameterStart + 15 * spectralMorphParameterCount> ids{};
         static_assert(utilityParameterStart + 15 * utilityParameterCount == newCreativeParameterStart);
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
@@ -214,6 +229,7 @@ inline const auto parameterIds = [] {
             ids[creativeParameterIndex(slot, p)] = creativeParameterIdStorage[(slot - 1) * creativeParameterCount + p].c_str();
     for (size_t i = 0; i < utilityParameterIdStorage.size(); ++i)
         ids[utilityParameterStart + i] = utilityParameterIdStorage[i].c_str();
+    for (size_t i = 0; i < spectralMorphIdStorage.size(); ++i) ids[spectralMorphParameterStart + i] = spectralMorphIdStorage[i].c_str();
     return ids;
 }();
 static_assert(parameterIds.size() <= ModulationBackend::maxTargets);
@@ -263,7 +279,7 @@ public:
     ~Processor() override;
 
     void prepareToPlay(double, int) override;
-    void releaseResources() override {}
+    void releaseResources() override;
     void reset() override;
     bool isBusesLayoutSupported(const BusesLayout&) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
@@ -313,6 +329,7 @@ public:
     Graph getRoutingGraph() const;
     bool setRoutingGraph(const Graph&, juce::String& error);
     juce::String getRoutingError() const;
+    bool routingRestartPending() const;
     juce::ValueTree getRoutingLayout() const;
     void setRoutingLayout(const juce::ValueTree&);
     bool addVoice();
@@ -322,6 +339,16 @@ public:
     void retainFxMonitor(size_t slot);
     void releaseFxMonitor(size_t slot);
     bool readFxMonitor(size_t slot, FxMonitorFrame& out) const;
+    bool readSpectralMorph(size_t slot, SpectralMorphFrame& out) const noexcept {
+        const auto revision = engine.requestedGrainRevision();
+        const auto epoch = engine.grainEpoch();
+        const bool valid = spectralBridge.read(slot, out)
+            && out.graphRevision == revision && out.resetEpoch == epoch
+            && revision == engine.requestedGrainRevision() && epoch == engine.grainEpoch();
+        if (!valid) out = {};
+        return valid;
+    }
+    int externalSidechainChannels() const noexcept { return sidechainChannels.load(std::memory_order_relaxed); }
     float getCreativeGainReduction(size_t slot) const noexcept { return fxMonitor.gainReduction(slot); }
         bool readGrainSnapshot(size_t slot, RoutingGrainFrame& out) const noexcept;
             bool isGrainSnapshotCurrent(const RoutingGrainFrame& frame) const noexcept {
@@ -391,7 +418,11 @@ private:
     std::atomic<double> motionPercent{3.0}; // Presentation state, never a host parameter.
     FxMonitor fxMonitor;
     GrainSnapshotBridge grainBridge;
+    SpectralMorphBridge spectralBridge;
     VocalEngine engine;
+    std::atomic<int> sidechainChannels{0};
+    int preparedRoutingLatency = 0;
+    bool restartPending = false;
     bool prepared = false;
 };
 

@@ -7,7 +7,7 @@ namespace vocalstack::processorRouting {
 
 inline bool isEffect(NodeType type) noexcept {
     return type == NodeType::chorale || type == NodeType::waveshaper
-        || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type);
+        || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
 }
 
 inline float bounded(float value, float low, float high, float fallback) noexcept {
@@ -130,6 +130,11 @@ inline juce::ValueTree encode(const Graph& graph, const char* type) {
         for (size_t p = 0; p < utilityParameterCount; ++p)
             utility.setProperty(utilityParameters[p].id, n.utility.values[p], nullptr);
         node.addChild(utility, -1, nullptr);
+        juce::ValueTree spectral("SpectralMorph");
+        const auto spectralValues = spectralMorphValues(n.spectralMorph);
+        for (size_t p = 0; p < spectralValues.size(); ++p)
+            spectral.setProperty(spectralMorphParameters[p].id, spectralValues[p], nullptr);
+        node.addChild(spectral, -1, nullptr);
         tree.addChild(node, -1, nullptr);
     }
     for (const auto& l : graph.links) {
@@ -152,7 +157,7 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
             RoutingNode n;
             n.id = static_cast<std::uint32_t>(static_cast<juce::int64>(child.getProperty("id", 0)));
             const int type = child.getProperty("type", -1);
-            if (type < 0 || type > int(NodeType::saturator)) return false;
+            if (type < 0 || type > int(NodeType::spectralMorph)) return false;
             n.type = static_cast<NodeType>(type);
             n.voiceSlot = child.getProperty("voiceSlot", 0);
             n.enabled = child.getProperty("enabled", true);
@@ -201,6 +206,14 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
                 const float value = bounded(float(utility.getProperty(d.id, d.initial)), d.min, d.max, d.initial);
                 n.utility.values[p] = d.discrete ? std::round(value) : value;
             }
+            const auto spectral = child.getChildWithName("SpectralMorph");
+            std::array<float, spectralMorphParameterCount> spectralValues{};
+            for (size_t p = 0; p < spectralValues.size(); ++p) {
+                const auto& d = spectralMorphParameters[p];
+                const float v = bounded(float(spectral.getProperty(d.id, d.initial)), d.min, d.max, d.initial);
+                spectralValues[p] = d.discrete ? std::round(v) : v;
+            }
+            n.spectralMorph = spectralMorphFromValues(spectralValues);
             boundToneSettings(n);
             graph.nodes.push_back(n);
         } else if (child.hasType("Link")) {

@@ -525,8 +525,12 @@ inline void creativeVisuals() {
         if (kinds[k] == CreativeKind::granular)
             ui::require(visual.getTooltip().containsIgnoreCase("parameter")
                             && visual.getTooltip().containsIgnoreCase("not live"), "Granular tooltip must distinguish parameter envelopes from measured grains");
+        else if (kinds[k] == CreativeKind::reverb)
+            ui::require(visual.getTooltip().containsIgnoreCase("actual stereo min/max")
+                            && visual.getTooltip().containsIgnoreCase("foreground model axes")
+                            && visual.getTooltip().containsIgnoreCase("not measured IR"), "Reverb must distinguish measured background from model guide");
         else
-            ui::require(visual.getTooltip().containsIgnoreCase("not a measured impulse response"), "Model must not claim live reverb telemetry");
+            ui::require(visual.getTooltip().containsIgnoreCase("not a measured impulse response"), "Model must not claim a measured impulse response");
         ui::passive(visual); owner->releaseResources();
     }
 }

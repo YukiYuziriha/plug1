@@ -65,6 +65,7 @@ Editor::Editor(Processor& processor)
     getProperties().set(vocalstackAnimationTimeProperty, 0.0);
     addAndMakeVisible(stackViewport);
     stackViewport.setComponentID("stackViewport");
+    layoutCanvas.setOpaque(true); // Every skin paints its full canvas background.
     stackViewport.setViewedComponent(&layoutCanvas, false);
     stackViewport.setScrollBarsShown(true, false);
     layoutCanvas.draw = [this](Graphics& g) {
@@ -102,7 +103,8 @@ Editor::Editor(Processor& processor)
         owner.setMotionPercent(motion.getValue());
     };
     layoutCanvas.addAndMakeVisible(globalMix);
-    globalMix.slider.setTextBoxStyle(Slider::TextBoxRight, false, 42, 19);
+    globalMix.slider.getProperties().set("vocalstackSeparateBarValue", true);
+    globalMix.setLinear(true);
     globalMix.slider.setTooltip("Untouched input / complete processed output. Bypass preserves this setting");
     assignmentBanner.setInterceptsMouseClicks(false, false);
     assignmentBanner.setFont(font(12, true));
@@ -125,14 +127,13 @@ Editor::Editor(Processor& processor)
         if (const auto* parameter = owner.parameters.getParameter(knobParameterIds[i]))
             knob.setDoubleClickReturnValue(true, i == 4 || i == 5 ? 0.0
                 : parameter->convertFrom0to1(parameter->getDefaultValue()));
-        if (i == 1) {
-            knob.textFromValueFunction = [](double value) {
-                return String(100.0 - value, 0) + " / " + String(value, 0);
-            };
-            knob.valueFromTextFunction = [](const String& value) {
-                return value.contains("/") ? value.fromFirstOccurrenceOf("/", false, false).getDoubleValue() : value.getDoubleValue();
-            };
-            knob.updateText();
+        if (i == 1 || i == 5) {
+            knob.setLookAndFeel(i == 1 ? &leadMixStyle : &outputStyle);
+            knob.getProperties().set("vocalstackTexturedBar", true);
+            knob.getProperties().set("vocalstackSeparateBarValue", true);
+            knob.setSliderStyle(Slider::LinearHorizontal);
+            knob.setTextBoxStyle(Slider::TextBoxAbove, false, 90, 20);
+            if (i == 1) configureCrossfadeDisplay(knob, true);
         }
         labels[i].setText(knobNames[i], dontSendNotification);
         labels[i].setJustificationType(Justification::centred);
@@ -200,6 +201,7 @@ Editor::Editor(Processor& processor)
     addChildComponent(revealBubble);
     advancedPanel.selectVoice(selectedVoiceSlot, false, false);
     connectMainBusUndo(mainBusFxRack, routingPanel);
+    mainBusFxRack.onOpenRouting = [this] { openRouting(); };
     layoutCanvas.addAndMakeVisible(mainBusFxRack);
     mainBusFxRack.sync();
     layoutCanvas.addAndMakeVisible(meterPanel);
@@ -266,6 +268,8 @@ void Editor::applyTheme() {
         label.setFont(font(14.0f, false));
     }
     for (auto& knob : knobs) {
+        knob.setColour(Slider::trackColourId, palette.accent);
+        knob.setColour(Slider::thumbColourId, palette.text);
         knob.setColour(Slider::textBoxTextColourId, muted);
         knob.setColour(Slider::textBoxOutlineColourId, Colours::transparentBlack);
         knob.setColour(Slider::textBoxBackgroundColourId, Colours::transparentBlack);
@@ -302,7 +306,7 @@ void Editor::resized() {
     constexpr std::array<int, 6> centers{70, 183, 285, 387, 500, 614};
     for (size_t i = 0; i < knobs.size(); ++i) {
         labels[i].setBounds(centers[i] - 44, 121, 88, 20);
-        knobs[i].setBounds(centers[i] - 45, 148, 90, 114);
+        knobs[i].setBounds(centers[i] - 45, i == 1 || i == 5 ? 170 : 148, 90, i == 1 || i == 5 ? 72 : 114);
     }
     switches[0].setBounds(32, 88, 76, 23);
     switches[1].setBounds(244, 88, 82, 23);
@@ -383,7 +387,13 @@ void Editor::timerCallback() {
                 auto* peer = desktop.getComponent(i);
                 if (peer != this && &peer->getLookAndFeel() == &style) peer->repaint();
             }
-            repaint();
+            // The canvas paints its whole rectangle. Skip covered root material,
+            // but retain root damage below short content in a tall viewport.
+            auto exposed = RectangleList<int>(getLocalBounds());
+            exposed.subtract(getLocalArea(&layoutCanvas, layoutCanvas.getLocalBounds()).getIntersection(stackViewport.getBounds()));
+            for (const auto& rect : exposed) repaint(rect);
+            // Voice/rack surrounds still rely on this decorative clock; excluding
+            // their whole rectangles would freeze materials between value edits.
             if (layoutCanvas.isShowing()) layoutCanvas.repaint();
         }
     } else {
@@ -576,6 +586,8 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     const auto area = Rectangle<float>(static_cast<float>(x), static_cast<float>(y),
                                        static_cast<float>(w), static_cast<float>(h));
     const float radius = std::min(area.getWidth(), area.getHeight()) * (flash ? 0.41f : 0.37f);
+    const float ringWidth = ParameterKnob::Style::rotaryRingWidth(radius + 2.56f);
+    const float ringRadius = radius + 2.56f - ringWidth * .5f;
     const auto centre = area.getCentre();
     const float angle = start + position * (end - start);
     const auto name = slider.getName();
@@ -584,16 +596,16 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     const auto accent = spectral ? (name == "Formant" ? p.secondary : p.accent) : rgb(!flash ? 0xf5a24b : name == "Formant" ? signCyan
                             : name == "Leveler" || name == "Output" ? signYellow : signPink);
     Path track, value;
-    track.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, start, end, true);
+    track.addCentredArc(centre.x, centre.y, ringRadius, ringRadius, 0.0f, start, end, true);
     g.setColour(spectral ? p.border : flash ? rgb(outline) : rgb(0x50564f));
-    g.strokePath(track, PathStrokeType(4.48f, PathStrokeType::curved, PathStrokeType::butt));
+    g.strokePath(track, PathStrokeType(ringWidth, PathStrokeType::curved, PathStrokeType::butt));
     const float origin = name == "Formant" || name == "Output"
         ? start + static_cast<float>(slider.valueToProportionOfLength(0.0)) * (end - start) : start;
     if (std::abs(angle - origin) > 0.001f) {
-        value.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
+        value.addCentredArc(centre.x, centre.y, ringRadius, ringRadius, 0.0f,
                             std::min(angle, origin), std::max(angle, origin), true);
         Path stroke;
-        PathStrokeType(5.12f, PathStrokeType::curved, PathStrokeType::butt).createStrokedPath(stroke, value);
+        PathStrokeType(ringWidth, PathStrokeType::curved, PathStrokeType::butt).createStrokedPath(stroke, value);
         const Graphics::ScopedSaveState save(g);
         g.reduceClipRegion(stroke);
         arcTexture.paint(g, stroke.getBounds().getSmallestIntegerContainer(), accent, p.accent,
@@ -604,7 +616,7 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
         g.drawLine({centre.getPointOnCircumference(radius + 3.0f, origin),
                     centre.getPointOnCircumference(radius + 7.0f, origin)}, 1.2f);
     }
-    const float inner = radius - 5.3f;
+    const float inner = jmax(1.f, radius + 2.56f - ringWidth - 1.f);
     const auto face = Rectangle<float>(inner * 2, inner * 2).withCentre(centre);
     if (spectral || flash)
         g.setColour(spectral ? p.inset : rgb(night));

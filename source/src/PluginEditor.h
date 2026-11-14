@@ -76,7 +76,7 @@ private:
     std::array<FluidBackground, 4> controlBackgrounds;
     DecorativeMotion decorativeMotion;
     ModulationSlider motion;
-    ParameterKnob::Style motionStyle;
+    ParameterKnob::Style motionStyle, outputStyle, leadMixStyle;
 
     double lastBackgroundFrame = -1.0;
     PassiveViewport stackViewport;

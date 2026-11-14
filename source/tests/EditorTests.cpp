@@ -22,6 +22,10 @@
 #include "CoordinatedPreviewTests.h"
 #include "InspectorControlLayoutTests.h"
 #include "ScrollbarTests.h"
+#include "MeasuredFieldUiTests.h"
+#include "ReactiveMaterialTests.h"
+#include "SpectralMorphUiTests.h"
+#include "NodeGalleryTests.h"
 #if JUCE_WINDOWS
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -78,7 +82,7 @@ void advancedParameterContract() {
     Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 2252, "Expected 2087 preserved + 165 new effect parameters");
+    expect(owner.getParameters().size() == 2342, "Expected 2087 preserved + 165 new effect parameters");
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
             const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
@@ -364,7 +368,8 @@ void meterPublicationAndReset() {
     owner.prepareToPlay(48000.0, 256);
     juce::AudioBuffer<float> audio(2, 256);
     juce::MidiBuffer midi;
-    for (int block = 0; block < 20; ++block) {
+    const int settleBlocks = (owner.getLatencySamples() + 255) / 256 + 20;
+    for (int block = 0; block < settleBlocks; ++block) {
         for (int i = 0; i < audio.getNumSamples(); ++i) {
             audio.setSample(0, i, 1.25f);
             audio.setSample(1, i, 0.25f);
@@ -378,7 +383,7 @@ void meterPublicationAndReset() {
     expectNear(before.input[0].maxPeak, 1.25, "Published input maximum");
     expect(std::abs(before.output[0].maxPeak - 1.25f * juce::Decibels::decibelsToGain(6.0f)) < 0.001f,
            "Published output maximum is not post-trim");
-    for (int block = 0; block < 20; ++block) {
+    for (int block = 0; block < settleBlocks; ++block) {
         audio.clear();
         owner.processBlock(audio, midi);
     }
@@ -724,7 +729,7 @@ void editorSkin(int theme) {
     // Stack preserves native control sizes and scrolls vertically below the FX row.
     static_assert(vocalstack::editorLayout::defaultWindowHeight == 1104);
     static_assert(vocalstack::editorLayout::additionalVoiceScrollbarHeight == 10);
-    static_assert(vocalstack::editorLayout::stackCanvasHeight == 1148 + 10);
+    static_assert(vocalstack::editorLayout::stackCanvasHeight == 1148 + 10 + 48);
     expect(editor->isResizable() && windowHeight == vocalstack::editorLayout::defaultWindowHeight
                && windowWidth == vocalstack::editorLayout::editorWidth,
            "Fresh editor must remain resizable at 940x1104, including the 52px preset footer");
@@ -739,8 +744,8 @@ void editorSkin(int theme) {
             checkDrawerControls(owner, *child, advancedSliders, advancedButtons, true);
     }
     auto* rack = vocalstack::toneUiTests::find<vocalstack::MainBusFxRackPanel>(canvas, [](auto&) { return true; });
-    expect(rack && rack->isVisible() && rack->getBounds() == juce::Rectangle<int>(18, 344, 904, 340),
-           "Stack must retain the 904x340 horizontal Main Bus FX row below the main controls");
+    expect(rack && rack->isVisible() && rack->getBounds() == juce::Rectangle<int>(18, 344, 904, vocalstack::MainBusFxRackPanel::preferredHeight),
+           "Stack must retain the taller horizontal Main Bus FX row below the main controls");
     auto* freshStack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(canvas, [](auto&) { return true; });
     expect(freshStack && freshStack->getBounds() == juce::Rectangle<int>(18, vocalstack::editorLayout::stackPanelY, 904,
                                                                         vocalstack::editorLayout::stackPanelHeight)
@@ -820,8 +825,105 @@ void neonEditor() { editorSkin(1); }
 void spectralEditor() { editorSkin(2); }
 }
 
+// Optional bounded native paint-cost probe, not a delivered-FPS measurement.
+// Run separately from regressions so native interaction/capture is never raced.
+void benchmarkRoutingWork() {
+#if JUCE_WINDOWS
+    using namespace vocalstack;
+    guiTestDisplay::enumerate();
+    auto owner = std::make_unique<Processor>();
+    auto graph = defaultGraph();
+    for (auto type : {NodeType::spectralMorph, NodeType::waveshaper, NodeType::equalizer,
+            NodeType::compressor, NodeType::reverb, NodeType::delay, NodeType::bitcrusher,
+            NodeType::granular, NodeType::convolution, NodeType::saturator, NodeType::gain,
+            NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter}) {
+        const auto edit = mainBusFx::add(graph, type);
+        toneUiTests::require(edit.changed, "Benchmark FX graph capacity"); graph = edit.graph;
+    }
+    juce::String error;
+    toneUiTests::require(owner->setRoutingGraph(graph, error), "Benchmark graph rejected");
+    owner->prepareToPlay(48000, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor());
+    const auto work = guiTestDisplay::selected().userArea;
+    editor->setSize(std::min(1280, work.getWidth()), std::min(800, work.getHeight()));
+    guiTestDisplay::attach(*editor); toneUiTests::action(*editor, "Routing");
+    auto* panel = toneUiTests::find<RoutingPanel>(*editor, [](auto& c) { return c.isShowing(); });
+    toneUiTests::require(panel != nullptr, "Benchmark Routing panel missing");
+    const auto dispatch = [] {
+        MSG message;
+        while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessage(&message); }
+        juce::Timer::callPendingTimersSynchronously();
+    };
+    juce::AudioBuffer<float> audio(2, 256); juce::MidiBuffer midi;
+    int sample = 0;
+    std::cout << "NATIVE_ROUTING_COST: native paint/timer cost only, not delivered FPS; 15 independent FX, synchronous real PCM\n";
+    for (double motion : {0., 3., 100.}) for (int state = 0; state < 3; ++state) {
+        owner->setMotionPercent(motion);
+        toneUiTests::action(*panel, state == 0 ? "Collapse all" : "Expand all");
+        if (state == 2) {
+            auto layout = owner->getRoutingLayout();
+            layout.setProperty("panX", -50000.f, nullptr); layout.setProperty("panY", -50000.f, nullptr);
+            owner->setRoutingLayout(layout);
+        } else if (state == 0) toneUiTests::action(*panel, "Fit");
+        for (int settle = 0; settle < 8; ++settle) { juce::Thread::sleep(16); dispatch(); }
+        const auto native = static_cast<HWND>(editor->getPeer()->getNativeHandle());
+        RECT nativeBounds{};
+        toneUiTests::require(GetWindowRect(native, &nativeBounds) != 0, "Native Routing benchmark window bounds unavailable");
+        POINT point{(nativeBounds.left + nativeBounds.right) / 2, (nativeBounds.top + nativeBounds.bottom) / 2};
+        const auto hit = WindowFromPoint(point);
+        if (GetAncestor(hit, GA_ROOT) != GetAncestor(native, GA_ROOT)) {
+            wchar_t className[256]{}; GetClassNameW(hit, className, 256);
+            throw std::runtime_error("Native Routing cost probe is occluded by " + juce::String(className).toStdString());
+        }
+        panel->resetRoutingWorkCounters(); FluidBackground::resetWorkCounters();
+        const auto started = juce::Time::getMillisecondCounterHiRes();
+        double dispatchMs = 0;
+        for (int frame = 0; frame < 60; ++frame) {
+            for (int block = 0; block < 3; ++block) {
+                for (int i = 0; i < 256; ++i, ++sample) {
+                    audio.setSample(0, i, .2f * std::sin(float(sample) * .063f));
+                    audio.setSample(1, i, .17f * std::sin(float(sample) * .077f));
+                }
+                owner->processBlock(audio, midi);
+            }
+            const auto before = juce::Time::getMillisecondCounterHiRes(); dispatch();
+            dispatchMs += juce::Time::getMillisecondCounterHiRes() - before;
+            juce::Thread::sleep(16);
+        }
+        const auto routing = panel->routingWorkCounters(); const auto material = FluidBackground::workCounters();
+        std::cout << "routing_cost motion=" << motion << " state=" << (state == 0 ? "collapsed" : state == 1 ? "expanded-exposed" : "expanded-offscreen")
+            << " wall_ms=" << juce::Time::getMillisecondCounterHiRes() - started << " dispatch_ms=" << dispatchMs
+            << " canvas_paints=" << routing.canvasPaints << " canvas_ms=" << routing.canvasPaintMs
+            << " syncs=" << routing.cardSynchronizations << " timer_ticks=" << routing.timerTicks
+            << " nodes_drawn=" << routing.nodesDrawn << " nodes_culled=" << routing.nodesCulled
+            << " cables_drawn=" << routing.cablesDrawn << " cables_culled=" << routing.cablesCulled
+            << " material_rasters=" << material.rasterizations << " material_hits=" << material.cacheHits
+            << " material_pixels=" << material.pixelsGenerated << '\n';
+    }
+    editor.reset(); owner->releaseResources();
+#else
+    throw std::runtime_error("Native Routing cost probe currently requires Windows message dispatch");
+#endif
+}
+
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI gui;
+    if (argc == 2 && juce::String(argv[1]) == "--benchmark-routing") {
+        try { benchmarkRoutingWork(); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Native Routing cost probe: " << error.what() << '\n'; return 1; }
+    }
+    if (argc >= 2 && juce::String(argv[1]) == "--render-node-gallery") {
+        try { vocalstack::nodeGalleryTests::run(argc > 2 ? juce::String(argv[2]) : juce::String()); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Node gallery: " << error.what() << std::endl; return 1; }
+    }
+    if (argc == 2 && juce::String(argv[1]) == "--render-spectral-morph") {
+        try { vocalstack::spectralMorphUiTests::run(true); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Spectral Morph render: " << error.what() << std::endl; return 1; }
+    }
+    if (argc == 2 && juce::String(argv[1]) == "--render-measured-fields") {
+        try { vocalstack::measuredFieldUiTests::run(true); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Measured field render: " << error.what() << '\n'; return 1; }
+    }
     if (argc == 2 && juce::String(argv[1]) == "--render-routing-chunky") {
         try { routingChunky::screenshots(); return 0; }
         catch (const std::exception& error) { std::cerr << "[FAIL] Routing render: " << error.what() << '\n'; return 1; }
@@ -876,9 +978,12 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 75> tests{{
+    const std::array<Test, 78> tests{{
             {"Scrollbar thickness, nested axes, confinement and dense inspectors", vocalstack::scrollbarTests::run},
             {"Dry/Wet repeated Add, Duplicate, independent controls and history", dryWetUi::run},
+        {"Spectral Morph measured internal/external donor and actual Freeze", [] { vocalstack::spectralMorphUiTests::run(); }},
+        {"Reactive material models and three-spectrum composition", vocalstack::reactiveMaterialTests::run},
+        {"Measured graph fields, real reverb tails and Motion zero", [] { vocalstack::measuredFieldUiTests::run(); }},
         {"Coordinated Motion, sparse groups and real factory FX telemetry", vocalstack::coordinatedPreviewTests::run},
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},

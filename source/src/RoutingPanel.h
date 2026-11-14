@@ -3,6 +3,7 @@
 
 #include "ToneEffectPanel.h"
 #include "CreativeEffectPanel.h"
+#include "SpectralMorphVisual.h"
 #include "UtilityEffectPanel.h"
 #include "ModulationPanel.h"
 #include "FluidBackground.h"
@@ -74,6 +75,10 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             } else if (n.type == NodeType::chorale && slot >= 0) {
                 addKnob(fxParameterId(size_t(slot), "Mix"), "Mix", "%");
                 addKnob(fxParameterId(size_t(slot), "Motion"), "Motion", "%");
+            } else if (slot > 0 && n.type == NodeType::spectralMorph) {
+                spectral = std::make_unique<SpectralMorphPanel>(panel.owner, size_t(slot));
+                spectral->onOpenRouting = [this] { panel.selectedNode = model.id; panel.rebuildInspector(); panel.canvas.repaint(); };
+                addAndMakeVisible(*spectral);
             } else if (slot > 0 && isCreativeEffect(n.type)) {
                 creative = std::make_unique<CreativeEffectPanel>(panel.owner, size_t(slot), creativeKind(n.type));
                 creative->setInspectorLayout(true);
@@ -119,6 +124,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             if (enabled.getParentComponent()) { enabled.setBounds(body.removeFromTop(28).withWidth(150)); body.removeFromTop(4); }
             if (voice) voice->setBounds(body);
             if (tone) tone->setBounds(body);
+            if (spectral) spectral->setBounds(body);
             if (creative) creative->setBounds(body);
             if (utility) utility->setBounds(body);
             const int width = body.getWidth() / juce::jmax(1, int(knobs.size()));
@@ -131,6 +137,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         void setNeon(bool neon) {
             if (voice) voice->setNeon(neon);
             if (tone) tone->setNeon(neon);
+            if (spectral) spectral->setNeon(neon);
             if (creative) creative->setNeon(neon);
             if (utility) utility->setNeon(neon);
             for (auto& knob : knobs) knob->setNeon(neon);
@@ -169,6 +176,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enabledLink;
         std::unique_ptr<VoiceControls> voice;
         std::unique_ptr<ToneEffectPanel> tone;
+        std::unique_ptr<SpectralMorphPanel> spectral;
         std::unique_ptr<CreativeEffectPanel> creative;
         std::unique_ptr<UtilityEffectPanel> utility;
         std::vector<std::unique_ptr<ParameterKnob>> knobs;
@@ -453,6 +461,7 @@ public:
         }
         for (auto& field : fields) field->setNeon(neon);
         if (tonePanel) tonePanel->setNeon(neon);
+        if (spectralPanel) spectralPanel->setNeon(neon);
         if (creativePanel) creativePanel->setNeon(neon);
         if (utilityPanel) utilityPanel->setNeon(neon);
                 if (voiceControls) voiceControls->setNeon(neon);
@@ -521,6 +530,12 @@ public:
                 selectedNode = n.id; selectedLink = -1;
                 rebuildInspector(); saveLayout(); canvas.repaint(); return;
             }
+    }
+    void selectEffect(uint32_t id) {
+        const auto* target = node(id);
+        if (!target || !isEffect(target->type)) return;
+        selectedNode = id; selectedLink = -1;
+        rebuildInspector(); saveLayout(); canvas.repaint();
     }
     uint32_t selectedModulationId() const { return modulationui::selectedModulator(owner); }
         std::function<void(int)> onSelectVoice;
@@ -670,7 +685,10 @@ private:
     juce::String title(const RoutingNode& n) const {
         if (const auto alias = names.find(n.id); alias != names.end()) return alias->second;
         switch (n.type) {
+        case NodeType::spectralMorph: return "SPECTRAL MORPH " + juce::String(routingFxSlot(n.id));
         case NodeType::lead: return "LEAD";
+                case NodeType::sidechain: return owner.externalSidechainChannels() == 0 ? "SIDECHAIN / DISABLED"
+                    : owner.externalSidechainChannels() == 1 ? "SIDECHAIN / MONO CONFIG" : "SIDECHAIN / STEREO CONFIG";
         case NodeType::voice: return "VOICE " + juce::String(n.voiceSlot + 1);
         case NodeType::chorale: return n.mainControls ? "CHORALE / MAIN" : "CHORALE " + juce::String(int(n.id) - 98);
         case NodeType::sum: return {}; // Legacy nodes are stripped by the processor.
@@ -699,10 +717,10 @@ private:
     }
     static bool isEffect(NodeType type) {
         return type == NodeType::chorale || type == NodeType::waveshaper
-            || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type);
+            || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
     }
     static int inputs(const RoutingNode& n) {
-        return n.type == NodeType::mix ? 2 : isEffect(n.type) || n.type == NodeType::output || n.type == NodeType::splitter ? 1 : 0;
+        return routingInputCount(n.type);
     }
     int outputPins(const RoutingNode& n) const {
         if (n.type == NodeType::output || n.type == NodeType::sum) return 0;
@@ -872,6 +890,7 @@ private:
     }
     juce::Point<int> bodySize(const RoutingNode& n) const {
         if (n.type == NodeType::voice || n.type == NodeType::lead) return {400, 258};
+        if (n.type == NodeType::spectralMorph) return {500, 310};
         if (isCreativeEffect(n.type)) return {500, 470};
         if (isUtilityEffect(n.type)) {
             const auto kind = utilityKind(n.type);
@@ -1010,6 +1029,7 @@ private:
         return {toScreen(top), toScreen(top + juce::Point<float>(float(size.x), float(size.y)))};
     }
     void syncNodeCards() {
+        ++workCounters.cardSynchronizations;
         // Geometry is independent of child lifetime. No dormant timer/monitor or
         // response job is retained for a collapsed, hidden or offscreen body.
         const auto view = canvas.getLocalBounds().toFloat();
@@ -1074,14 +1094,30 @@ private:
         return count;
     }
     void paintCanvas(juce::Graphics& g) {
+        struct PaintMeasurement {
+            WorkCounters& counters;
+            double start = juce::Time::getMillisecondCounterHiRes();
+            ~PaintMeasurement() { ++counters.canvasPaints; counters.canvasPaintMs += juce::Time::getMillisecondCounterHiRes() - start; }
+        } measurement{workCounters};
+        const auto clip = g.getClipBounds().toFloat();
+        const auto paintedLinks = displayLinks();
+        const auto inputConnections = [&](uint32_t id, int pin) {
+            int count = 0;
+            for (const auto& item : paintedLinks)
+                if (item.link.destination == id && item.link.inputPin == pin) ++count;
+            return count;
+        };
         const auto palette = themePalette(*this, neon);
         canvasBackground.paint(g, canvas.getLocalBounds(), palette.inset, palette.accent, fluidAnimationSeconds(canvas));
         const auto accent = palette.accent;
         g.setColour(palette.border.withAlpha(.55f));
         const float step = 32 * zoom;
-        for (float x = std::fmod(pan.x, step); x < float(canvas.getWidth()); x += step)
-            for (float y = std::fmod(pan.y, step); y < float(canvas.getHeight()); y += step) g.fillRect(x, y, 1.0f, 1.0f);
-        for (const auto& item : displayLinks()) {
+        const float originX = std::fmod(pan.x, step), originY = std::fmod(pan.y, step);
+        const float firstX = originX + std::floor((clip.getX() - originX) / step) * step;
+        const float firstY = originY + std::floor((clip.getY() - originY) / step) * step;
+        for (float x = firstX; x < clip.getRight(); x += step)
+            for (float y = firstY; y < clip.getBottom(); y += step) g.fillRect(x, y, 1.0f, 1.0f);
+        for (const auto& item : paintedLinks) {
             const int i = item.index;
             if (i == rewiringLink) continue;
             const auto& l = item.link;
@@ -1090,6 +1126,8 @@ private:
             const bool inactive = inactiveSource(l);
             g.setColour(int(i) == selectedLink ? palette.secondary : inactive ? palette.muted.withAlpha(0.5f) : accent.withAlpha(0.7f));
             const auto path = cable(pinPoint(*a, l.sourcePin, true), pinPoint(*b, l.inputPin, false));
+            if (!clip.intersects(path.getBounds().expanded(5.0f))) { ++workCounters.cablesCulled; continue; }
+            ++workCounters.cablesDrawn;
             const auto stroke = routingCableStyle::stroke(int(i) == selectedLink);
             if (inactive) {
                 juce::Path dashed; const float lengths[]{5.0f, 4.0f};
@@ -1111,6 +1149,8 @@ private:
             if (!nodeVisible(n)) continue;
             const auto b = nodeBounds(n);
             const auto screen = juce::Rectangle<float>(toScreen(b.getTopLeft()), toScreen(b.getBottomRight()));
+            if (!clip.intersects(screen.expanded(6.0f))) { ++workCounters.nodesCulled; continue; }
+            ++workCounters.nodesDrawn;
             const auto nodeAccent = n.type == NodeType::voice
                 ? (componentTheme(*this) == Theme::device ? VoiceMonitor::voiceColour(size_t(juce::jlimit(0, 7, n.voiceSlot))) : palette.secondary)
                 : accent;
@@ -1143,11 +1183,11 @@ private:
             g.setFont(juce::Font(pixelFontOptions(12.5f)));
             for (int pin = 0; pin < inputs(n); ++pin) {
                 const auto p = pinPoint(n, pin, false) - b.getTopLeft();
-                const int count = connectionCount(n.id, pin);
+                const int count = inputConnections(n.id, pin);
                 g.setColour(count > 0 ? accent : palette.muted);
                 g.fillRect(p.x - 5, p.y - 5, 10.0f, 10.0f);
                 g.setColour(palette.muted);
-                const juce::String name = n.type == NodeType::mix ? (pin == 0 ? "Dry" : "Wet") : "In";
+                const juce::String name = routingInput(n.type, pin).name;
                 g.drawText(name + (count > 1 ? " x" + juce::String(count) : juce::String()), int(p.x + 9), int(p.y - 8), 64, 16, juce::Justification::centredLeft);
             }
             for (int pin = 0; pin < outputPins(n); ++pin) {
@@ -1420,6 +1460,12 @@ private:
             juce::Point<float> p;
             switch (n.type) {
             case NodeType::lead: p = {24, 20}; break;
+            case NodeType::sidechain:
+                p = {24, 100};
+                for (const auto& source : graph.nodes)
+                    if (source.type == NodeType::voice && voicePresent(source.voiceSlot))
+                        p.y = std::max(p.y, 100.f + float((source.voiceSlot + 1) * 70));
+                break;
             case NodeType::voice: p = {24, 100.0f + float(n.voiceSlot * 70)}; break;
             case NodeType::sum: p = {}; break;
             case NodeType::mix: p = {490, 30}; break;
@@ -1434,6 +1480,7 @@ private:
             case NodeType::granular:
             case NodeType::convolution:
             case NodeType::saturator:
+            case NodeType::spectralMorph:
             case NodeType::gain:
             case NodeType::stereo:
             case NodeType::gate:
@@ -1602,7 +1649,9 @@ private:
 
     void showStatus() {
         status.setText(error.isNotEmpty() ? "EDIT REJECTED  /  " + error + "  /  Visible cables remain the running routing."
-            : "LIVE ROUTING  /  Automatic gain compensation at merges. Unconnected inputs and Output are silent.", juce::dontSendNotification);
+            : owner.routingRestartPending()
+                ? "RESTART PENDING  /  Saved cables are not running. Deactivate/reactivate the plugin in the host to apply latency changes (transport stop is not enough)."
+                : "LIVE ROUTING  /  Automatic gain compensation at merges. Unconnected inputs and Output are silent.", juce::dontSendNotification);
         status.setTooltip(status.getText());
         status.setColour(juce::Label::textColourId, error.isEmpty() ? themePalette(*this, neon).secondary : themePalette(*this, neon).accent);
         updateButtons();
@@ -1728,6 +1777,7 @@ private:
         menu.addItem(52, "Compressor | stereo dynamics", effectRoom);
         menu.addItem(53, "Bitcrusher | digital texture", effectRoom);
         menu.addItem(54, "Granular | capture / pitch", effectRoom);
+        menu.addItem(57, "Spectral Morph | MAIN / DONOR", effectRoom);
                 menu.addItem(55, "Convolution | synthetic IR spaces", effectRoom);
                 menu.addItem(56, "Saturator | warm / 2x ADAA", effectRoom);
         menu.addSeparator();
@@ -1742,6 +1792,7 @@ private:
         menu.addItem(300, "Splitter | full-level A / B duplicates", room);
         menu.addSeparator();
         menu.addItem(10, "Restore Lead source", room && !hasSource(-1));
+                menu.addItem(41, "SIDECHAIN | external host input (unwired)", room && !node(14));
         for (int i = 0; i < 8; ++i) if (voicePresent(i))
             menu.addItem(20 + i, "Restore Voice " + juce::String(i + 1) + " source", room && !hasSource(i));
         menu.addItem(40, "Restore main Chorale", room && !node(12) && effects < 16);
@@ -1757,7 +1808,7 @@ private:
     void addNode(int kind, juce::Point<float> insertion) {
         if (graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
         RoutingNode n;
-        if (kind == 1 || kind == 4 || kind == 5 || kind == 6 || (kind >= 50 && kind <= 54) || (kind >= 60 && kind <= 64)) {
+        if (kind == 1 || kind == 4 || kind == 5 || kind == 6 || (kind >= 50 && kind <= 57) || (kind >= 60 && kind <= 64)) {
             switch (kind) {
                 case 1: n.type = NodeType::chorale; break;
                 case 4: n.type = NodeType::waveshaper; break;
@@ -1768,6 +1819,7 @@ private:
                 case 52: n.type = NodeType::compressor; break;
                 case 53: n.type = NodeType::bitcrusher; break;
                 case 54: n.type = NodeType::granular; break;
+                case 57: n.type = NodeType::spectralMorph; n.mix = 1.f; break;
                                 case 55: n.type = NodeType::convolution; n.mix = .25f; break;
                                 case 56: n.type = NodeType::saturator; n.mix = 1.f; break;
                                 case 60: n.type = NodeType::gain; break;
@@ -1781,6 +1833,10 @@ private:
             int effects = 0;
             for (const auto& existing : graph.nodes) if (isEffect(existing.type)) ++effects;
             if (effects >= 16) return;
+        } else if (kind == 41) {
+            for (const auto& existing : graph.nodes) if (existing.type == NodeType::sidechain) return;
+            if (node(14)) return;
+            n.id = 14; n.type = NodeType::sidechain;
         } else if (kind == 3) {
             n.type = NodeType::mix;
             for (std::uint32_t id = 200; id < 248; ++id) if (!node(id)) { n.id = id; break; }
@@ -1829,7 +1885,7 @@ private:
         updateModulationPanel();
         inspectorTitle.setEditable(false, node(selectedNode) != nullptr, false);
         toneViewport.setViewedComponent(nullptr, false);
-        tonePanel.reset(); creativePanel.reset(); utilityPanel.reset(); voiceControls.reset(); mixControl.reset(); fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
+        tonePanel.reset(); spectralPanel.reset(); creativePanel.reset(); utilityPanel.reset(); voiceControls.reset(); mixControl.reset(); fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
 
         inspector.addAndMakeVisible(inspectorTitle); inspector.addAndMakeVisible(inspectorInfo);
         inspectorTitle.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
@@ -1855,6 +1911,8 @@ private:
         juce::String info = "Select a machine to edit its controls.\n\nInputs accept multiple voices with automatic merge compensation. Each output (each Multiband band) has one outgoing cable. Dragging it to another input replaces its existing links; dropping on empty space disconnects them. Saved fanout remains until that output is edited. A click without dragging leaves wiring unchanged.\n\nDrag an occupied input end to reconnect; drop it on empty space to disconnect that cable. Ctrl/Command-drag an output to move a cable's source. Wheel zooms at the cursor; Alt/middle-drag pans.\n\nAbsent voices and the untouched bypassed main Chorale are hidden without changing routing. Muted voices stay visible. Unconnected inputs receive silence; rejected edits retain accepted routing.";
         if (n) {
             info = "Node ID " + juce::String(n->id);
+            if (n->type == NodeType::sidechain)
+                info += "\nOptional host auxiliary input. Mono duplicates; stereo preserves L/R. Configured channels do not prove a host cable is connected: connectivity is unknown. Missing input is silence, never main audio. Connect this source explicitly; no FX slot or level normalization.";
             if (n->type == NodeType::splitter)
                 info += "\nOne input is duplicated at full level to outputs A and B. No dry/wet blend, band split or FX slot. Each port has its own outgoing cable; rewiring one leaves the other intact.";
             if (isEffect(n->type)) {
@@ -1875,6 +1933,11 @@ private:
                             inspector.addAndMakeVisible(*fields.back());
                         }
                         info += "\nOne independent machine; routing chooses its input.\nNew Chorale slots start On / 25% Mix / 35% Motion.";
+                    } else if (slot > 0 && n->type == NodeType::spectralMorph) {
+                        spectralPanel = std::make_unique<SpectralMorphPanel>(owner, size_t(slot));
+                        spectralPanel->onOpenRouting = [this] { fitIfUnpositioned(); };
+                        inspector.addAndMakeVisible(*spectralPanel);
+                        info += "\nMAIN and DONOR are independent. Unwired donor is silence. External configuration is not a host connection detector.";
                     } else if (slot > 0 && isCreativeEffect(n->type)) {
                         creativePanel = std::make_unique<CreativeEffectPanel>(owner, size_t(slot), creativeKind(n->type));
                         creativePanel->setInspectorLayout(true);
@@ -2011,8 +2074,9 @@ private:
                 }
         fxOn.setBounds(4, 34, 80, 26);
         disconnect.setBounds(4, 34, 130, 28);
-        if (creativePanel || utilityPanel) {
+        if (creativePanel || utilityPanel || spectralPanel) {
             const int available = juce::jmax(0, inspector.getHeight() - 96);
+            if (spectralPanel) spectralPanel->setBounds(0, 68, inspector.getWidth(), available);
             if (creativePanel) creativePanel->setBounds(0, 68, inspector.getWidth(), available);
             if (utilityPanel) utilityPanel->setBounds(0, 68, inspector.getWidth(), available);
             inspectorInfo.setFont(juce::Font(pixelFontOptions(11.0f)));
@@ -2056,6 +2120,16 @@ private:
         return result;
     }
     void timerCallback() override {
+        ++workCounters.timerTicks;
+        if (!isShowing()) return;
+        const auto materialFrame = std::floor(fluidAnimationSeconds(canvas) * 10.0);
+        if (materialFrame != lastMaterialFrame) {
+            lastMaterialFrame = materialFrame;
+            canvas.repaint();
+        }
+        if (lastRestartPending != owner.routingRestartPending()) {
+            lastRestartPending = owner.routingRestartPending(); showStatus();
+        }
         routingStyle.setDecorativePhase(fluidAnimationSeconds(*this));
         refreshAssignmentBanner();
         // A divider gesture changes bounds only; defer external rebuilds until release.
@@ -2090,9 +2164,8 @@ private:
                 rebuildInspector();
             updateButtons(); canvas.repaint();
         }
-        syncNodeCards();
         modulationui::refreshWithSelection(canvas, owner, snapshot, owner.getModulationState(), owner.modulationAssignmentId());
-        if (draggingNode || connecting || rewiringLink >= 0 || inspectorDragging) return;
+        if (draggingNode || connecting || rewiringLink >= 0 || inspectorDragging) { syncNodeCards(); return; }
         auto latest = owner.getRoutingGraph();
         const auto next = signature(latest);
         const auto savedLayout = owner.getRoutingLayout();
@@ -2103,6 +2176,7 @@ private:
             loadLayout(savedLayout); lastLayoutSignature = layoutSignature;
             ensurePositions(); error.clear(); showStatus(); rebuildInspector();
             lastPortSignature = portSignature();
+            canvas.repaint();
         }
         if (const auto* n = node(selectedNode); n && isEffect(n->type) && fxSlot(*n) >= 0) {
             const auto* on = owner.parameters.getRawParameterValue(fxParameterId(size_t(fxSlot(*n)), size_t(0)));
@@ -2113,9 +2187,21 @@ private:
         const int cardTheme = int(componentTheme(*this, neon));
         if (cardTheme != lastCardTheme) { lastCardTheme = cardTheme; setNeon(neon); }
         updateButtons();
-        // Port counts and bypass come from host parameters, not serialized nodes.
-        canvas.repaint();
+        // Port/bypass changes and material frame advances invalidate above;
+        // unchanged Motion=0 ticks do not repaint the entire expanded canvas.
     }
+public:
+    struct WorkCounters {
+        uint64_t timerTicks = 0, cardSynchronizations = 0, canvasPaints = 0;
+        uint64_t nodesDrawn = 0, nodesCulled = 0, cablesDrawn = 0, cablesCulled = 0;
+        double canvasPaintMs = 0;
+    };
+    WorkCounters routingWorkCounters() const { return workCounters; }
+    void resetRoutingWorkCounters() { workCounters = {}; }
+private:
+    WorkCounters workCounters;
+    double lastMaterialFrame = -1;
+    bool lastRestartPending = false;
     Processor& owner;
     FluidBackground background, canvasBackground;
     std::map<std::uint32_t, FluidBackground> nodeMaterials;
@@ -2162,6 +2248,7 @@ private:
             juce::BubbleMessageComponent revealBubble;
         std::vector<std::unique_ptr<ModulatorTile>> modulatorButtons;
     std::unique_ptr<ToneEffectPanel> tonePanel;
+    std::unique_ptr<SpectralMorphPanel> spectralPanel;
     std::unique_ptr<CreativeEffectPanel> creativePanel;
     std::unique_ptr<UtilityEffectPanel> utilityPanel;
     juce::Viewport toneViewport;

@@ -9,6 +9,8 @@
 #include <cmath>
 #include <complex>
 #include <utility>
+#include <map>
+#include <memory>
 
 namespace vocalstack::toneui {
 
@@ -58,13 +60,23 @@ public:
     FxSpectrum() { clear(); }
     void clear() { db.fill(-96); }
     void decay(float amount) { for (auto& v : db) v = std::max(-96.0f, v - amount); }
+    void copyLevelsFrom(const FxSpectrum& other) { db = other.db; }
     void update(const std::array<std::array<float, size>, 2>& samples) {
+        static const auto window = [] {
+            std::array<double, size> result{};
+            for (size_t i = 0; i < size; ++i)
+                result[i] = 0.5 - 0.5 * std::cos(6.283185307179586 * double(i) / double(size - 1));
+            return result;
+        }();
+        static const double windowSum = [] {
+            double sum = 0;
+            for (auto w : window) sum += w;
+            return sum;
+        }();
         std::array<double, bins> power{};
         for (size_t ch = 0; ch < 2; ++ch) {
-            double windowSum = 0;
             for (size_t i = 0; i < size; ++i) {
-                const double w = 0.5 - 0.5 * std::cos(6.283185307179586 * double(i) / double(size - 1));
-                windowSum += w;
+                const double w = window[i];
                 work[i] = std::complex<double>(std::isfinite(samples[ch][i]) ? samples[ch][i] * w : 0, 0);
             }
             for (size_t i = 1, j = 0; i < size; ++i) {
@@ -116,12 +128,53 @@ private:
     std::array<std::complex<double>, size> work{};
 };
 
+// Intersect every ancestor, not just isShowing(): a showing child can be
+// scrolled completely outside a viewport or clipped by an expanded node body.
+inline bool monitorIntersectsAncestors(const juce::Component& component) {
+    if (!component.isShowing() || component.getLocalBounds().isEmpty()) return false;
+    auto area = component.getLocalBounds();
+    auto* child = &component;
+    while (auto* parent = child->getParentComponent()) {
+        area = parent->getLocalArea(child, area).getIntersection(parent->getLocalBounds());
+        if (area.isEmpty()) return false;
+        child = parent;
+    }
+    return true;
+}
+
+// Message-thread-only cache. Multiple panels for the same slot analyze each
+// published sequence once; weak ownership expires with the last spectrum view.
+struct SharedFxSpectrum {
+    FxSpectrum input, output;
+    uint64_t sequence = 0, epoch = 0, analyses = 0;
+    uint32_t nodeId = 0;
+    double rate = 0;
+    void update(const FxMonitorFrame& frame) {
+        if (sequence == frame.sequence && epoch == frame.epoch && nodeId == frame.nodeId && rate == frame.sampleRate) return;
+        if (epoch != frame.epoch || nodeId != frame.nodeId || rate != frame.sampleRate) { input.clear(); output.clear(); }
+        input.update(frame.input); output.update(frame.output);
+        sequence = frame.sequence; epoch = frame.epoch; nodeId = frame.nodeId; rate = frame.sampleRate;
+        ++analyses;
+    }
+    static std::shared_ptr<SharedFxSpectrum> acquire(Processor& processor, size_t slot) {
+        using Key = std::pair<Processor*, size_t>;
+        static std::map<Key, std::weak_ptr<SharedFxSpectrum>> entries;
+        for (auto it = entries.begin(); it != entries.end();)
+            if (it->second.expired()) it = entries.erase(it); else ++it;
+        auto& weak = entries[{&processor, slot}];
+        auto shared = weak.lock();
+        if (!shared) { shared = std::make_shared<SharedFxSpectrum>(); weak = shared; }
+        return shared;
+    }
+};
+
 // Each visible view retains independently (including the expanded EQ window).
 // Polling is message-thread only; no GUI or FFT work reaches the audio callback.
 class FxMonitorView : public juce::Component, private juce::Timer {
 public:
     FxMonitorView(Processor& processor, size_t fxSlot, bool analyze)
         : monitorOwner(processor), monitorSlot(fxSlot), analyzeSpectrum(analyze) {
+        if (analyzeSpectrum) sharedSpectrum = SharedFxSpectrum::acquire(processor, fxSlot);
         setWantsKeyboardFocus(false);
         setMouseClickGrabsKeyboardFocus(false);
         startTimerHz(30);
@@ -176,7 +229,7 @@ protected:
 private:
     void clear() { valid = false; opacity = 0; frame = {}; input.clear(); output.clear(); }
     void syncSubscription() {
-        const bool wanted = isShowing() && monitorSlot >= 1 && monitorSlot <= 15;
+        const bool wanted = monitorIntersectsAncestors(*this) && monitorSlot >= 1 && monitorSlot <= 15;
         if (wanted == retained) return;
         if (wanted) monitorOwner.retainFxMonitor(monitorSlot);
         else monitorOwner.releaseFxMonitor(monitorSlot);
@@ -187,11 +240,18 @@ private:
         if (!retained) return;
         const double now = juce::Time::getMillisecondCounterHiRes();
         FxMonitorFrame next;
-        if (!monitorOwner.readFxMonitor(monitorSlot, next)) { clear(); repaint(); return; }
+        if (!monitorOwner.readFxMonitor(monitorSlot, next)) {
+            if (valid) { clear(); repaint(); }
+            return;
+        }
         if (!valid || next.sequence != frame.sequence || next.nodeId != frame.nodeId || next.sampleRate != frame.sampleRate) {
             if (!valid || next.epoch != frame.epoch || next.nodeId != frame.nodeId || next.sampleRate != frame.sampleRate) { input.clear(); output.clear(); }
             frame = next; valid = true; opacity = 1; lastFrameMs = now;
-            if (analyzeSpectrum) { input.update(frame.input); output.update(frame.output); }
+            if (sharedSpectrum) {
+                sharedSpectrum->update(frame);
+                input.copyLevelsFrom(sharedSpectrum->input);
+                output.copyLevelsFrom(sharedSpectrum->output);
+            }
         } else if (now - lastFrameMs > 200) {
             const float elapsed = float(std::min(250.0, now - lastTickMs));
             opacity = std::max(0.0f, opacity - elapsed / 650);
@@ -200,6 +260,7 @@ private:
         lastTickMs = now; repaint();
     }
     FxSpectrum input, output;
+    std::shared_ptr<SharedFxSpectrum> sharedSpectrum;
     bool retained = false, analyzeSpectrum;
     double lastFrameMs = 0, lastTickMs = 0;
 };

@@ -47,11 +47,16 @@ inline constexpr double proceduralAnimationSpeed = 1.2;
 class FluidBackground {
 public:
     enum class Material { background, control, fatBar };
+    struct WorkCounters { uint64_t paints = 0, cacheHits = 0, rasterizations = 0, pixelsGenerated = 0, clipCulls = 0; };
+    static WorkCounters workCounters() { return counters(); }
+    static void resetWorkCounters() { counters() = {}; }
     static constexpr float backgroundVariation = .8f;
     explicit FluidBackground(Material material = Material::background) : material(material) {}
     void paint(juce::Graphics& g, juce::Rectangle<int> bounds, juce::Colour base,
                juce::Colour accent, double seconds, float contrast = 1.f, int longest = 80) {
         if (bounds.isEmpty()) return;
+        ++counters().paints;
+        if (!g.clipRegionIntersects(bounds)) { ++counters().clipCulls; return; }
         // A fixed grid makes the physical pixels grow with the component, while
         // aspect adjustment keeps them approximately square in small FX cards.
         longest = juce::jmax(1, longest);
@@ -68,6 +73,8 @@ public:
             cachedBase = base;
             cachedAccent = accent;
             cachedContrast = contrast;
+            ++counters().rasterizations;
+            counters().pixelsGenerated += uint64_t(width) * uint64_t(height);
             const double phase = frame * 0.0025 * proceduralAnimationSpeed;
             juce::Image::BitmapData pixels(image, juce::Image::BitmapData::writeOnly);
             // Keep the original dark surface dominant. A desaturated, brightness-
@@ -108,12 +115,14 @@ public:
                     pixels.setPixelColour(x, y, colour);
                 }
         }
+        else ++counters().cacheHits;
         juce::Graphics::ScopedSaveState state(g);
         g.setImageResamplingQuality(juce::Graphics::lowResamplingQuality);
         g.drawImage(image, bounds.toFloat());
     }
 
 private:
+    static WorkCounters& counters() { static thread_local WorkCounters value; return value; }
     static double lattice(int x, int y, int z) noexcept {
         std::uint32_t h = std::uint32_t(x) * 374761393u + std::uint32_t(y) * 668265263u
                         + std::uint32_t(z) * 2246822519u + 1013904223u;

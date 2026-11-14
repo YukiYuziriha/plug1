@@ -28,6 +28,56 @@ StereoSample signal(size_t i, double rate) {
 void install(RoutingExecutor& executor, const Graph& graph) {
     check(executor.requestGraph(graph).valid, "test graph rejected");
 }
+void gainReductionTelemetry() {
+    FxMonitor monitor; FxMonitorFrame frame;
+    monitor.reset(48000); monitor.retain(1);
+    monitor.setGainReduction(1, std::numeric_limits<float>::quiet_NaN());
+    near(monitor.gainReduction(1), 0, "non-finite GR escaped telemetry");
+    monitor.setGainReduction(1, -4);
+    near(monitor.gainReduction(1), 0, "negative GR escaped telemetry");
+    monitor.setGainReduction(1, 6);
+    for (int i = 0; i < 48000 * 5; ++i) {
+        monitor.beginSample();
+        monitor.capture(1, 100, .4f, -.4f, .2f, -.2f, 0, {}, true, .2f, -.2f, int(NodeType::compressor));
+    }
+    check(monitor.read(1, frame), "GR snapshot missing");
+    check(frame.nodeId == 100 && frame.nodeKind == int(NodeType::compressor), "GR machine identity missing");
+    near(frame.gainReductionDb, 6, "GR snapshot differs from DSP telemetry");
+    check(frame.historyUsed == 200 && frame.historyBinSamples == 960, "GR history is not four seconds of 20 ms bins");
+    for (const auto& bin : frame.history) near(bin.gainReductionDb, 6, "GR history is not actual attenuation");
+    monitor.reset(48000);
+    near(monitor.gainReduction(1), 0, "GR reset retained the old machine");
+    check(!monitor.read(1, frame), "GR reset retained stale snapshot");
+}
+
+void routedCompressorReduction() {
+    FxMonitor monitor; RoutingExecutor executor;
+    executor.prepare(48000); executor.setFxMonitor(&monitor); monitor.retain(1);
+    RoutingNode compressor{100, NodeType::compressor}; compressor.mix = 1;
+    compressor.creative.values[size_t(CreativeParameter::compressorThreshold)] = -30;
+    compressor.creative.values[size_t(CreativeParameter::compressorRatio)] = 4;
+    compressor.creative.values[size_t(CreativeParameter::compressorMakeup)] = 0;
+    Graph graph{{{1, NodeType::lead}, compressor, {13, NodeType::output}}, {{1, 100, 0}, {100, 13, 0}}};
+    install(executor, graph);
+    RoutingSources sources; RoutingControls controls;
+    for (int i = 0; i < 48000; ++i) {
+        const float sample = .8f * float(std::sin(2 * pi * 1000 * i / 48000));
+        sources.lead = {sample, -sample}; executor.process(sources, controls);
+    }
+    FxMonitorFrame frame; check(monitor.read(1, frame), "actual compressor snapshot missing");
+    check(frame.nodeKind == int(NodeType::compressor) && frame.hasWet, "actual compressor history metadata missing");
+    check(frame.gainReductionDb > 10 && frame.gainReductionDb < 30, "actual compressor GR absent/unbounded");
+    double inputPower = 0, outputPower = 0;
+    for (size_t i = 0; i < FxMonitorFrame::sampleCount; ++i) {
+        inputPower += double(frame.input[0][i]) * frame.input[0][i];
+        outputPower += double(frame.output[0][i]) * frame.output[0][i];
+    }
+    near(frame.gainReductionDb, 10 * std::log10(inputPower / outputPower), "compressor GR does not match actual pre-makeup attenuation", 1.0);
+    compressor.enabled = false; graph.nodes[1] = compressor; install(executor, graph);
+    for (int i = 0; i < 4096; ++i) executor.process(sources, controls);
+    near(monitor.gainReduction(1), 0, "bypassed compressor retained GR");
+}
+
 void subscriptions() {
     FxMonitor monitor;
     FxMonitorFrame frame;
@@ -194,6 +244,11 @@ void concurrentSnapshots() {
             if (frame.sequence < sequence || frame.nodeId != 100 || frame.sampleRate != 48000) ++errors;
             sequence = frame.sequence;
             if (!frame.hasWet || std::abs(frame.wetRms - std::sqrt(.15625f)) > 1.e-6f) ++errors;
+            for (size_t j = FxMonitorFrame::historyCount - frame.historyUsed; j < FxMonitorFrame::historyCount; ++j) {
+                const auto& bin = frame.history[j];
+                if (bin.wetMin != -.5f || bin.wetMax != .25f || std::abs(bin.wetRms - std::sqrt(.15625f)) > 1.e-6f
+                    || bin.inputMin != -bin.inputMax || (j && frame.history[j-1].inputMax > bin.inputMax)) ++errors;
+            }
             for (size_t j = 0; j < FxMonitorFrame::sampleCount; ++j) {
                 const float x = frame.input[0][j];
                 if (!std::isfinite(x) || frame.input[1][j] != -x || frame.output[0][j] != 2*x
@@ -213,7 +268,9 @@ void concurrentSnapshots() {
 } // namespace
 int main() {
     struct Test { const char* name; void (*run)(); };
-    const Test tests[]{{"subscription/refcount/generation", subscriptions}, {"routed full-rate stereo and transparent monitoring", routedStereo},
+    const Test tests[]{{"actual routed compressor gain reduction", routedCompressorReduction},
+            {"bounded identity-tagged gain-reduction history", gainReductionTelemetry},
+            {"subscription/refcount/generation", subscriptions}, {"routed full-rate stereo and transparent monitoring", routedStereo},
         {"reset/rate/removal/type reuse", lifecycle}, {"actual crossover port RMS and bypass", bandPorts},
         {"concurrent bounded snapshots", concurrentSnapshots}};
     int failures = 0;

@@ -3,6 +3,7 @@
 
 #include "CreativeEffects.h"
 #include "FxVisuals.h"
+#include "ReactiveMaterial.h"
 
 namespace vocalstack {
 
@@ -18,9 +19,9 @@ public:
                     ? grainDescription()
                     : "Parameter-derived schematic using coherent effective modulation targets. Unassigned parameters are host base reads; DSP smoothing and signal-dependent behaviour are not simulated. Reverb is not a measured impulse response. Compressor GR is measured by the DSP.");
         if (factoryReactive())
-            setTooltip(kind == CreativeKind::convolution
-                ? "Original generated 48 kHz left IR peak-envelope bins, normalized per space. Tail is an illustrative taper, not exact partition-centre processing; tilt, predelay and ducking are not plotted. The teal bar is actual stereo wet RMS before slot blending, from coherent bounded DSP telemetry."
-                : "Actual Warm Asymmetric transfer function at effective Drive and Character. Teal curve segment spans measured stereo PRE input extrema. This is not a sample-wise input/output scatter or an exact resampling model: Tone, Output, RMS matching, Mix, ADAA/DC blocker and IIR oversampling are excluded. Teal bar is measured pre-blend stereo wet RMS.");
+            setTooltip("Background: actual stereo min/max and RMS in 20 ms bins, oldest left, newest right, 2.56 s; logarithmic amplitude (-60 to 0 dBFS), not the foreground model axes. Faint amber is measured input; stronger teal is processed wet before slot Mix (including the actual tail), sharing a fixed zero baseline. Motion does not pause audio data. Bypass, reset and stopped processing clear the field. Thin foreground: parameter model only, not measured IR or sample-wise transfer. Convolution uses the generated 48 kHz L IR envelope with illustrative Tail taper; Saturator transfer excludes Tone/Out/Match/Mix and resampling.");
+        if (kind == CreativeKind::compressor)
+            setTooltip("Top: actual DSP gain reduction before makeup and slot Mix, peak per completed 20 ms bin over four seconds; oldest left, newest right. Fixed 0..36 dB attenuation grows downward from 0 at the top; larger values clip visually, not numerically. Missing or stale telemetry is blank. Lower: parameter-derived static transfer, not measured audio; attack/release and detector behaviour are not simulated.");
         if (kind == CreativeKind::convolution) {
             for (int s = 0; s < 4; ++s) {
                 const auto ir = FactoryConvolution::makeImpulse(48000, s);
@@ -48,6 +49,16 @@ public:
     bool hasMeasuredActivity() const noexcept { return liveTelemetry; }
     float measuredWetRms() const noexcept { return liveTelemetry ? telemetry.wetRms : 0.f; }
     uint64_t measuredSequence() const noexcept { return liveTelemetry ? telemetry.sequence : 0; }
+    reactiveVisual::GainReductionField measuredCompressionHistory() const noexcept {
+        const bool active = liveTelemetry && enabled;
+        if (!compressionCached || compressionSequence != telemetry.sequence || compressionEpoch != telemetry.epoch
+            || compressionNode != telemetry.nodeId || compressionActive != active) {
+            compressionCached = true; compressionSequence = telemetry.sequence; compressionEpoch = telemetry.epoch;
+            compressionNode = telemetry.nodeId; compressionActive = active;
+            compressionField = reactiveVisual::GainReductionField::from(telemetry, active);
+        }
+        return compressionField;
+    }
     // Read-only rendering seam: units are milliseconds, Hz and nominal overlap.
     // History is a fixed 3 s parameter guide, not available captured audio.
     struct GranularModel {
@@ -85,7 +96,7 @@ public:
         if (!visibleInHierarchy()) { lastAnimationMs = -1; return; }
         if (retained) {
             FxMonitorFrame next;
-            if (owner.readFxMonitor(slot, next) && next.hasWet) {
+            if (owner.readFxMonitor(slot, next) && (next.hasWet || kind == CreativeKind::compressor)) {
                 if (next.sequence != telemetry.sequence || next.epoch != telemetry.epoch) {
                     telemetry = next; lastTelemetryMs = nowMs; liveTelemetry = true;
                 } else if (nowMs - lastTelemetryMs > 250) liveTelemetry = false;
@@ -117,77 +128,97 @@ public:
 
         const auto c = themePalette(*this, neon);
         auto b = getLocalBounds().toFloat();
+        if (factoryReactive()) { paintReactive(g, b, c); return; }
+        if (kind == CreativeKind::compressor) { paintCompressor(g, b, c); return; }
         surfaceMaterial.paint(g, b.toNearestInt(), c.inset, c.accent, fluidAnimationSeconds(*this), .25f);
         g.setColour(c.border); g.drawRect(b.reduced(0.5f), 1);
         b.reduce(8, 8);
         if (kind == CreativeKind::granular) { granular(g, b, {}, c); return; }
         if (kind == CreativeKind::delay) { delay(g, b, {}, c); return; }
         text(g, b.removeFromTop(16), enabled ? "PARAMETER MODEL" : "BYPASS | stored parameter model", c.text);
-        if (factoryReactive()) wetMeter(g, b.removeFromTop(24), c);
-        else text(g, b.removeFromTop(15), ready ? "Effective targets / base if unassigned" : "Waiting for coherent parameter snapshot", c.muted);
+        text(g, b.removeFromTop(15), ready ? "Effective targets / base if unassigned" : "Waiting for coherent parameter snapshot", c.muted);
         auto footer = b.removeFromBottom(43);
         b.removeFromBottom(15); // Dedicated axis-label row.
         auto plot = b.withTrimmedLeft(23).withTrimmedRight(5).reduced(0, 6);
         grid(g, plot, c.border);
         switch (kind) {
-            case CreativeKind::reverb: reverb(g, plot, footer, c); break;
+            case CreativeKind::reverb: break; // Shared reactive path above.
             case CreativeKind::delay: delay(g, plot, footer, c); break;
             case CreativeKind::granular: granular(g, plot, footer, c); break;
             case CreativeKind::compressor: compressor(g, plot, footer, c); break;
             case CreativeKind::bitcrusher: crusher(g, plot, footer, c); break;
-            case CreativeKind::convolution: {
-                const size_t space = size_t(std::clamp(int(std::round(value(P::convolutionSpace))), 0, 3));
-                juce::Path path;
-                for (size_t i = 0; i < 128; ++i) {
-                    const float t = float(i) / 127;
-                    const float taper = std::exp(-t * float(FactoryConvolution::durations[space]) * (100.f / value(P::convolutionTail) - 1) * 4);
-                    const float x = plot.getX() + t * plot.getWidth();
-                    const float y = plot.getBottom() - irPeaks[space][i] * taper * plot.getHeight();
-                    if (i == 0) path.startNewSubPath(x, y); else path.lineTo(x, y);
-                }
-                curve(g, path, plot, c.accent);
-                text(g, footer.removeFromTop(15), juce::String(FactoryConvolution::names[space]) + " | SYNTHETIC IR | " + juce::String(FactoryConvolution::durations[space], 2) + " s", c.text);
-                text(g, footer.removeFromTop(14), "48 kHz L peak envelope / Tail taper guide", c.muted);
-                text(g, footer, "Tilt / pre-delay / duck not plotted", c.muted);
-                break;
-            }
-            case CreativeKind::saturator: {
-                juce::Path path;
-                const double drive = std::pow(10.0, value(P::saturatorDrive) / 20.0);
-                for (int i = 0; i <= 128; ++i) {
-                    const double x = double(i) / 64 - 1;
-                    const double y = Waveshaper::transfer(x * drive, 3, value(P::saturatorCharacter) * .01);
-                    const float px = plot.getX() + float(i) / 128 * plot.getWidth();
-                    const float py = plot.getCentreY() - float(y) * plot.getHeight() * .42f;
-                    if (!i) path.startNewSubPath(px, py); else path.lineTo(px, py);
-                }
-                g.setColour(c.accent); g.strokePath(path, juce::PathStrokeType(1.3f));
-                text(g, footer.removeFromTop(15), "STATIC TRANSFER | input -1 to +1", c.text);
-                text(g, footer.removeFromTop(14), "2x IIR + ADAA | not alias-free", c.muted);
-                text(g, footer, "Teal: measured PRE range | no Tone/Out/Match/Mix", c.muted);
-                if (liveTelemetry && enabled && mix > 0) {
-                    float lo = 0, hi = 0;
-                    for (const auto& channel : telemetry.input) for (float sample : channel) {
-                        lo = std::min(lo, sample); hi = std::max(hi, sample);
-                    }
-                    juce::Path active;
-                    for (int i = 0; i <= 64; ++i) {
-                        const float x = std::clamp(lo + (hi - lo) * float(i) / 64.f, -1.f, 1.f);
-                        const float y = float(Waveshaper::transfer(x * drive, 3, value(P::saturatorCharacter) * .01));
-                        const float px = plot.getCentreX() + x * plot.getWidth() * .5f;
-                        const float py = plot.getCentreY() - y * plot.getHeight() * .42f;
-                        if (!i) active.startNewSubPath(px, py); else active.lineTo(px, py);
-                    }
-                    g.setColour(c.secondary); g.strokePath(active, juce::PathStrokeType(3.f));
-                }
-                break;
-            }
+            case CreativeKind::convolution: break;
+            case CreativeKind::saturator: break;
         }
     }
 private:
-    bool factoryReactive() const { return kind == CreativeKind::convolution || kind == CreativeKind::saturator; }
+    void convolutionGuide(juce::Graphics& g, juce::Rectangle<float> plot,
+                          juce::Rectangle<float> footer, const ThemePalette& c) const {
+        const size_t space = size_t(std::clamp(int(std::round(value(P::convolutionSpace))), 0, 3));
+        auto& path = guideCache.path;
+        if (guideCache.update(plot, values, enabled, mix)) {
+        for (size_t i = 0; i < 128; ++i) {
+            const float t = float(i) / 127;
+            const float taper = std::exp(-t * float(FactoryConvolution::durations[space]) * (100.f / value(P::convolutionTail) - 1) * 4);
+            const float x = plot.getX() + t * plot.getWidth();
+            const float y = plot.getBottom() - irPeaks[space][i] * taper * plot.getHeight();
+            if (i == 0) path.startNewSubPath(x, y); else path.lineTo(x, y);
+        }
+        }
+        g.setColour(c.accent); g.strokePath(path, juce::PathStrokeType(1.15f));
+        text(g, footer.removeFromTop(15), juce::String(FactoryConvolution::names[space]) + " | SYNTHETIC IR | " + juce::String(FactoryConvolution::durations[space], 2) + " s", c.text);
+        text(g, footer.removeFromTop(14), "48 kHz L peak envelope / Tail taper guide", c.muted);
+        text(g, footer, "Tilt / pre-delay / duck not plotted", c.muted);
+    }
+    void saturatorGuide(juce::Graphics& g, juce::Rectangle<float> plot,
+                        juce::Rectangle<float> footer, const ThemePalette& c) const {
+        auto& path = guideCache.path;
+        if (guideCache.update(plot, values, enabled, mix)) {
+        const double drive = std::pow(10.0, value(P::saturatorDrive) / 20.0);
+        for (int i = 0; i <= 128; ++i) {
+            const double x = double(i) / 64 - 1;
+            const double y = Waveshaper::transfer(x * drive, 3, value(P::saturatorCharacter) * .01);
+            const float px = plot.getX() + float(i) / 128 * plot.getWidth();
+            const float py = plot.getCentreY() - float(y) * plot.getHeight() * .42f;
+            if (!i) path.startNewSubPath(px, py); else path.lineTo(px, py);
+        }
+        }
+        g.setColour(c.accent); g.strokePath(path, juce::PathStrokeType(1.3f));
+        text(g, footer.removeFromTop(15), "STATIC TRANSFER | input -1 to +1", c.text);
+        text(g, footer.removeFromTop(14), "2x IIR + ADAA | not alias-free", c.muted);
+        text(g, footer, "Field: faint INPUT / strong WET | shared zero", c.secondary);
+    }
+    bool factoryReactive() const { return kind == CreativeKind::reverb || kind == CreativeKind::convolution || kind == CreativeKind::saturator; }
+    void paintReactive(juce::Graphics& g, juce::Rectangle<float> bounds, const ThemePalette& c) {
+        auto b = bounds.reduced(8, 8);
+        auto header = b.removeFromTop(16);
+        auto meter = b.removeFromTop(24);
+        auto footer = b.removeFromBottom(43);
+        b.removeFromBottom(15);
+        auto plot = b.withTrimmedLeft(23).withTrimmedRight(5).reduced(0, 6);
+        auto fieldPlot = plot;
+        if (kind == CreativeKind::reverb) { fieldPlot.removeFromTop(21); fieldPlot.removeFromTop(14); }
+        const bool fieldActive = liveTelemetry && enabled && mix > 0;
+        if (!waveformCached || waveformSequence != telemetry.sequence || waveformEpoch != telemetry.epoch
+            || waveformNode != telemetry.nodeId || waveformActive != fieldActive) {
+            waveformCached = true; waveformSequence = telemetry.sequence; waveformEpoch = telemetry.epoch;
+            waveformNode = telemetry.nodeId; waveformActive = fieldActive;
+            waveformField = reactiveVisual::WaveformField::from(telemetry, fieldActive);
+        }
+        reactiveMaterial.paint(g, bounds, fieldPlot, waveformField,
+            {c.inset, c.accent, c.secondary, c.muted}, fluidAnimationSeconds(*this));
+        g.setColour(c.border); g.drawRect(bounds.reduced(.5f), 1);
+        text(g, header, enabled ? "MEASURED MATERIAL / MODEL GUIDE" : "BYPASS | stored parameter model", c.text);
+        wetMeter(g, meter, c);
+        if (kind == CreativeKind::reverb) reverb(g, plot, footer, c);
+        else {
+            grid(g, plot, c.border);
+            if (kind == CreativeKind::convolution) convolutionGuide(g, plot, footer, c);
+            else saturatorGuide(g, plot, footer, c);
+        }
+    }
     void syncTelemetry() {
-        const bool wanted = factoryReactive() && visibleInHierarchy();
+        const bool wanted = (factoryReactive() || kind == CreativeKind::compressor) && visibleInHierarchy();
         if (wanted != retained) {
             if (wanted) owner.retainFxMonitor(slot); else owner.releaseFxMonitor(slot);
             retained = wanted; liveTelemetry = false; telemetry = {}; lastTelemetryMs = -1;
@@ -197,15 +228,54 @@ private:
         const bool audible = liveTelemetry && enabled && mix > 0;
         const float rms = audible ? telemetry.wetRms : 0.f;
         const float db = juce::Decibels::gainToDecibels(rms, -72.f);
-        auto rail = plot.withY(plot.getBottom() - 7).withHeight(7);
-        g.setColour(c.inset); g.fillRect(rail);
-        g.setColour(c.secondary); g.fillRect(rail.withWidth(rail.getWidth() * std::clamp((db + 72.f) / 72.f, 0.f, 1.f)));
-        text(g, plot.withHeight(14), audible ? "WET RMS " + juce::String(db, 1) + " dBFS (pre-blend)" : "No live wet activity / bypass or stopped", c.secondary);
+        text(g, plot.withHeight(14), audible ? "WET RMS " + juce::String(db, 1) + " dBFS | pre-Mix" : "No live wet activity / bypass or stopped", c.secondary);
+        text(g, plot.withTrimmedTop(13), "FIELD: HISTORY < NOW | 2.56 s / -60..0 dBFS", c.muted);
     }
+    void paintCompressor(juce::Graphics& g, juce::Rectangle<float> bounds, const ThemePalette& c) {
+        // Keep measured attenuation visually separate from the static transfer.
+        g.setColour(c.inset); g.fillRect(bounds);
+        g.setColour(c.border); g.drawRect(bounds.reduced(.5f), 1.f);
+        auto b = bounds.reduced(8, 8);
+        text(g, b.removeFromTop(16), enabled ? "MEASURED COMPRESSION HISTORY" : "BYPASS | no applied compression", c.text);
+        auto lane = b.removeFromTop(std::clamp(b.getHeight() * .36f, 58.f, 105.f));
+        historyMaterial.paint(g, lane, measuredCompressionHistory(), {c.inset, c.border, c.secondary, c.muted});
+        b.removeFromTop(3);
+        text(g, b.removeFromTop(15), "STATIC TRANSFER | effective targets / not audio", c.muted);
+        auto footer = b.removeFromBottom(43);
+        b.removeFromBottom(15);
+        auto plot = b.withTrimmedLeft(23).withTrimmedRight(5).reduced(0, 5);
+        if (!plot.isEmpty()) { grid(g, plot, c.border); compressor(g, plot, footer, c); }
+    }
+    struct GuideCache {
+        juce::Path path;
+        juce::Rectangle<float> bounds;
+        std::array<float, creativeParameterCount> parameters{};
+        float mix = 0;
+        bool enabled = false, valid = false;
+        bool update(juce::Rectangle<float> nextBounds,
+                    const std::array<float, creativeParameterCount>& nextParameters,
+                    bool nextEnabled, float nextMix) {
+            if (valid && bounds == nextBounds && parameters == nextParameters
+                && enabled == nextEnabled && mix == nextMix) return false;
+            valid = true; bounds = nextBounds; parameters = nextParameters;
+            enabled = nextEnabled; mix = nextMix; path.clear(); return true;
+        }
+    };
+    mutable GuideCache guideCache;
+    reactiveVisual::HistoryField historyMaterial;
+    mutable reactiveVisual::GainReductionField compressionField;
+    mutable uint64_t compressionSequence = 0, compressionEpoch = 0;
+    mutable uint32_t compressionNode = 0;
+    mutable bool compressionCached = false, compressionActive = false;
+    reactiveVisual::WaveformField waveformField;
+    uint64_t waveformSequence = 0, waveformEpoch = 0;
+    uint32_t waveformNode = 0;
+    bool waveformCached = false, waveformActive = false;
     FxMonitorFrame telemetry{};
     double lastTelemetryMs = -1;
     bool retained = false, liveTelemetry = false;
     FluidBackground surfaceMaterial;
+    reactiveVisual::ReactiveMaterial reactiveMaterial;
     std::array<std::array<float, 128>, 4> irPeaks{};
     using P = CreativeParameter;
     static juce::String grainDescription() {
@@ -264,6 +334,7 @@ private:
         text(g, legend, "Swell guide", c.accent);
         const float span = pre + std::max(rt, 3 * attack);
         const auto xFor = [&](float t) { return r.getX() + t / span * r.getWidth(); };
+        grid(g, r, c.border);
         // Log amplitude axis: nominal RT60 guide, deliberately not an FDN IR.
         juce::Path decay, swell;
         for (int i = 0; i <= 240; ++i) {
@@ -276,7 +347,7 @@ private:
             else { decay.lineTo(x, r.getY() - db / 60 * r.getHeight()); swell.lineTo(x, y); }
         }
         g.setColour(c.secondary.withAlpha(.55f)); g.strokePath(decay, juce::PathStrokeType(.8f));
-        curve(g, swell, r, c.accent);
+        g.setColour(c.accent); g.strokePath(swell, juce::PathStrokeType(1.15f));
         g.setColour(c.secondary); g.drawVerticalLine(int(xFor(pre)), r.getY(), r.getBottom());
         text(g, {r.getX() - 25, r.getY(), 24, 12}, "0 dB", c.muted);
         text(g, {r.getX() - 25, r.getBottom() - 12, 24, 12}, "-60", c.muted);
@@ -407,7 +478,8 @@ private:
         g.setColour(c.muted.withAlpha(.35f)); g.drawLine(r.getX(), yFor(-60), r.getRight(), yFor(24), .8f);
         g.setColour(c.secondary.withAlpha(.5f));
         g.drawVerticalLine(int(r.getX() + (threshold + 60) / 84 * r.getWidth()), r.getY(), r.getBottom());
-        juce::Path line;
+        auto& line = guideCache.path;
+        if (guideCache.update(r, values, enabled, mix)) {
         for (int i = 0; i <= 256; ++i) {
             const float in = -60 + 84 * float(i) / 256, over = in - threshold;
             const float gr = knee > 0 && over > -knee * .5f && over < knee * .5f
@@ -417,15 +489,21 @@ private:
             const float x = r.getX() + r.getWidth() * float(i) / 256;
             if (i == 0) line.startNewSubPath(x, yFor(out)); else line.lineTo(x, yFor(out));
         }
+        }
         curve(g, line, r, c.accent);
         text(g, {r.getX() - 24, r.getY(), 24, 12}, "+24", c.muted);
         text(g, {r.getX() - 24, r.getBottom() - 12, 24, 12}, "-60", c.muted);
         axis(g, r, "Input -60 dB", "+24 dB", c);
         text(g, f.removeFromTop(14), "Threshold " + number(threshold) + " dB / " + number(value(P::compressorRatio)) + ":1 / Knee " + number(knee) + " dB", c.text);
         auto bar = f.removeFromTop(14);
-        text(g, bar.removeFromLeft(110), "Actual GR " + number(reduction) + " dB", c.secondary);
+        const auto measured = measuredCompressionHistory();
+        // The existing atomic meter remains actual DSP telemetry even while a
+        // producer without history support is being integrated.
+        const bool meterLive = liveTelemetry && enabled;
+        const float currentGr = measured.available ? measured.currentDb : meterLive ? reduction : 0.f;
+        text(g, bar.removeFromLeft(110), meterLive ? "Actual GR " + number(currentGr) + " dB" : "GR unavailable", c.secondary);
         bar.reduce(0, 4); g.setColour(c.border); g.fillRect(bar);
-        g.setColour(c.secondary); g.fillRect(bar.withWidth(bar.getWidth() * std::clamp(reduction / 36, 0.f, 1.f)));
+        g.setColour(c.secondary); g.fillRect(bar.withWidth(bar.getWidth() * std::clamp(currentGr / 36, 0.f, 1.f)));
         text(g, f, "Output -60..+24 dB (off-scale clipped); GR bar 0-36", c.muted);
     }
     void crusher(juce::Graphics& g, juce::Rectangle<float> r, juce::Rectangle<float> f, const ThemePalette& c) const {

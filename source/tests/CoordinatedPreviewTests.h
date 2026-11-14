@@ -1,9 +1,37 @@
 #pragma once
 #include "FactoryFxUiTests.h"
 #include "FluidBackgroundTests.h"
+#include "GuiTestDisplay.h"
 
 namespace vocalstack::coordinatedPreviewTests {
 namespace ui = toneUiTests;
+inline void monitorCacheAndClipping() {
+    auto owner = std::make_unique<Processor>();
+    auto first = toneui::SharedFxSpectrum::acquire(*owner, 1);
+    auto second = toneui::SharedFxSpectrum::acquire(*owner, 1);
+    auto independent = toneui::SharedFxSpectrum::acquire(*owner, 2);
+    ui::require(first == second && first != independent, "FFT cache is not shared per processor/slot");
+    FxMonitorFrame frame; frame.sequence = 1; frame.epoch = 1; frame.nodeId = 100;
+    frame.input[0][0] = frame.output[1][0] = .5f;
+    first->update(frame); second->update(frame);
+    ui::require(first->analyses == 1, "Duplicate monitor view recomputed the same FFT sequence");
+    ++frame.sequence; second->update(frame);
+    ui::require(first->analyses == 2, "New monitor publication skipped FFT analysis");
+    ++frame.epoch; first->update(frame);
+    ui::require(first->analyses == 3, "Monitor epoch did not invalidate FFT cache");
+    juce::Component root, clipped, view;
+    root.setSize(320, 240); root.addAndMakeVisible(clipped); clipped.setBounds(20, 20, 100, 100);
+    clipped.addAndMakeVisible(view); view.setBounds(0, 0, 80, 80);
+    guiTestDisplay::enumerate(); guiTestDisplay::attach(root);
+    ui::require(toneui::monitorIntersectsAncestors(view), "Visible monitor intersection rejected");
+    view.setTopLeftPosition(110, 0);
+    ui::require(view.isShowing() && !toneui::monitorIntersectsAncestors(view), "Off-viewport showing monitor retained capture");
+    view.setTopLeftPosition(90, 0);
+    ui::require(toneui::monitorIntersectsAncestors(view), "Partially clipped monitor lost capture");
+    clipped.setTopLeftPosition(400, 0);
+    ui::require(!toneui::monitorIntersectsAncestors(view), "Ancestor viewport intersection ignored");
+    root.removeFromDesktop();
+}
 inline void motionState() {
     DecorativeMotion clock;
     clock.advance(10, true, 3); clock.advance(13, true, 3);
@@ -20,7 +48,7 @@ inline void motionState() {
     juce::MemoryBlock state; owner->getStateInformation(state);
     auto copy = std::make_unique<Processor>(); copy->setStateInformation(state.getData(), int(state.getSize()));
     ui::near(float(copy->getMotionPercent()), 17.25f, "Binary Motion recall");
-    ui::require(copy->getParameters().size() == 2252, "Motion must not append a host parameter");
+    ui::require(copy->getParameters().size() == 2342, "Motion must not append a host parameter");
     auto legacy = juce::parseXML(owner->settingsText()); legacy->removeAttribute("motionPercent");
     ui::require(copy->pasteSettings(legacy->toString()), "Legacy state restore");
     ui::near(float(copy->getMotionPercent()), 3, "Missing Motion legacy default");
@@ -162,7 +190,7 @@ inline void prototypeScreenshots() {
         ui::screenshot(fixture, "square-prototype-" + updateUiTests::themeName(theme) + ".png");
     }
 }
-inline void run() { motionState(); sparseGroups(); bipolarCaption(); contentAnchoring(); reactiveAndRender(false); }
+inline void run() { monitorCacheAndClipping(); motionState(); sparseGroups(); bipolarCaption(); contentAnchoring(); reactiveAndRender(false); }
 inline void motionScreenshots() {
     for (int theme = 0; theme < 3; ++theme) {
         auto owner = std::make_unique<Processor>(); owner->setSkin(theme);

@@ -1,98 +1,137 @@
 # Vocal Stack: Current roadmap and release history
 
-## Planned / unimplemented — SIDECHAIN source and Spectral Morph
+## Implemented source preview — 1.11.0 SIDECHAIN, Spectral Morph and reactive material
 
-**Planning only. None of the work below is claimed implemented, built, tested,
-packaged or installed.** This is a new roadmap, not a description of the existing
-1.10.0 source/UI preview. Preserve all pending preview edits and approval work;
-see [the 1.10.0 preview record](docs/Preview-1.10.0.md) for its separately recorded
-implementation and validation. The older release/status records below remain
-historical context, not evidence that this new scope is complete. No release
-version is assigned by this plan.
+**Coordinated source edits in progress; build/test execution is paused until the
+parent explicitly confirms all UI agents are done. Pending visual approval, not
+packaged or installed.**
+See [1.11.0 implementation, validation, latency costs and actual review GIFs](docs/Preview-1.11.0.md).
+Full non-editor validation passed 41/41, isolated granular UI passed, and the full
+editor run passed 77/78: the existing desktop-occlusion native-click precondition remains
+blocked, not skipped. Final affected-source checks passed 9/9 plus all-theme real-PCM
+compact/expanded/rack captures. Native CLAP and VST3 wrapper tests are recorded
+separately from unperformed actual DAW listening/transport checks.
+
+The current revision removes the always-on 4096-sample no-Morph penalty. Latency
+is fixed per host preparation: no Morph 1344/2688 samples, declared Morph
+5440/6784. Latency-changing topology edits remain explicitly RESTART PENDING until
+host deactivate/reactivate; transport stop/reset cannot apply them. Pending slot
+type replacements that could initialize a still-running machine are rejected.
+Serial Morph paths exceeding the 4096-sample graph budget remain rejected. Original host indices 0–2251 are preserved;
+90 controls append for 2342 total. Installed and packaged 1.10.0 hashes are verified
+unchanged. Preserve the pending [1.10.1 historical preview](docs/Preview-1.10.1.md).
+Unchecked acceptance items below mean native-input/DAW/approval gates, not missing
+DSP implementation. No installation, package replacement, commit or push occurred.
+
+### Coordinated follow-up — awaiting handoff and execution
+
+- [x] Source: prepared graph latency policy, explicit pending-topology UI label,
+  no-Morph legacy latency, deferred modulation retirement, occupied-slot guard.
+- [x] Source/tests: processor no-Morph/Morph/removal/recall/reset activation cases;
+  real CLAP/VST3 wrapper baseline and active-state/reactivation latency assertions.
+- [x] Source: clip-aware routing chrome/cables/material, one card synchronization
+  per timer path, material-frame/structural rather than unconditional canvas ticks,
+  ancestor-clipped monitor subscription, shared slot/sequence FFT and Hann cache.
+- [x] Source/tests: bounded Compressor/Gate GR atomics plus coherent identity-tagged
+  snapshot/history fields; 200 bins for four-second measured history.
+- [x] Instrumentation: optional native `--benchmark-routing` cost probe at Motion
+  0/3/100, collapsed/exposed/offscreen; no delivered-FPS claim.
+- [ ] Parent confirms all control/utility/visual agents finished; integrate their
+  APIs without editing their owned files before handoff.
+- [ ] Sole coordinator builds affected Release targets and runs all regressions,
+  native CLAP/VST3 latency matrix, second-monitor native GUI and cost probe through
+  the required HalfCpu wrapper. Preserve/report native occlusion failures.
+- [ ] All-theme actual-PCM Gate/Stereo/Compressor/Morph and Output/Dry-Wet captures;
+  confirm four-second histories and honest 0–36 dB GR presentation.
+- [ ] Record observed results here and in Preview 1.11.0. No installation, package
+  replacement, commit or push before explicit preview approval.
 
 ### 1. Host input and first-class routing source
 
-- [ ] Expose an optional external mono/stereo sidechain bus in CLAP and VST3,
+- [x] Expose an optional external mono/stereo sidechain bus in CLAP and VST3,
   verifying each wrapper's actual auxiliary-bus behavior rather than assuming
   parity. Define mono-to-stereo handling explicitly and preserve channel identity.
-- [ ] Add a first-class `SIDECHAIN` source to routing. Missing/disconnected host
+- [x] Add a first-class `SIDECHAIN` source to routing. Missing/disconnected host
   input produces silence; never substitute the main input or main mix, normalize
   its level automatically, or consume an FX slot for this source.
-- [ ] Include source identity, connections and disconnected state in routing
+- [x] Include source identity, connections and disconnected state in routing
   snapshots, presets and session recall. Host bus availability remains runtime
   state, not audio embedded in a preset. Disconnect/reconnect must not invent wires.
 
 ### 2. Generic auxiliary inputs and honest latency
 
-- [ ] Extend effect input declarations and prepared routing plans with meaningful,
+- [x] Extend effect input declarations and prepared routing plans with meaningful,
   named auxiliary inputs. Effects receive routed buffers through this generic
   contract, not a hardcoded direct read from the host sidechain. Internal sources
   and `SIDECHAIN` must be equally valid donors where routing permits.
-- [ ] Give each Spectral Morph instance independent `MAIN` and `DONOR` pins,
+- [x] Give each Spectral Morph instance independent `MAIN` and `DONOR` pins,
   processor history and freeze state. Validate pin/channel compatibility, cycles,
   duplicate wires and fan-out/reconvergence before publishing a graph. Reject an
   invalid edit without replacing the last valid running graph.
-- [ ] Specify actual STFT latency for each FFT configuration; align the effect's
+- [x] Specify actual STFT latency for each FFT configuration; align the effect's
   local dry/wet paths and report total plugin latency to the host. Account for
   donor timing and routing-path alignment. Implement branch compensation where
   supported, or explicitly reject unsupported parallel/reconvergent latency
   configurations. Never advertise zero latency to hide alignment work.
-- [ ] Prepare graph changes, buffers, FFT resources and delay storage off the audio
+- [x] Prepare graph changes, buffers, FFT resources and delay storage off the audio
   thread; publish safely at processing boundaries and reclaim old resources off
   that thread. Define FFT-size/latency-change and reset/reprepare behavior without
   callback allocation, locks, I/O or graph rebuilding.
 
 ### 3. Spectral Morph DSP and controls
 
-- [ ] Implement an independent two-input Spectral Morph effect, not a sidechain
+- [x] Implement an independent two-input Spectral Morph effect, not a sidechain
   switch on an existing effect. Initial modes: **Magnitude**, transferring/blending
   donor magnitudes with an explicit main-phase strategy; and **Envelope**, applying
   a smoothed donor spectral envelope for timbral transfer rather than merely
   copying fine spectral bins. Document equations and audible endpoint behavior.
-- [ ] Provide **Morph**, **Mode**, **FFT Size**, **Smoothing**, **Freeze**, **Mix**
+- [x] Provide **Morph**, **Mode**, **FFT Size**, **Smoothing**, **Freeze**, **Mix**
   and **Output**. Morph controls transfer strength; Mix remains a true,
   latency-aligned dry/wet blend. Smooth continuous controls and make transitions
   bounded and click-resistant. Add continuous modulation only for justified,
   musically useful controls; do not imply discrete mode/FFT/freeze automation is
   continuous modulation or expand the parameter surface speculatively.
-- [ ] Freeze captures and holds donor analysis, with explicit capture, hold and
+- [x] Freeze captures and holds donor analysis, with explicit capture, hold and
   release behavior independent of main-input processing. Define capture before
   donor availability, repeated capture, disconnect while held, reset and recall
   semantics. Keep held donor data separate from live analysis/smoothing state and
   specify whether capture data is persisted; never silently claim it is recalled.
-- [ ] Use a proper streaming overlap-add STFT with compatible analysis/synthesis
+- [x] Use a proper streaming overlap-add STFT with compatible analysis/synthesis
   windows, overlap and reconstruction normalization. Preserve stereo coherence
   without unintended summing or channel swaps; smooth envelopes/magnitudes over
   time and frequency as appropriate. Handle silence and spectral division safely,
   with bounded gains and finite output, not automatic level normalization.
-- [ ] Preallocate all working storage outside processing. Bound per-block work;
+- [x] Preallocate all working storage outside processing. Bound per-block work;
   support arbitrary host block boundaries and 44.1/48/96 kHz, with explicit
   prepare/reset, sample-rate and block-size-change behavior. No audio-thread
   allocation, locks, I/O or UI access, including freeze and control transitions.
 
 ### 4. Routing/rack presentation and measured telemetry
 
-- [ ] Show clear `MAIN` / `DONOR` pins and host sidechain availability in Routing.
+- [x] Show clear `MAIN` / `DONOR` pins and host sidechain availability in Routing.
   In the rack, explicitly show a disconnected donor and an **Open Routing** action.
   Do not auto-connect the main mix, create an invented donor wire or suggest that
   an unrouted donor is receiving signal.
-- [ ] Display main, donor and result spectra from actual bounded, coherent DSP
+- [x] Display main, donor and result spectra from actual bounded, coherent DSP
   telemetry, with useful scales and visible live/frozen/disconnected state.
   Transfer snapshots safely without audio-thread blocking/allocation; render on
   the UI thread at bounded rates. Do not present decorative plots as measurements.
 - [ ] Verify controls, spectra and frozen-state legibility in every existing theme,
   rack and routing views, compact/expanded layouts, and preserve host keyboard
   shortcuts. Capture real screenshots for user review before installation.
+  **Captures/model/PCM checks passed in all themes; the native Compact Stack
+  click precondition remains blocked by external native desktop occlusion
+  (earlier LockScreenInputOcclusionFrame, final Chrome_RenderWidgetHostHWND).**
 
 ### 5. Acceptance tests and gated delivery
 
-- [ ] Offline DSP: FFT/OLA reconstruction and latency alignment; Morph and Mix
+- [x] Offline DSP: FFT/OLA reconstruction and latency alignment; Morph and Mix
   endpoints; magnitude/main-phase behavior; envelope transfer and smoothing;
   freeze capture/hold/release/reset; silence/disconnected donor; finite/bounded
   output; independent instances; modulation and transition continuity. Cover
   mono/stereo, 44.1/48/96 kHz and irregular blocks, including no-allocation checks
   during steady processing and supported transitions.
-- [ ] Integration: parameter/state/preset round trips and defined frozen-state
+- [x] Integration: parameter/state/preset round trips and defined frozen-state
   recall, source snapshots, internal versus external donor routing, invalid pins,
   cycles, duplicate wires, graph swaps and supported/rejected latency paths.
   Verify local Mix, global Mix and bypass all retain correct dry alignment.
@@ -100,17 +139,19 @@ version is assigned by this plan.
   buses; reconnect; prepare/reprepare; plugin reload and session recall; bypass,
   global Mix, transport start/stop, sample-rate changes and irregular block sizes.
   Separate wrapper smoke tests from actual DAW listening/automation checks and
-  record unverified hosts or unsupported layouts explicitly.
-- [ ] When implementation is separately authorized, run relevant builds, tests
-  and performance checks through the existing `tools/Invoke-HalfCpu.ps1` workflow
+  record unverified hosts or unsupported layouts explicitly. **Automated CLAP
+  nine-layout/rate and native VST3 108-case plus reconnect/rate-change coverage
+  passed; actual DAW listening/transport/controller-queue checks remain unperformed.**
+- [x] Run relevant builds, tests and performance checks through the existing
+  `tools/Invoke-HalfCpu.ps1` workflow
   in dedicated 64-bit PowerShell; stop if its topology restriction fails. Update
   usage/routing/latency/state documentation and record observed results honestly.
-- [ ] Present screenshots and results for the user's approval **before installing**.
-  Preserve the existing preview gate: no package refresh, installation, commit or
-  push without authorization. Once authorized, refresh matching CLAP/VST3 packages,
-  verify hashes and host smoke results, and install only with host files unlocked;
-  never terminate the DAW to force replacement. This documentation edit authorizes
-  none of those actions and requires no build, version bump or source changes.
+- [x] Present actual all-theme screenshots/GIFs and results for review **before installing**.
+  The source preview is 1.11.0; packaged and installed binaries remain 1.10.0.
+- [ ] Only after separate approval: refresh matching CLAP/VST3 packages, verify
+  hashes and host smoke results, and install with files unlocked. No package
+  refresh, installation, commit or push is currently authorized; never terminate
+  the DAW or bypass Windows lock-screen input protection to force completion.
 
 ### Explicitly outside this scope
 
@@ -148,7 +189,7 @@ delivery, validating each foundation before building the next.
 
 See [1.10.0 delivery evidence and hashes](docs/Release-1.10.0-Validation.md).
 Preview documents remain historical records, not current installation gates.
-The SIDECHAIN / Spectral Morph roadmap above is **unimplemented** and unchanged.
+SIDECHAIN / Spectral Morph was not included in this 1.10.0 delivery; its implemented 1.11.0 source preview and remaining gates are recorded above.
 
 ## Historical status — 1.9.6 built, tested, packaged and installed
 

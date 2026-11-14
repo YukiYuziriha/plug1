@@ -7,7 +7,7 @@ namespace vocalstack::mainBusFx {
 
 inline bool eligible(NodeType type) noexcept {
     return type == NodeType::chorale || type == NodeType::waveshaper
-        || type == NodeType::equalizer || isCreativeEffect(type) || isUtilityEffect(type);
+        || type == NodeType::equalizer || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
 }
 inline const RoutingNode* find(const Graph& graph, uint32_t id) {
     for (const auto& node : graph.nodes) if (node.id == id) return &node;
@@ -40,6 +40,8 @@ inline Segment discover(const Graph& graph) {
     const auto reachable = [&](std::vector<uint32_t>& ids, bool forward) {
         for (size_t i = 0; i < ids.size(); ++i)
             for (const auto& link : graph.links) {
+                const auto* destination = find(graph, link.destination);
+                if (destination && routingInput(destination->type, link.inputPin).auxiliary) continue;
                 if ((forward ? link.source : link.destination) != ids[i]) continue;
                 const auto id = forward ? link.destination : link.source;
                 if (std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);

@@ -55,16 +55,17 @@ public:
     static constexpr int defaultLatency = 1344;
     // Quiescent audio required. prepare installs defaultGraph(); restore a saved
     // graph with requestGraph AFTER prepare. reset preserves the active graph.
-    void prepare(double sampleRate, int inputChannels, int outputChannels, const Settings&);
+    void prepare(double sampleRate, int inputChannels, int outputChannels, const Settings&, int routingLatencyReserve = 0);
     void reset(const Settings&);
     void process(const float* const* input, float* const* output, int count,
-                 const Settings&, bool hostBypass = false);
-    int latency() const noexcept { return latencySamples; }
+                 const Settings&, bool hostBypass = false,
+                                  const float* const* auxiliary = nullptr, int auxiliaryChannels = 0);
+    int latency() const noexcept { return latencySamples + routingReserve; }
     // Active routing plan's longest connected tail, plus source delay/latency.
     // Queued graph edits update the routing bound when audio installs them.
     // Tone EQ/LR4 phase and ADAA phase are not integer sample latency.
     double tailSeconds() const noexcept {
-        return (latencySamples + maxDoubleDelay) / rate + routing.tailSeconds();
+        return (latencySamples + routingReserve + maxDoubleDelay) / rate + routing.tailSeconds();
     }
     Meters meters() const noexcept;
     void resetMeters() noexcept;
@@ -77,6 +78,7 @@ public:
     VoiceSnapshot leadSnapshot() const noexcept { return leadState; }
         // Same-owner audio copies; Processor owns concurrent publication.
         RoutingGrainSnapshot grainSnapshot() const noexcept;
+    SpectralMorphFrames spectralSnapshots() const noexcept { return routing.spectralSnapshots(); }
         uint64_t requestedGrainRevision() const noexcept { return routing.requestedGrainRevision(); }
         uint64_t grainEpoch() const noexcept { return routing.grainEpoch(); }
 
@@ -128,7 +130,8 @@ private:
     float leveler(float power);
     float consonantWeight(float sample);
     float matchedGain(LevelMatch&, float referencePower, float renderedPower);
-    void processChunk(const float* const* input, float* const* output, int offset, int count);
+    void processChunk(const float* const* input, float* const* output, int offset, int count,
+                          const float* const* auxiliary, int auxiliaryChannels);
     float coefficient(double seconds) const;
 
     double rate = 48000.0;
@@ -154,7 +157,9 @@ private:
     RoutingExecutor routing;
     std::array<VoiceSnapshot, 8> snapshots{};
     VoiceSnapshot leadState{};
-    std::array<DelayLine, 2> dryDelay, levelDelay;
+    int routingReserve = 0;
+    std::array<DelayLine, 2> rackDryDelay;
+    std::array<DelayLine, 2> dryDelay, levelDelay, auxiliaryDelay;
     std::array<Buffer, 2> leadInput{}, leadRendered{};
     Buffer monoInput{}, articulationInput{};
     DelayLine articulationDelay;

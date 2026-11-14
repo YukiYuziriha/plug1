@@ -190,7 +190,7 @@ void routing() {
     check(allocations == 0 && destructions == 0, "graph audio allocation/destruction");
 }
 void monitoredFactoryAudio() {
-    for (auto type : {NodeType::convolution, NodeType::saturator}) {
+    for (auto type : {NodeType::reverb, NodeType::convolution, NodeType::saturator}) {
         FxMonitor monitor;
         RoutingExecutor fx; fx.prepare(48000); fx.setFxMonitor(&monitor);
         Graph g{{{1, NodeType::lead}, {100, type}, {101, type}, {13, NodeType::output}},
@@ -218,6 +218,20 @@ void monitoredFactoryAudio() {
                     power += wet * wet * .5;
                 }
                 check(std::abs(a.wetRms - std::sqrt(power / 2048)) < 2.e-5, "Wet RMS is not actual pre-blend stereo energy");
+                for (size_t c = 0; c < 2; ++c) for (size_t j = 0; j < 2048; ++j)
+                    check(a.output[c][j] == b.input[c][j], "Duplicate instance input/history crossed slots");
+                const int first = int(a.historySamples - a.historyBinSamples) - (i + 1 - 2048);
+                if (first >= 0 && first + int(a.historyBinSamples) <= 2048) {
+                    float lo = 0, hi = 0; double binPower = 0;
+                    for (int j = first; j < first + int(a.historyBinSamples); ++j) for (size_t c = 0; c < 2; ++c) {
+                        const float wet = 2 * a.output[c][size_t(j)] - a.input[c][size_t(j)];
+                        lo = std::min(lo, wet); hi = std::max(hi, wet); binPower += double(wet) * wet * .5;
+                    }
+                    const auto& bin = a.history.back();
+                    check(std::abs(bin.wetMin - lo) < 2.e-5 && std::abs(bin.wetMax - hi) < 2.e-5
+                        && std::abs(bin.wetRms - std::sqrt(binPower / a.historyBinSamples)) < 2.e-5,
+                        "History measured blended output, not actual pre-Mix wet PCM");
+                }
                 sequence = a.sequence;
             }
         }
@@ -232,8 +246,84 @@ void monitoredFactoryAudio() {
     }
     check(allocations == 0 && destructions == 0, "Factory telemetry audio allocation/destruction");
 }
+// Compare every published history bin to independently accumulated actual PCM,
+// not injected monitor frames or a parameter-derived waveform.
+void waveformHistoryOracle() {
+    for (auto type : {NodeType::reverb, NodeType::convolution, NodeType::saturator})
+    for (double rate : {48000., 96000.}) for (int channels : {1, 2}) {
+        FxMonitor monitor;
+        RoutingExecutor observed, plain;
+        observed.prepare(rate); plain.prepare(rate); observed.setFxMonitor(&monitor);
+        Graph graph{{{1, NodeType::lead}, {100, type}, {13, NodeType::output}}, {{1, 100, 0}, {100, 13, 0}}};
+        check(bool(observed.requestGraph(graph)) && bool(plain.requestGraph(graph)), "History oracle graph");
+        monitor.retain(1);
+        RoutingControls controls; controls.fxAutomation = true; controls.fxSettings[1].mix = 1;
+        const size_t binSize = size_t(rate * .020), total = size_t(rate * 3.2);
+        std::vector<StereoSample> input(total), output(total);
+        for (size_t i = 0; i < total; ++i) {
+            const float x = i < size_t(rate * .35) ? float(.23 * std::sin(i * .071) + .1 * std::cos(i * .039)) : 0;
+            input[i] = {x, channels == 1 ? x : -.6f * x};
+        }
+        RoutingSources source;
+        FxMonitorFrame frame;
+        uint64_t previous = 0; bool tail = false, wrapped = false;
+        constexpr size_t blocks[]{1, 7, 511, 3, 64, 127};
+        size_t position = 0, block = 0;
+        audioThread = true;
+        while (position < total) {
+            const auto end = std::min(total, position + blocks[block++ % 6]);
+            for (; position < end; ++position) {
+                if (type == NodeType::saturator)
+                    controls.fxSettings[1].creative[CreativeParameter::saturatorDrive] = position < size_t(rate * .2) ? 0.f : 24.f;
+                source.lead = input[position];
+                output[position] = observed.process(source, controls);
+                const auto reference = plain.process(source, controls);
+                check(reference.left == output[position].left && reference.right == output[position].right, "History changed DSP numerics");
+            }
+            if (!monitor.read(1, frame) || frame.sequence == previous) continue;
+            previous = frame.sequence;
+            check(frame.hasWet && frame.historyBinSamples == binSize, "History metadata/rate");
+            const auto bins = size_t(frame.historySamples / binSize);
+            check(frame.historyUsed == std::min(bins, FxMonitorFrame::historyCount), "History occupancy/wrap");
+            wrapped |= bins > FxMonitorFrame::historyCount;
+            for (size_t j = 0; j < frame.historyUsed; ++j) {
+                const size_t start = (bins - frame.historyUsed + j) * binSize;
+                float inMin = 0, inMax = 0, wetMin = 0, wetMax = 0;
+                double inPower = 0, wetPower = 0;
+                for (size_t k = start; k < start + binSize; ++k) {
+                    inMin = std::min({inMin, input[k].left, input[k].right}); inMax = std::max({inMax, input[k].left, input[k].right});
+                    wetMin = std::min({wetMin, output[k].left, output[k].right}); wetMax = std::max({wetMax, output[k].left, output[k].right});
+                    inPower += (double(input[k].left) * input[k].left + double(input[k].right) * input[k].right) * .5;
+                    wetPower += (double(output[k].left) * output[k].left + double(output[k].right) * output[k].right) * .5;
+                }
+                const auto& b = frame.history[FxMonitorFrame::historyCount - frame.historyUsed + j];
+                check(std::abs(b.inputMin - inMin) < 1.e-6 && std::abs(b.inputMax - inMax) < 1.e-6
+                      && std::abs(b.wetMin - wetMin) < 1.e-6 && std::abs(b.wetMax - wetMax) < 1.e-6, "History extrema differ from actual PCM");
+                check(std::abs(b.inputRms - std::sqrt(inPower / binSize)) < 1.e-6
+                      && std::abs(b.wetRms - std::sqrt(wetPower / binSize)) < 1.e-6, "History RMS differs from actual PCM");
+                if (start > size_t(rate * .6) && b.inputRms == 0 && b.wetRms > 1.e-5) tail = true;
+            }
+        }
+        audioThread = false;
+        check(wrapped && previous > 30, "History did not wrap/publish");
+        if (type != NodeType::saturator) check(tail, "Reverb history lost actual wet tail after input stopped");
+        controls.fxSettings[1].enabled = false;
+        audioThread = true;
+        for (int i = 0; i < 5000; ++i) observed.process(source, controls);
+        check(monitor.read(1, frame) && !frame.hasWet && frame.historyUsed == 0, "Bypass did not clear history");
+        observed.reset();
+        check(!monitor.read(1, frame), "Reset retained measured history");
+        controls.fxSettings[1].enabled = true; source.lead = {};
+        for (int i = 0; i < 5000; ++i) observed.process(source, controls);
+        check(monitor.read(1, frame) && frame.hasWet, "Silence snapshot missing");
+        for (const auto& b : frame.history) check(b.wetMin == 0 && b.wetMax == 0 && b.wetRms == 0, "Reset silence invented waveform");
+        audioThread = false;
+    }
+    check(allocations == 0 && destructions == 0, "Waveform history allocated/destroyed on audio thread");
+    std::cout << "PASS: measured PCM history oracle, 48/96 kHz mono/stereo irregular blocks, tails, drive, wrap, bypass, reset, bit-exact DSP, RT guards\n";
+}
 void monitorBenchmark() {
-    for (auto type : {NodeType::convolution, NodeType::saturator}) for (int mode = 0; mode < 3; ++mode) {
+    for (auto type : {NodeType::reverb, NodeType::convolution, NodeType::saturator}) for (int mode = 0; mode < 3; ++mode) {
         FxMonitor monitor; RoutingExecutor fx; fx.prepare(48000);
         if (mode) fx.setFxMonitor(&monitor);
         if (mode == 2) monitor.retain(1);
@@ -246,7 +336,7 @@ void monitorBenchmark() {
         const auto start = std::chrono::steady_clock::now();
         for (auto x : input) { source.lead = {x, -.7f * x}; const auto y = fx.process(source, controls); checksum += y.left; }
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-        std::cout << "monitor," << (type == NodeType::convolution ? "Convolution" : "Saturator") << ','
+        std::cout << "monitor," << (type == NodeType::reverb ? "Reverb" : type == NodeType::convolution ? "Convolution" : "Saturator") << ','
             << (mode == 0 ? "no_bridge" : mode == 1 ? "unsubscribed" : "subscribed") << ",48000,2," << seconds << ',' << seconds * 50 << ',' << checksum << '\n';
     }
 }
@@ -285,7 +375,7 @@ void benchmark() {
 int main(int argc, char**) {
     try {
         if (argc > 1) { benchmark(); return 0; }
-        impulseOracle(); shaping(); saturatorContract(); automationAndReset(); routing(); monitoredFactoryAudio();
+        impulseOracle(); shaping(); saturatorContract(); automationAndReset(); routing(); monitoredFactoryAudio(); waveformHistoryOracle();
         std::cout << "PASS: original distinct FIRs, exact convolution oracle, shaping, automation, reset, finite headroom, irregular blocks, routing/bypass, zero RT allocations/destructions\n";
         return 0;
     } catch (const std::exception& e) { audioThread = false; std::cerr << e.what() << '\n'; return 1; }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.10.0 LANGUAGES C CXX)
+project(VocalStack VERSION 1.11.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -36,6 +36,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake)
     FetchContent_MakeAvailable(JUCE clap_juce)
     include(cmake/PatchClapTail.cmake)
+    include(cmake/PatchClapSidechain.cmake)
 
     juce_add_plugin(VocalStack
         COMPANY_NAME "Vocal Stack"
@@ -71,6 +72,17 @@ endif()
 
 if(VOCALSTACK_BUILD_TESTS)
     enable_testing()
+    add_executable(vocalstack_spectralmorph_benchmark tests/SpectralMorphBenchmark.cpp)
+    target_include_directories(vocalstack_spectralmorph_benchmark PRIVATE src)
+    add_executable(vocalstack_spectralmorph_tests tests/SpectralMorphTests.cpp)
+    target_include_directories(vocalstack_spectralmorph_tests PRIVATE src)
+    add_test(NAME VocalStackSpectralMorph COMMAND vocalstack_spectralmorph_tests)
+    add_executable(vocalstack_spectralrouting_tests tests/SpectralRoutingTests.cpp)
+    target_link_libraries(vocalstack_spectralrouting_tests PRIVATE vocalstack_dsp)
+    add_test(NAME VocalStackSpectralRouting COMMAND vocalstack_spectralrouting_tests)
+    add_executable(vocalstack_sidechainsource_tests tests/SidechainSourceTests.cpp)
+    target_link_libraries(vocalstack_sidechainsource_tests PRIVATE vocalstack_dsp)
+    add_test(NAME VocalStackSidechainSource COMMAND vocalstack_sidechainsource_tests)
     add_executable(vocalstack_factoryfx_tests tests/FactoryFxTests.cpp)
     target_include_directories(vocalstack_factoryfx_tests PRIVATE src)
     add_test(NAME VocalStackFactoryFx COMMAND vocalstack_factoryfx_tests)
@@ -140,6 +152,20 @@ if(VOCALSTACK_BUILD_TESTS)
         target_link_libraries(VocalStackModulationProcessorTests PRIVATE VocalStack vocalstack_dsp
             juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
         add_test(NAME VocalStackModulationProcessor COMMAND VocalStackModulationProcessorTests)
+
+        if(WIN32)
+            add_executable(vocalstack_vst3_sidechain_smoke tests/Vst3SidechainSmoke.cpp)
+            target_include_directories(vocalstack_vst3_sidechain_smoke PRIVATE
+                "${juce_SOURCE_DIR}/modules/juce_audio_processors_headless/format_types/VST3_SDK")
+            add_dependencies(vocalstack_vst3_sidechain_smoke VocalStack_VST3)
+            add_test(NAME VocalStackVST3Sidechain COMMAND vocalstack_vst3_sidechain_smoke $<TARGET_FILE:VocalStack_VST3>)
+        endif()
+
+        juce_add_console_app(VocalStackSidechainProcessorTests PRODUCT_NAME "Vocal Stack Sidechain Processor Tests")
+        target_sources(VocalStackSidechainProcessorTests PRIVATE tests/SidechainProcessorTests.cpp)
+        target_link_libraries(VocalStackSidechainProcessorTests PRIVATE VocalStack vocalstack_dsp
+            juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
+        add_test(NAME VocalStackSidechainProcessor COMMAND VocalStackSidechainProcessorTests)
 
         juce_add_console_app(VocalStackRoutingSplitterStateTests PRODUCT_NAME "Vocal Stack Routing Splitter State Tests")
         target_sources(VocalStackRoutingSplitterStateTests PRIVATE tests/RoutingSplitterStateTests.cpp)

@@ -1,4 +1,32 @@
-# Vocal Stack — 1.10.0
+# Vocal Stack — 1.11.0 source preview
+
+**Coordinated source revision in progress; rebuild/validation pending the UI-agent
+handoff. Pending visual approval, not installed or packaged.**
+Adds a first-class optional mono/stereo SIDECHAIN source, independent MAIN/DONOR
+Spectral Morph with Magnitude/Envelope modes and actual donor Freeze, and shared
+fine connected measured fields for Reverb, Convolution and Saturator over the
+unchanged coarse background material. Morph now has larger dial faces and a
+slightly taller Stack FX allocation; saved/default editor sizes are unchanged. Original
+host indices 0–2251 remain fixed; 90 controls append for **2342 parameters**.
+
+**Prepared graph latency:** no-Morph graphs return to **1344 samples** at 44.1/48
+kHz and **2688** at 96 kHz; graphs declaring Morph add its actual **4096 samples**
+(5440/6784 total). Latency-changing edits save a clearly labeled **RESTART PENDING**
+topology and retain the current audio graph/host report until host deactivate/
+reactivate; transport stop/reset is not enough. FFT changes retain fixed latency;
+unsupported serial Morph paths are explicitly rejected. New transition tests and
+native Routing cost instrumentation are written but not yet run.
+See [usage, validation, limitations and all-theme GIFs](docs/Preview-1.11.0.md).
+The historical full editor run was **77/78**, blocked only by the existing
+native desktop-occlusion click precondition; this is not a clean full GUI pass
+or a DAW listening claim.
+
+Pending 1.10.1 work and its [historical preview](docs/Preview-1.10.1.md) are preserved.
+Tracked packages and installed plugins remain **1.10.0** (`df4ba55`); their original
+SHA256 hashes and PE versions were reverified read-only. No package replacement,
+installation, commit or push occurred.
+
+## Installed 1.10.0
 
 **Approved, built, packaged and installed.** Adds a separate
 Convolution FX with original synthetic Church, Hall, Room and Plate IRs, wet
@@ -12,8 +40,8 @@ square/clustered-material UI preview is retained.
 Includes the approved coordinated Motion/material/reactive presentation, repeated
 Dry/Wet nodes, denser Routing inspector controls, 14/22 px scrollbars and chunky
 square Routing nodes with double-weight connections. Circular knobs and shared
-Stack layout constants are preserved. SIDECHAIN / Spectral Morph remains roadmap
-only, unimplemented.
+Stack layout constants are preserved. Installed 1.10.0 does not include SIDECHAIN
+or Spectral Morph; those are part of the uninstalled 1.11.0 source preview above.
 
 See [1.10.0 release validation and installation hashes](docs/Release-1.10.0-Validation.md)
 and the [historical preview/constraints](docs/Preview-1.10.0.md).
@@ -544,9 +572,11 @@ coherent parameters, not audio telemetry, and remains visible unprepared,
 stopped or without audio. No active-grain auto-zoom or cloud scatter is used.
 This is a **parameter illustration**, not an actual recorded waveform or measured
 grain telemetry. The DSP snapshot bridge remains available in the backend but
-no longer drives this graph. Other creative plots remain parameter-derived
-schematics, not measured impulse responses. Compressor gain reduction reports
-the actual smoothed gain before makeup.
+no longer drives this graph. Creative foreground guides remain parameter-derived
+schematics, not measured impulse responses. In the **1.10.1 source preview**,
+Reverb, Convolution and Saturator additionally show measured pre-Mix wet history
+behind those guides (Saturator also shows input). This does not change Granular.
+Compressor gain reduction reports the actual smoothed gain before makeup.
 
 Reverb RT60 is a midband target, not a guaranteed measured decay: damping,
 filters and interpolation shorten it. Reverb freeze is bounded/near-lossless,
@@ -603,8 +633,10 @@ see [LICENSE](LICENSE). Third-party components retain their respective notices.
 
 Effect graphics now include reverb decay/swell/pitch, delay repeats, granular
 windows, compressor knee and bitcrusher steps. These are **parameter-derived
-schematics**, not measured reverb IRs or live-grain telemetry. Compressor/gate GR,
-waveforms and FFT displays are measured. Waveshaper retains its actual transfer
+schematics**, not measured reverb IRs or live-grain telemetry. The **1.10.1 preview**
+adds separate, measured 2.56 s waveform/RMS background fields to Reverb,
+Convolution and Saturator; the model axes do not describe that background.
+Compressor/gate GR, waveforms and FFT displays are measured. Waveshaper retains its actual transfer
 model with a thin themed curve and shaded fill.
 
 ![Spectral Synth Filter](VocalStack-Spectral-Filter.png)
@@ -899,6 +931,18 @@ Regression tests cover disconnecting Chorale, routing around an unused FX, empty
 mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
+
+**1.10.1 source preview:** Release CLAP/VST3 build passed; 36/36 non-editor
+regressions and isolated granular UI passed. PCM-history, real tails, pre-Mix,
+concurrency and real-time allocation/destruction checks passed. Editor: **75/76**
+groups passed; Compact Stack synthetic voice-card click remains failing
+(originally `active=0 slot=-99`), not silently waived. Follow-up diagnostics
+identify Windows `LockScreenInputOcclusionFrame` blocking the native peer hit;
+second-monitor placement, scrolling and stronger hit/dispatch assertions now make
+that blocker explicit. Isolated Compact Stack remains 0/1 and full editor 75/76;
+unlocked native click validation remains pending. All nine effect/theme native render
+fixtures passed; 27 GIFs verified at 25 fps / 5.92 s. No installation or package
+replacement. See [preview validation and artifacts](docs/Preview-1.10.1.md).
 
 **1.10.0:** final incremental Release build passed. Final split validation: 36/36
 non-editor/non-grain-UI CTests (130.24 s), isolated editor (116.89 s, 75 groups),

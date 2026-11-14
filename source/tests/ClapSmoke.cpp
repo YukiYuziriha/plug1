@@ -150,7 +150,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
     const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
-    expect(params.count(instance.plugin) == 2252, "Expected 2087 preserved + 165 convolution/saturator parameters");
+    expect(params.count(instance.plugin) == 2342, "Expected 2087 preserved + 165 convolution/saturator parameters");
     for (uint32_t i = 0; i < params.count(instance.plugin); ++i) {
         clap_param_info_t info{};
         expect(params.get_info(instance.plugin, i, &info), "Host parameter metadata missing");
@@ -189,7 +189,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
            "Output remote controls are mapped incorrectly");
     for (size_t i = 2; i < CLAP_REMOTE_CONTROLS_COUNT; ++i)
         expect(page.param_ids[i] == CLAP_INVALID_ID, "An unused Output remote slot is not empty");
-    std::cout << "2252 automatable parameters and two remote pages verified; original indices unchanged\n";
+    std::cout << "2342 automatable parameters and two remote pages verified; original indices unchanged\n";
 }
 
 void checkState(const clap_plugin_factory_t& factory) {
@@ -232,7 +232,7 @@ void checkLayout(const clap_plugin_factory_t& factory, clap_id configId, double 
     Instance instance(factory);
     const auto* plug = instance.plugin;
     const auto& configs = instance.get<clap_plugin_audio_ports_config_t>(CLAP_EXT_AUDIO_PORTS_CONFIG);
-    expect(configs.count(plug) == 3, "Expected three CLAP port configurations");
+    expect(configs.count(plug) == 9, "Expected three main layouts times sidechain off/mono/stereo");
     clap_audio_ports_config_t config{};
     expect(configs.get(plug, configId, &config) && configs.select(plug, config.id), "Could not select port configuration");
 
@@ -242,6 +242,19 @@ void checkLayout(const clap_plugin_factory_t& factory, clap_id configId, double 
     expect(inInfo.channel_count == config.main_input_channel_count &&
            outInfo.channel_count == config.main_output_channel_count, "Port layout metadata mismatch");
 
+    expect(ports.count(plug, true) == config.input_port_count
+        && ports.count(plug, false) == 1, "Optional port count mismatch");
+    clap_audio_port_info_t auxiliaryInfo{};
+    const uint32_t auxiliaryChannels = configId / 3;
+    if (auxiliaryChannels) {
+        expect(ports.get(plug, 1, true, &auxiliaryInfo), "Missing external sidechain port");
+        expect(auxiliaryInfo.channel_count == auxiliaryChannels
+            && (auxiliaryInfo.flags & CLAP_AUDIO_PORT_IS_MAIN) == 0
+            && auxiliaryInfo.in_place_pair == CLAP_INVALID_ID,
+            "Sidechain channel / main-flag / in-place metadata mismatch");
+    } else {
+        expect(ports.count(plug, true) == 1, "Disabled sidechain advertised as active");
+    }
     const auto bypass = getParameter(instance, "Bypass");
     expect((bypass.flags & CLAP_PARAM_IS_BYPASS) != 0, "Missing CLAP bypass flag");
     Events events;
@@ -256,19 +269,25 @@ void checkLayout(const clap_plugin_factory_t& factory, clap_id configId, double 
     expect(render.set(plug, CLAP_RENDER_OFFLINE), "Offline mode rejected");
     expect(plug->activate(plug, sampleRate, 1, block), "Activation failed");
     const auto latency = instance.get<clap_plugin_latency_t>(CLAP_EXT_LATENCY).get(plug);
-    expect(latency > 0 && latency < sampleRate * 0.1, "Latency out of range");
+    expect(latency == (sampleRate == 96000. ? 2688u : 1344u), "No-Morph CLAP latency differs from the legacy engine");
     expect(plug->start_processing(plug), "Processing did not start");
 
     std::array<std::array<float, block>, 2> input{}, output{};
     std::array<float*, 2> inputPointers{input[0].data(), input[1].data()};
     std::array<float*, 2> outputPointers{output[0].data(), output[1].data()};
-    clap_audio_buffer_t inputBus{inputPointers.data(), nullptr, inInfo.channel_count, 0, 0};
+    std::array<std::array<float, block>, 2> auxiliary{};
+    auxiliary[0].fill(.71f); auxiliary[1].fill(-.53f);
+    std::array<float*, 2> auxiliaryPointers{auxiliary[0].data(), auxiliary[1].data()};
+    std::array<clap_audio_buffer_t, 2> inputBuses{{
+        {inputPointers.data(), nullptr, inInfo.channel_count, 0, 0},
+        {auxiliaryPointers.data(), nullptr, auxiliaryChannels, 0, 0}}};
     clap_audio_buffer_t outputBus{outputPointers.data(), nullptr, outInfo.channel_count, 0, 0};
     clap_process_t process{};
     process.frames_count = block;
-    process.audio_inputs = &inputBus;
+    process.audio_inputs = inputBuses.data();
     process.audio_outputs = &outputBus;
-    process.audio_inputs_count = process.audio_outputs_count = 1;
+    process.audio_inputs_count = auxiliaryChannels ? 2 : 1;
+    process.audio_outputs_count = 1;
     process.in_events = &events.input;
     process.out_events = &events.output;
     uint32_t position = 0;
@@ -308,6 +327,78 @@ void checkLayout(const clap_plugin_factory_t& factory, clap_id configId, double 
            "Output gain automation did not apply");
     std::cout << config.name << ", " << sampleRate << " Hz, latency " << latency << " samples\n";
 }
+
+void checkSpectralDonor(const clap_plugin_factory_t& factory, clap_id configuration, double rate) {
+    Instance instance(factory); const auto* plug = instance.plugin;
+    const auto& configs = instance.get<clap_plugin_audio_ports_config_t>(CLAP_EXT_AUDIO_PORTS_CONFIG);
+    expect(configs.select(plug, configuration), "CLAP spectral bus selection failed");
+    const std::string xml = R"(<VocalStack><PARAM id="levelOn" value="0"/><PARAM id="doubleOn" value="0"/><PARAM id="fx1Mix" value="100"/><PARAM id="fx1MorphAmount" value="100"/><PARAM id="fx1MorphSmoothing" value="0"/><RoutingGraph><Node id="1" type="0"/><Node id="14" type="22"/><Node id="100" type="23" mix="1"/><Node id="13" type="5"/><Link source="1" destination="100" inputPin="0"/><Link source="14" destination="100" inputPin="1"/><Link source="100" destination="13" inputPin="0"/></RoutingGraph></VocalStack>)";
+    Stream preset; preset.bytes.resize(xml.size()+9);
+    const uint32_t magic=0x21324356, length=uint32_t(xml.size());
+    std::memcpy(preset.bytes.data(),&magic,4); std::memcpy(preset.bytes.data()+4,&length,4);
+    std::memcpy(preset.bytes.data()+8,xml.data(),xml.size());
+    const auto& state = instance.get<clap_plugin_state_t>(CLAP_EXT_STATE);
+    // Activating a no-Morph graph establishes the old host compensation.
+    // A state edit while active must not alter that contract until reactivation.
+    expect(plug->activate(plug,rate,1,512), "CLAP baseline activation failed");
+    const auto& activationLatency = instance.get<clap_plugin_latency_t>(CLAP_EXT_LATENCY);
+    const uint32_t baseline = rate == 96000. ? 2688u : 1344u;
+    expect(activationLatency.get(plug) == baseline, "CLAP baseline retained Morph reserve");
+    expect(state.load(plug,&preset.input), "CLAP routed Morph state load failed");
+    expect(activationLatency.get(plug) == baseline, "CLAP active state changed host latency before reactivation");
+    plug->deactivate(plug);
+    const uint32_t mainChannels = configuration%3 == 0 ? 2 : 1;
+    const uint32_t outChannels = configuration%3 == 2 ? 1 : 2;
+    const uint32_t auxiliaryChannels = configuration/3;
+    constexpr uint32_t maximum = 512;
+    expect(plug->activate(plug,rate,1,maximum), "CLAP Morph activation failed");
+    const auto& latencyExtension = instance.get<clap_plugin_latency_t>(CLAP_EXT_LATENCY);
+    const uint32_t latency = latencyExtension.get(plug);
+    expect(latency == baseline + 4096, "CLAP Morph activation failed to declare the actual delay");
+    expect(plug->start_processing(plug), "CLAP Morph start failed");
+    std::array<std::array<float,maximum>,2> main{},aux{},out{};
+    main[0].fill(.1f); main[1].fill(-.1f); aux[0].fill(-.04f); aux[1].fill(.07f);
+    std::array<float*,2> mp{main[0].data(),main[1].data()}, ap{aux[0].data(),aux[1].data()}, op{out[0].data(),out[1].data()};
+    std::array<clap_audio_buffer_t,2> input{{{mp.data(),nullptr,mainChannels,0,0},{ap.data(),nullptr,auxiliaryChannels,0,0}}};
+    clap_audio_buffer_t output{op.data(),nullptr,outChannels,0,0};
+    Events events; clap_process_t process{}; process.audio_inputs=input.data(); process.audio_inputs_count=auxiliaryChannels ? 2 : 1;
+    process.audio_outputs=&output; process.audio_outputs_count=1; process.in_events=&events.input; process.out_events=&events.output;
+    constexpr std::array<uint32_t,7> blocks{1,137,3,511,17,63,257}; double error=0;
+    for(uint32_t position=0,block=0;position<latency+16000;++block) {
+        process.frames_count=blocks[block%blocks.size()]; process.steady_time=position;
+        expect(plug->process(plug,&process)!=CLAP_PROCESS_ERROR, "CLAP routed Morph process failed");
+        if(position>latency+12000) for(uint32_t c=0;c<outChannels;++c) for(uint32_t i=0;i<process.frames_count;++i) {
+            const float expected = auxiliaryChannels==0 ? 0.f : outChannels==1 && auxiliaryChannels==2 ? .055f
+                : c==0 || auxiliaryChannels==1 ? (c==1 && mainChannels==2 ? -.04f : .04f) : mainChannels==2 ? -.07f : .07f;
+            error=std::max(error,std::abs(double(out[c][i]-expected)));
+        }
+        position+=process.frames_count;
+    }
+    // Exercise sample-offset parameter splits on the live two-input graph.
+    const auto fft=getParameter(instance,"FX 1 Spectral FFT Size");
+    const auto freeze=getParameter(instance,"FX 1 Spectral Freeze");
+    events.set(fft.id,fft.max_value,17); events.set(freeze.id,freeze.max_value,31); process.frames_count=137;
+    expect(plug->process(plug,&process)!=CLAP_PROCESS_ERROR, "CLAP spectral event sub-block failed");
+    expect(latencyExtension.get(plug)==latency, "CLAP FFT automation changed host latency");
+    plug->stop_processing(plug); plug->deactivate(plug);
+    Stream saved; expect(state.save(plug,&saved.output), "CLAP spectral state save failed");
+    expect(state.load(plug,&saved.input), "CLAP spectral state recall failed");
+    expect(plug->activate(plug,rate,1,maximum), "CLAP recalled activation failed");
+    expect(latencyExtension.get(plug) == latency, "CLAP recalled Morph latency");
+    const std::string noMorphXml = "<VocalStack/>";
+    Stream noMorph; noMorph.bytes.resize(noMorphXml.size() + 9);
+    const uint32_t noMorphLength = uint32_t(noMorphXml.size());
+    std::memcpy(noMorph.bytes.data(), &magic, 4); std::memcpy(noMorph.bytes.data() + 4, &noMorphLength, 4);
+    std::memcpy(noMorph.bytes.data() + 8, noMorphXml.data(), noMorphXml.size());
+    expect(state.load(plug, &noMorph.input), "CLAP active Morph removal failed");
+    expect(latencyExtension.get(plug) == latency, "CLAP Morph removal changed compensation while active");
+    plug->deactivate(plug);
+    expect(plug->activate(plug,rate,1,maximum), "CLAP no-Morph reactivation failed");
+    expect(latencyExtension.get(plug) == baseline, "CLAP no-Morph reactivation retained the penalty");
+    plug->deactivate(plug);
+    expect(error<2.e-3, "CLAP routed external donor/main-phase/absence/channel oracle failed");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -327,9 +418,8 @@ int main(int argc, char** argv) {
         std::cout << "CLAP version " << descriptor->version << " verified\n";
         checkHostControls(*factory);
         checkState(*factory);
-        checkLayout(*factory, 0, 48000);
-        checkLayout(*factory, 1, 44100);
-        checkLayout(*factory, 2, 96000);
+        for (clap_id configuration = 0; configuration < 9; ++configuration)
+            for (double rate : {44100., 48000., 96000.}) { checkLayout(*factory, configuration, rate); checkSpectralDonor(*factory, configuration, rate); }
         std::cout << "CLAP state, latency, bypass, automation and offline layout checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
