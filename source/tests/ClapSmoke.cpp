@@ -150,7 +150,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
     const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
-    expect(params.count(instance.plugin) == 2087, "Expected 1007 preserved + 765 creative + 315 utility sound parameters");
+    expect(params.count(instance.plugin) == 2252, "Expected 2087 preserved + 165 convolution/saturator parameters");
     for (uint32_t i = 0; i < params.count(instance.plugin); ++i) {
         clap_param_info_t info{};
         expect(params.get_info(instance.plugin, i, &info), "Host parameter metadata missing");
@@ -189,7 +189,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
            "Output remote controls are mapped incorrectly");
     for (size_t i = 2; i < CLAP_REMOTE_CONTROLS_COUNT; ++i)
         expect(page.param_ids[i] == CLAP_INVALID_ID, "An unused Output remote slot is not empty");
-    std::cout << "2087 automatable parameters and two remote pages verified; original indices unchanged\n";
+    std::cout << "2252 automatable parameters and two remote pages verified; original indices unchanged\n";
 }
 
 void checkState(const clap_plugin_factory_t& factory) {
@@ -320,6 +320,11 @@ int main(int argc, char** argv) {
         const auto* factory = static_cast<const clap_plugin_factory_t*>(
             library.entry->get_factory(CLAP_PLUGIN_FACTORY_ID));
         expect(factory && factory->get_plugin_count(factory) == 1, "Unexpected CLAP factory");
+        const auto* descriptor = factory->get_plugin_descriptor(factory, 0);
+        expect(descriptor && descriptor->version
+                   && std::string_view(descriptor->version) == VOCALSTACK_EXPECTED_VERSION,
+               "CLAP descriptor version does not match the source release");
+        std::cout << "CLAP version " << descriptor->version << " verified\n";
         checkHostControls(*factory);
         checkState(*factory);
         checkLayout(*factory, 0, 48000);

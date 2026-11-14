@@ -1,2 +1,10 @@
 /source/build/
 /.cache/
+
+# Generated review renders; historical tracked release images remain tracked.
+/approval-1910-*.png
+/controls-utility-*.png
+/editor-*.png
+/routing-*.png
+/tone-*.png
+/utility-*.png

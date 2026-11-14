@@ -51,7 +51,7 @@ public:
     bool canUndoLoad() const noexcept { return undoPatch.isValid(); }
     static juce::StringArray factoryNames() {
         return {"Dark Lead", "Grit Adlibs", "Deep Double", "Night Echo", "Cloud Choir",
-                    "Clean Vocal Utility", "Vocal Filter Motion", "Shimmer Bloom"};
+                    "Clean Vocal Utility", "Vocal Filter Motion", "Shimmer Bloom", "Synthetic Church", "Warm Plate"};
     }
 
     juce::Result setFolder(const juce::File& chosen) {
@@ -204,7 +204,7 @@ public:
             setRaw(patch, "voice" + juce::String(v) + "Present", v <= 2 ? 1 : 0);
             setRaw(patch, "voice" + juce::String(v) + "On", v <= 2 ? 1 : 0);
         }
-        const float blends[]{12, 30, 42, 18, 46, 10, 18, 35};
+        const float blends[]{12, 30, 42, 18, 46, 10, 18, 35, 12, 8};
         setRaw(patch, "double", blends[index]);
         for (int v = 1; v <= 2; ++v) {
             const auto prefix = "voice" + juce::String(v);
@@ -257,6 +257,20 @@ public:
             setRaw(patch, synth + "synth_cutoff", 950);
             setRaw(patch, synth + "synth_resonance", 25);
         }
+        if (index >= 8) {
+            setRaw(patch, "outputGain", -6);
+            if (index == 9) {
+                const auto sat = effect(int(NodeType::saturator), 100);
+                setRaw(patch, sat + "saturator_drive", 9);
+                setRaw(patch, sat + "saturator_character", 55);
+                setRaw(patch, sat + "saturator_output", -9);
+                setRaw(patch, sat + "saturator_tone", -2);
+            }
+            const auto conv = effect(int(NodeType::convolution), index == 8 ? 18 : 15);
+            setRaw(patch, conv + "convolution_space", index == 8 ? 0 : 3);
+            setRaw(patch, conv + "convolution_duck", 6);
+            setRaw(patch, conv + "convolution_brightness", index == 8 ? -2 : 1);
+        } else {
         auto compressor = effect(11, 100);
         setRaw(patch, compressor + "compressor_threshold", -22);
         setRaw(patch, compressor + "compressor_ratio", index == 1 ? 6 : 3);
@@ -289,6 +303,7 @@ public:
             setRaw(patch, reverb + "reverb_pitch", 12);
             setRaw(patch, reverb + "reverb_pitch_amount", 38);
             setRaw(patch, reverb + "reverb_swell", 450);
+        }
         }
         addLink(graph, previous, 13);
         patch.addChild(graph, -1, nullptr);
@@ -340,6 +355,7 @@ private:
     }
     static void stripPreferences(juce::ValueTree& patch) {
         patch.removeProperty("skin", nullptr);
+        patch.removeProperty("motionPercent", nullptr);
         patch.removeProperty("flash", nullptr); patch.removeProperty("advancedVisible", nullptr);
         auto layout = patch.getChildWithName("RoutingLayout");
         // Root layout properties are presentation preferences; node positions live
@@ -348,7 +364,7 @@ private:
     }
     static void retainPreferences(juce::ValueTree& patch, const juce::ValueTree& live) {
         stripPreferences(patch);
-        for (const auto* key : {"skin", "flash", "advancedVisible"})
+        for (const auto* key : {"skin", "flash", "advancedVisible", "motionPercent"})
             if (live.hasProperty(key)) patch.setProperty(key, live[key], nullptr);
         auto layout = patch.getChildWithName("RoutingLayout");
         if (!layout.isValid()) { layout = juce::ValueTree("RoutingLayout"); patch.addChild(layout, -1, nullptr); }
@@ -459,6 +475,7 @@ public:
             addAndMakeVisible(*button); button->setWantsKeyboardFocus(false); button->setMouseClickGrabsKeyboardFocus(false);
         }
         addAndMakeVisible(browser); addAndMakeVisible(status);
+        browser.getProperties().set("vocalstackPresetSelector", true);
         browser.setEditableText(false); browser.setWantsKeyboardFocus(false); browser.setMouseClickGrabsKeyboardFocus(false);
         status.setInterceptsMouseClicks(false, false);
         status.setFont(pixelFontOptions(11.0f));
@@ -501,6 +518,19 @@ public:
         lastLoaded = 0;
         browser.setTextWhenNothingSelected("Choose preset...");
         report(result, "Folder: " + manager.getFolder().getFullPathName());
+    }
+    void applyTheme() {
+        const auto p = themePalette(*this);
+        browser.setColour(juce::ComboBox::backgroundColourId, p.inset);
+        browser.setColour(juce::ComboBox::outlineColourId, p.border);
+        browser.setColour(juce::ComboBox::textColourId, p.text);
+        browser.setColour(juce::ComboBox::arrowColourId, p.accent);
+        status.setColour(juce::Label::textColourId, p.muted);
+        for (auto* button : {&refreshButton, &folderButton, &saveButton, &undoButton}) {
+            button->setColour(juce::TextButton::buttonColourId, p.panel);
+            button->setColour(juce::TextButton::textColourOffId, p.text);
+        }
+        repaint();
     }
     void resized() override {
         auto area = getLocalBounds();

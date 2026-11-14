@@ -1,6 +1,156 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current status — 1.9.6 built, tested, packaged and installed
+## Planned / unimplemented — SIDECHAIN source and Spectral Morph
+
+**Planning only. None of the work below is claimed implemented, built, tested,
+packaged or installed.** This is a new roadmap, not a description of the existing
+1.10.0 source/UI preview. Preserve all pending preview edits and approval work;
+see [the 1.10.0 preview record](docs/Preview-1.10.0.md) for its separately recorded
+implementation and validation. The older release/status records below remain
+historical context, not evidence that this new scope is complete. No release
+version is assigned by this plan.
+
+### 1. Host input and first-class routing source
+
+- [ ] Expose an optional external mono/stereo sidechain bus in CLAP and VST3,
+  verifying each wrapper's actual auxiliary-bus behavior rather than assuming
+  parity. Define mono-to-stereo handling explicitly and preserve channel identity.
+- [ ] Add a first-class `SIDECHAIN` source to routing. Missing/disconnected host
+  input produces silence; never substitute the main input or main mix, normalize
+  its level automatically, or consume an FX slot for this source.
+- [ ] Include source identity, connections and disconnected state in routing
+  snapshots, presets and session recall. Host bus availability remains runtime
+  state, not audio embedded in a preset. Disconnect/reconnect must not invent wires.
+
+### 2. Generic auxiliary inputs and honest latency
+
+- [ ] Extend effect input declarations and prepared routing plans with meaningful,
+  named auxiliary inputs. Effects receive routed buffers through this generic
+  contract, not a hardcoded direct read from the host sidechain. Internal sources
+  and `SIDECHAIN` must be equally valid donors where routing permits.
+- [ ] Give each Spectral Morph instance independent `MAIN` and `DONOR` pins,
+  processor history and freeze state. Validate pin/channel compatibility, cycles,
+  duplicate wires and fan-out/reconvergence before publishing a graph. Reject an
+  invalid edit without replacing the last valid running graph.
+- [ ] Specify actual STFT latency for each FFT configuration; align the effect's
+  local dry/wet paths and report total plugin latency to the host. Account for
+  donor timing and routing-path alignment. Implement branch compensation where
+  supported, or explicitly reject unsupported parallel/reconvergent latency
+  configurations. Never advertise zero latency to hide alignment work.
+- [ ] Prepare graph changes, buffers, FFT resources and delay storage off the audio
+  thread; publish safely at processing boundaries and reclaim old resources off
+  that thread. Define FFT-size/latency-change and reset/reprepare behavior without
+  callback allocation, locks, I/O or graph rebuilding.
+
+### 3. Spectral Morph DSP and controls
+
+- [ ] Implement an independent two-input Spectral Morph effect, not a sidechain
+  switch on an existing effect. Initial modes: **Magnitude**, transferring/blending
+  donor magnitudes with an explicit main-phase strategy; and **Envelope**, applying
+  a smoothed donor spectral envelope for timbral transfer rather than merely
+  copying fine spectral bins. Document equations and audible endpoint behavior.
+- [ ] Provide **Morph**, **Mode**, **FFT Size**, **Smoothing**, **Freeze**, **Mix**
+  and **Output**. Morph controls transfer strength; Mix remains a true,
+  latency-aligned dry/wet blend. Smooth continuous controls and make transitions
+  bounded and click-resistant. Add continuous modulation only for justified,
+  musically useful controls; do not imply discrete mode/FFT/freeze automation is
+  continuous modulation or expand the parameter surface speculatively.
+- [ ] Freeze captures and holds donor analysis, with explicit capture, hold and
+  release behavior independent of main-input processing. Define capture before
+  donor availability, repeated capture, disconnect while held, reset and recall
+  semantics. Keep held donor data separate from live analysis/smoothing state and
+  specify whether capture data is persisted; never silently claim it is recalled.
+- [ ] Use a proper streaming overlap-add STFT with compatible analysis/synthesis
+  windows, overlap and reconstruction normalization. Preserve stereo coherence
+  without unintended summing or channel swaps; smooth envelopes/magnitudes over
+  time and frequency as appropriate. Handle silence and spectral division safely,
+  with bounded gains and finite output, not automatic level normalization.
+- [ ] Preallocate all working storage outside processing. Bound per-block work;
+  support arbitrary host block boundaries and 44.1/48/96 kHz, with explicit
+  prepare/reset, sample-rate and block-size-change behavior. No audio-thread
+  allocation, locks, I/O or UI access, including freeze and control transitions.
+
+### 4. Routing/rack presentation and measured telemetry
+
+- [ ] Show clear `MAIN` / `DONOR` pins and host sidechain availability in Routing.
+  In the rack, explicitly show a disconnected donor and an **Open Routing** action.
+  Do not auto-connect the main mix, create an invented donor wire or suggest that
+  an unrouted donor is receiving signal.
+- [ ] Display main, donor and result spectra from actual bounded, coherent DSP
+  telemetry, with useful scales and visible live/frozen/disconnected state.
+  Transfer snapshots safely without audio-thread blocking/allocation; render on
+  the UI thread at bounded rates. Do not present decorative plots as measurements.
+- [ ] Verify controls, spectra and frozen-state legibility in every existing theme,
+  rack and routing views, compact/expanded layouts, and preserve host keyboard
+  shortcuts. Capture real screenshots for user review before installation.
+
+### 5. Acceptance tests and gated delivery
+
+- [ ] Offline DSP: FFT/OLA reconstruction and latency alignment; Morph and Mix
+  endpoints; magnitude/main-phase behavior; envelope transfer and smoothing;
+  freeze capture/hold/release/reset; silence/disconnected donor; finite/bounded
+  output; independent instances; modulation and transition continuity. Cover
+  mono/stereo, 44.1/48/96 kHz and irregular blocks, including no-allocation checks
+  during steady processing and supported transitions.
+- [ ] Integration: parameter/state/preset round trips and defined frozen-state
+  recall, source snapshots, internal versus external donor routing, invalid pins,
+  cycles, duplicate wires, graph swaps and supported/rejected latency paths.
+  Verify local Mix, global Mix and bypass all retain correct dry alignment.
+- [ ] Host verification in both CLAP and VST3: absent, mono and stereo auxiliary
+  buses; reconnect; prepare/reprepare; plugin reload and session recall; bypass,
+  global Mix, transport start/stop, sample-rate changes and irregular block sizes.
+  Separate wrapper smoke tests from actual DAW listening/automation checks and
+  record unverified hosts or unsupported layouts explicitly.
+- [ ] When implementation is separately authorized, run relevant builds, tests
+  and performance checks through the existing `tools/Invoke-HalfCpu.ps1` workflow
+  in dedicated 64-bit PowerShell; stop if its topology restriction fails. Update
+  usage/routing/latency/state documentation and record observed results honestly.
+- [ ] Present screenshots and results for the user's approval **before installing**.
+  Preserve the existing preview gate: no package refresh, installation, commit or
+  push without authorization. Once authorized, refresh matching CLAP/VST3 packages,
+  verify hashes and host smoke results, and install only with host files unlocked;
+  never terminate the DAW to force replacement. This documentation edit authorizes
+  none of those actions and requires no build, version bump or source changes.
+
+### Explicitly outside this scope
+
+Envelope followers, keyed compression, vocoders, spectral gates, alternative
+phase/harmonic/detail processing and region-selective modes are future ideas,
+**not deliverables** of this plan. The donor Freeze above is specifically planned
+here; it does not promote the older general spectral freeze/smear ideas below to
+implemented or committed broader effects. Follow the staged order: host source ->
+generic auxiliary routing and latency -> DSP -> UI/telemetry -> tests and gated
+delivery, validating each foundation before building the next.
+
+## Current status — 1.10.0 approved, built, packaged and installed
+
+- [x] Deliver the entire approved preview: synthetic-space Convolution, Saturator,
+  real audio-reactive visuals, linear global Motion (3% base), clustered material
+  and glints, 0.8 background strength, square chrome/circular knobs, fat 3 px
+  slider material, 10 px voice rails, sparse FX controls and themed preset menus.
+- [x] Preserve repeated/duplicated Dry/Wet utilities, shared inspector control
+  layout, 14/22 px scrollbars, chunky square Routing nodes, double-weight
+  connections and shared Stack layout constants.
+- [x] Preserve 2087 existing host indices; append 165 controls (2252 total).
+- [x] Final incremental Release build; both Windows PE versions corrected to
+  1.10.0 with a durable generated-resource dependency and CLAP resource linkage.
+- [x] All 38 CTest suites passed in split runs: final 36/36 (130.24 s), isolated
+  75-group editor (116.89 s), and three isolated grain UI passes (27.05 s).
+  Two parallel 37-suite runs failed the grain UI concurrent-reader assertion;
+  this is not a clean combined test pass. No unrelated concurrency fix was made.
+- [x] Seven render modes passed (441 offscreen PNGs); packaged/installed CLAP
+  descriptor version, state, latency, bypass, automation and layout smoke passed.
+- [x] Refresh tracked Windows CLAP/VST3 and legal/font notices; existing installer
+  preflight succeeded for both destinations, then both installed successfully.
+  Independent build/package/installed SHA256 and PE 1.10.0 checks passed.
+- [ ] Actual DAW listening, transport, automation/recall, VST3 host validation and
+  native FPS measurements remain open.
+
+See [1.10.0 delivery evidence and hashes](docs/Release-1.10.0-Validation.md).
+Preview documents remain historical records, not current installation gates.
+The SIDECHAIN / Spectral Morph roadmap above is **unimplemented** and unchanged.
+
+## Historical status — 1.9.6 built, tested, packaged and installed
 
 UI-only: no DSP or host parameter changes.
 

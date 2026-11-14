@@ -206,7 +206,7 @@ private:
                     bodyViewport.setViewedComponent(&controls, false);
                     bodyViewport.setScrollBarsShown(true, false);
                     addKnob(fxParameterId(size_t(slot), "Mix"), "Mix", "%", true);
-                    addKnob(fxParameterId(size_t(slot), "Motion"), "Motion", "%");
+                    addKnob(fxParameterId(size_t(slot), "Motion"), "Motion", "%", true);
                 } else if (slot > 0) {
                     if (isCreativeEffect(model.type)) fullPanel = std::make_unique<CreativeEffectPanel>(rack.owner, size_t(slot), creativeKind(model.type));
                     else if (isUtilityEffect(model.type)) fullPanel = std::make_unique<UtilityEffectPanel>(rack.owner, size_t(slot), utilityKind(model.type));
@@ -262,13 +262,10 @@ private:
                                                  mixWidth, mixHeight);
                     }
                 } else if (model.type == NodeType::chorale && knobs.size() == 2) {
-                    const bool sideBySide = width >= 260;
-                    const int mixX = sideBySide ? 8 + motionWidth + controlGap : 8;
-                    const int mixY = sideBySide ? 8 + (motionHeight - mixHeight) / 2 : 8 + motionHeight + controlGap;
-                    const int mixWidth = juce::jmin(240, juce::jmax(1, width - mixX - 8));
-                    controls.setSize(width, juce::jmax(area.getHeight(), juce::jmax(8 + motionHeight, mixY + mixHeight) + 8));
-                    knobs[1]->setBounds(8, 8, juce::jmin(motionWidth, juce::jmax(1, width - 16)), motionHeight);
-                    knobs[0]->setBounds(mixX, mixY, mixWidth, mixHeight);
+                    const int barWidth = juce::jmax(1, width - 16);
+                    controls.setSize(width, juce::jmax(area.getHeight(), 16 + 2 * mixHeight + controlGap));
+                    knobs[1]->setBounds(8, 8, barWidth, mixHeight);
+                    knobs[0]->setBounds(8, 8 + mixHeight + controlGap, barWidth, mixHeight);
                 } else controls.setSize(width, area.getHeight());
             }
         }
@@ -290,7 +287,7 @@ private:
         void paint(juce::Graphics& g) override {
             const auto p = themePalette(*this, neon);
                         background.paint(g, getLocalBounds(), p.inset, p.accent, fluidAnimationSeconds(*this));
-            g.setColour(p.border); g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(.5f), 4, 1);
+            g.setColour(p.border); g.drawRect(getLocalBounds().toFloat().reduced(.5f), 1);
         }
         void syncTabState() {
             const auto p = themePalette(*this, neon);
@@ -334,7 +331,7 @@ private:
         FluidBackground background;
         bool neon = false;
         // Mix overlays its name and editable value inside the textured track.
-        static constexpr int motionWidth = 68, motionHeight = 100, mixHeight = 44, controlGap = 2;
+        static constexpr int mixHeight = 44, controlGap = 2;
         modulationui::Button enabled;
         std::atomic<float>* enabledValue = nullptr;
         juce::Component controls;
@@ -381,9 +378,9 @@ private:
         sync();
     }
     void timerCallback() override { sync(); }
-    inline static constexpr std::array<NodeType, 13> types{NodeType::chorale, NodeType::waveshaper,
+    inline static constexpr std::array<NodeType, 15> types{NodeType::chorale, NodeType::waveshaper,
         NodeType::bitcrusher, NodeType::compressor, NodeType::delay, NodeType::reverb, NodeType::granular,
-        NodeType::equalizer, NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter};
+        NodeType::equalizer, NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter, NodeType::convolution, NodeType::saturator};
 
     modulationui::PanelStyle panelStyle;
     FluidBackground background;

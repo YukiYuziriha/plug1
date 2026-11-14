@@ -27,11 +27,28 @@ inline double fluidAnimationSeconds(const juce::Component& component) {
     return 0.0;
 }
 
+// Integrate elapsed visible time, not absolute time * speed: edits never jump phase.
+class DecorativeMotion {
+public:
+    void advance(double now, bool visible, double percent) noexcept {
+        if (visible && last >= 0 && now >= last)
+            phase += (now - last) * std::clamp(std::isfinite(percent) ? percent : 3.0, 0.0, 100.0) / 3.0;
+        last = visible ? now : -1.0;
+    }
+    double seconds() const noexcept { return phase; }
+    void pause() noexcept { last = -1; }
+private:
+    double phase = 0, last = -1;
+};
+
 // GUI-thread only. Own one per surface; no timers or component dependencies.
 inline constexpr double proceduralAnimationSpeed = 1.2;
 
 class FluidBackground {
 public:
+    enum class Material { background, control, fatBar };
+    static constexpr float backgroundVariation = .8f;
+    explicit FluidBackground(Material material = Material::background) : material(material) {}
     void paint(juce::Graphics& g, juce::Rectangle<int> bounds, juce::Colour base,
                juce::Colour accent, double seconds, float contrast = 1.f, int longest = 80) {
         if (bounds.isEmpty()) return;
@@ -56,27 +73,38 @@ public:
             // Keep the original dark surface dominant. A desaturated, brightness-
             // matched accent gives only a faint theme tint, never a vivid wash.
             const float brightness = base.getBrightness();
-            const auto low = base.withBrightness(brightness * .65f);
+            const auto low = base.withBrightness(brightness * .78f);
             const auto tint = accent.withSaturation(juce::jmin(.18f, accent.getSaturation()))
                 .withBrightness(juce::jmin(1.f, brightness * 1.55f + .012f));
-            const auto high = base.withBrightness(juce::jmin(1.f, brightness * 1.65f + .016f))
+            const auto high = base.withBrightness(juce::jmin(1.f, brightness * 1.22f + .012f))
                 .interpolatedWith(tint, .12f);
             for (int y = 0; y < height; ++y)
                 for (int x = 0; x < width; ++x) {
                     const double nx = double(x) / width, ny = double(y) / height;
-                    const double broad = noise(nx * 3.0 + phase, ny * 3.0, phase * 0.7);
-                    const double detail = noise(nx * 18.0, ny * 18.0 - phase * 0.6, phase);
-                                        const double grain = noise(nx * 40.0 + phase * .35, ny * 40.0, phase * .5);
-                    const double gradient = 0.5 + 0.5 * std::sin(nx * 3.5 + ny * 2.0 + phase);
-                    const float field = float(.30 * broad + .40 * detail + .20 * grain + .10 * gradient);
-                                        const float blend = juce::jlimit(0.f, 1.f, .5f + (field - .5f) * 1.4f);
-                    auto colour = base.interpolatedWith(low.interpolatedWith(high, blend), contrast);
+                    // Shared low-frequency geology, not independent per-texel grain.
+                    // Stepped cells form mineral patches; broad strata drift slowly
+                    // beneath them. Five tones preserve chunky nearest-neighbour edges.
+                    const double broad = noise(nx * 3.0 + phase * .35, ny * 3.0, phase * .25);
+                    const double cell = noise(std::floor(nx * 16.0) / 3.0,
+                                              std::floor(ny * 16.0) / 3.0, 7.0);
+                    const double band = .5 + .5 * std::sin(ny * 9.0 + nx * 2.0 + broad * 3.0 + phase);
+                    const double field = .55 * broad + .30 * cell + .15 * band;
+                    const float blend = float(std::round(juce::jlimit(0.0, 1.0,
+                        .5 + (field - .5) * 1.8) * 4.0) / 4.0);
+                    auto tone = low.interpolatedWith(high, blend);
+                    // Deep mineral shadows rather than a white lift of the whole bar.
+                    if (material == Material::fatBar)
+                        tone = tone.withMultipliedBrightness(.35f + .65f * blend);
+                    auto colour = base.interpolatedWith(tone, contrast);
                     // Fixed rare seeds, with a slow continuous envelope: no frame-wise sparkle.
                     // Keep one seed even on the small 24-texel card grids.
                     if ((x == width * 2 / 3 && y == height * 3 / 4) || lattice(x, y, 73) > .9992) {
                         const float gleam = float(std::pow(.5 + .5 * std::sin(frame / 10.0 * .12 + lattice(x, y, 19) * 6.283), 2));
-                        colour = colour.interpolatedWith(accent, .28f * gleam * contrast);
+                        colour = colour.interpolatedWith(accent.interpolatedWith(juce::Colours::white, .20f), .62f * gleam * contrast);
                     }
+                    // Attenuate the completed field and glints together, not their motion or seeds.
+                    if (material == Material::background)
+                        colour = base.interpolatedWith(colour, backgroundVariation);
                     pixels.setPixelColour(x, y, colour);
                 }
         }
@@ -106,6 +134,7 @@ private:
                        mix(lattice(ix, iy + 1, iz + 1), lattice(ix + 1, iy + 1, iz + 1), u), v), w);
     }
 
+    Material material;
     juce::Image image;
     double cachedFrame = -1.0;
     juce::Colour cachedBase, cachedAccent;
@@ -116,22 +145,22 @@ private:
 // live surface rather than rebuilding one image on every button paint.
 class ButtonFluidBackground {
 public:
-    void paint(juce::Graphics& g, juce::Button& button, juce::Rectangle<int> bounds,
+    void paint(juce::Graphics& g, juce::Component& button, juce::Rectangle<int> bounds,
                juce::Colour base, juce::Colour accent) {
         entries.erase(std::remove_if(entries.begin(), entries.end(),
             [](const Entry& entry) { return entry.button == nullptr; }), entries.end());
         auto found = std::find_if(entries.begin(), entries.end(),
             [&](const Entry& entry) { return entry.button.getComponent() == &button; });
         if (found == entries.end()) {
-            entries.push_back({&button, {}});
+            entries.push_back({&button});
             found = std::prev(entries.end());
         }
         found->background.paint(g, bounds, base, accent, fluidAnimationSeconds(button), .55f);
     }
 private:
     struct Entry {
-        juce::Component::SafePointer<juce::Button> button;
-        FluidBackground background;
+        juce::Component::SafePointer<juce::Component> button;
+        FluidBackground background{FluidBackground::Material::control};
     };
     std::vector<Entry> entries;
 };

@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "GuiTestDisplay.h"
 #include "CreativeEffectPanel.h"
 #include <atomic>
 #include <iostream>
@@ -109,7 +110,7 @@ void checkGranularModel(const CreativeEffectVisual& visual, Processor& owner) {
 void parameterGraph() {
     auto storage = std::make_unique<Processor>(); auto& owner = *storage;
     juce::String error; expect(owner.setRoutingGraph(graph(), error), "install unprepared granular");
-    juce::Component root; root.setBounds(0, 0, 900, 540); root.setVisible(true); root.addToDesktop(0);
+    juce::Component root; root.setBounds(0, 0, 900, 540); guiTestDisplay::attach(root);
     CreativeEffectVisual visual(owner, 1, CreativeKind::granular);
     root.addAndMakeVisible(visual);
     const std::array<const char*, 3> names{"device", "neon", "spectral"};
@@ -216,7 +217,7 @@ void integration() {
     for (int i = 0; i < 40; ++i) render();
     expect(owner.readGrainSnapshot(1, frame) && frame.grains.count > 0, "Processor forwards real audio grains");
     const auto generation = frame.generation;
-    juce::Component root; root.setBounds(0, 0, 900, 540); root.setVisible(true); root.addToDesktop(0);
+    juce::Component root; root.setBounds(0, 0, 900, 540); guiTestDisplay::attach(root);
     CreativeEffectVisual routing(owner, 1, CreativeKind::granular), stack(owner, 1, CreativeKind::granular);
     root.addAndMakeVisible(routing); root.addAndMakeVisible(stack);
     routing.setBounds(0, 0, 440, 238); stack.setBounds(450, 0, 440, 238);
@@ -345,7 +346,7 @@ void delayTiming() {
     creative(owner, CreativeParameter::delaySync, 0);
     creative(owner, CreativeParameter::delayTime, 500);
     owner.processBlock(audio, midi);
-    juce::Component root; root.setBounds(0, 0, 500, 400); root.setVisible(true); root.addToDesktop(0);
+    juce::Component root; root.setBounds(0, 0, 500, 400); guiTestDisplay::attach(root);
     CreativeEffectVisual visual(owner, 1, CreativeKind::delay);
     root.addAndMakeVisible(visual); visual.setBounds(0, 0, 200, 216);
     visual.refreshAt(1000);
@@ -393,7 +394,7 @@ void delayTiming() {
 void layouts() {
     auto storage = std::make_unique<Processor>(); auto& owner = *storage;
     owner.prepareToPlay(48000, 257);
-    juce::Component root; root.setBounds(0, 0, 900, 540); root.setVisible(true); root.addToDesktop(0);
+    juce::Component root; root.setBounds(0, 0, 900, 540); guiTestDisplay::attach(root);
     for (auto kind : {CreativeKind::granular, CreativeKind::delay, CreativeKind::reverb, CreativeKind::compressor, CreativeKind::bitcrusher}) {
         const auto type = kind == CreativeKind::granular ? NodeType::granular : kind == CreativeKind::delay ? NodeType::delay
             : kind == CreativeKind::reverb ? NodeType::reverb : kind == CreativeKind::compressor ? NodeType::compressor : NodeType::bitcrusher;
@@ -491,7 +492,7 @@ void layouts() {
 }
 int main() {
     juce::ScopedJuceInitialiser_GUI init;
-    try { bridgeOwnership(); parameterGraph(); bridgeEffectivePitch(); integration(); delayTiming(); layouts(); }
+    try { guiTestDisplay::enumerate(); bridgeOwnership(); parameterGraph(); bridgeEffectivePitch(); integration(); delayTiming(); layouts(); }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
     std::cout << "Stable granular parameter graph/publication/freeze/reset/themes/compact scrolling/delay timing/clipped Sync UI and host edits tests passed\n";
 }

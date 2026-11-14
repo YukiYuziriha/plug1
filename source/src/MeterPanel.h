@@ -21,7 +21,8 @@ public:
     std::function<void()> onReset;
 
 private:
-    Meters meters{};
+    FluidBackground frameMaterial;
+        Meters meters{};
     bool neon = false;
 };
 

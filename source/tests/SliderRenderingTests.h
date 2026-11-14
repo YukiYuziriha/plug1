@@ -7,6 +7,7 @@
 #include "UtilityEffectPanel.h"
 #include "ModulationPanel.h"
 #include <set>
+#include <vector>
 
 namespace vocalstack::sliderRenderingTests {
 inline bool identical(const juce::Image& a, const juce::Image& b) {
@@ -174,7 +175,8 @@ inline void controlModes() {
     const auto check = [](auto&& self, juce::Component& component, bool linear) -> int {
         int count = 0;
         if (auto* slider = dynamic_cast<juce::Slider*>(&component); slider && slider->isVisible()) {
-            const bool horizontal = linear || slider->getComponentID() == "fx1Mix";
+            const bool horizontal = linear || slider->getComponentID() == "fx1Mix"
+                            || slider->getComponentID() == utilityParameterId(1, size_t(UtilityParameter::gainDb));
             toneUiTests::require(slider->getSliderStyle() == (horizontal ? juce::Slider::LinearHorizontal
                 : juce::Slider::RotaryHorizontalVerticalDrag), "Wrong parameter control mode: " + slider->getComponentID());
             toneUiTests::require(!slider->getWantsKeyboardFocus() && !slider->getMouseClickGrabsKeyboardFocus(),
@@ -313,6 +315,73 @@ inline void texturedFxBars() {
     toneUiTests::require(!bool(voice.slider.getProperties()["vocalstackTexturedBar"]),
         "Compact voice slider was changed by FX styling");
 }
+inline void fatMaterialPixels() {
+    for (auto theme : {Theme::device, Theme::neon, Theme::spectral}) {
+        ParameterKnob::Style style;
+        ModulationSlider slider;
+        slider.setLookAndFeel(&style);
+        slider.getProperties().set(vocalstackThemeProperty, int(theme));
+        slider.getProperties().set("vocalstackTexturedBar", true);
+        slider.setSliderStyle(juce::Slider::LinearHorizontal);
+        slider.setRange(0, 1);
+        slider.setColour(juce::Slider::trackColourId, themePalette(theme).accent);
+        const auto accent = slider.findColour(juce::Slider::trackColourId);
+        int lifted = 0, unchanged = 0, upperToneGain = 0;
+        for (double seconds : {0., 6., 33.3, 46.}) {
+            FluidBackground oldMaterial{FluidBackground::Material::control};
+            FluidBackground fatMaterial{FluidBackground::Material::fatBar};
+            juce::Image old(juce::Image::RGB, 128, 26, true), enlarged(juce::Image::RGB, 192, 39, true);
+            { juce::Graphics g(old); oldMaterial.paint(g, old.getBounds(), accent, accent, seconds, .35f, 64); }
+            { juce::Graphics g(enlarged); fatMaterial.paint(g, enlarged.getBounds(), accent, accent, seconds, .35f, 64); }
+            std::vector<int> oldTones, newTones;
+            int boundaries = 0;
+            for (int y = 0; y < 39; ++y) for (int x = 0; x < 192; ++x) {
+                const auto a = old.getPixelAt(x / 3 * 2, y / 3 * 2);
+                const auto b = enlarged.getPixelAt(x, y);
+                toneUiTests::require(a == old.getPixelAt(x / 3 * 2 + 1, y / 3 * 2 + 1),
+                    "Legacy reference is not exact 2x2 texels");
+                toneUiTests::require(b == enlarged.getPixelAt(x / 3 * 3, y / 3 * 3),
+                    "Fat material is not exact 3x3 nearest-neighbour texels");
+                boundaries += x > 0 && b != enlarged.getPixelAt(x - 1, y);
+                for (int delta : {int(b.getRed()) - a.getRed(), int(b.getGreen()) - a.getGreen(), int(b.getBlue()) - a.getBlue()})
+                    toneUiTests::require(delta <= 0 && delta >= -64, "Fat material must deepen lows without a brightness lift");
+                lifted += a != b; unchanged += a == b;
+                oldTones.push_back(int(a.getRed()) + a.getGreen() + a.getBlue());
+                newTones.push_back(int(b.getRed()) + b.getGreen() + b.getBlue());
+            }
+            toneUiTests::require(boundaries > 0, "Fat material has no visible texel boundaries");
+            std::sort(oldTones.begin(), oldTones.end()); std::sort(newTones.begin(), newTones.end());
+            for (size_t i = oldTones.size() * 3 / 4; i < oldTones.size(); ++i)
+                upperToneGain += newTones[i] - oldTones[i];
+            toneUiTests::require(oldTones[oldTones.size() / 2] > newTones[newTones.size() / 2],
+                "Fat material did not deepen its median tone");
+            slider.getProperties().set(vocalstackAnimationTimeOverrideProperty, seconds);
+            const juce::Rectangle<float> area(0, 0, 400, 44);
+            const auto track = ParameterKnob::Style::texturedBarBounds(area).toNearestInt();
+            const auto draw = [&](float position) {
+                juce::Image image(juce::Image::RGB, 400, 44, true);
+                juce::Graphics g(image);
+                style.drawLinearSlider(g, 0, 0, 400, 44, position, 0, 1, juce::Slider::LinearHorizontal, slider);
+                return image;
+            };
+            const auto full = draw(400), partial = draw(200);
+            for (int y = track.getY() + 1; y < track.getBottom() - 1; ++y)
+                for (int x = track.getX() + 1; x < track.getRight() - 3; ++x) {
+                    toneUiTests::require(full.getPixelAt(x, y) == enlarged.getPixelAt((x - track.getX()) % 192, y - track.getY()),
+                        "Actual fat bar did not tile the 3px/highlight material at a fixed origin");
+                    if (x < 197) toneUiTests::require(full.getPixelAt(x, y) == partial.getPixelAt(x, y),
+                        "Numeric Mix value resized or reseeded fat material");
+                }
+            // A fat-bar render cannot change another instance's cached control material.
+            juce::Image restored(juce::Image::RGB, 128, 26, true);
+            { juce::Graphics g(restored); oldMaterial.paint(g, restored.getBounds(), accent, accent, seconds, .35f, 64); }
+            toneUiTests::require(identical(old, restored), "Fat material leaked into ordinary control caches");
+        }
+        toneUiTests::require(lifted > 0 && upperToneGain < 0,
+                    "Fat material needs deeper tones, not a lifted palette");
+        slider.setLookAndFeel(nullptr);
+    }
+}
 inline void squareMarkersAndPreview() {
     auto owner = std::make_unique<Processor>();
     for (int theme : {0, 1, 2}) for (int width : {110, 340}) {
@@ -349,6 +418,7 @@ inline void squareMarkersAndPreview() {
 inline void run() {
     squareMarkersAndPreview();
     texturedFxBars();
+    fatMaterialPixels();
     selectionAndFeedback();
     alignmentAndSensitivity();
     pointerSeparation();

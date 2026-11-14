@@ -152,7 +152,7 @@ public:
     }
     void paint(juce::Graphics& g) override {
         const auto palette = themePalette(*this, neon);
-        background.paint(g, getLocalBounds(), palette.panel, palette.accent, fluidAnimationSeconds(*this));
+        background.paint(g, {0, -contentViewport.getViewPositionY(), content.getWidth(), content.getHeight()}, palette.panel, palette.accent, fluidAnimationSeconds(*this));
     }
     void resized() override {
         const auto position = contentViewport.getViewPosition();

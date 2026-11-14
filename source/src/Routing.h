@@ -22,11 +22,14 @@ namespace vocalstack {
 
 // Serializable model. IDs identify machines, not positions in nodes[]. Changing
 // an effect ID or type creates fresh state; retaining both retains DSP history.
-enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19 };
+enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19, convolution = 20, saturator = 21 };
 inline constexpr bool isCreativeEffect(NodeType type) noexcept {
-    return type >= NodeType::delay && type <= NodeType::granular;
+    return (type >= NodeType::delay && type <= NodeType::granular)
+        || type == NodeType::convolution || type == NodeType::saturator;
 }
 inline constexpr CreativeKind creativeKind(NodeType type) noexcept {
+    if (type == NodeType::convolution) return CreativeKind::convolution;
+    if (type == NodeType::saturator) return CreativeKind::saturator;
     return static_cast<CreativeKind>(int(type) - int(NodeType::delay));
 }
 inline constexpr bool isUtilityEffect(NodeType type) noexcept {
@@ -361,7 +364,8 @@ private:
             const auto& n = step.node;
             const int monitorSlot = fxMonitor && isEffect(n.type) ? routingFxSlot(n.id) : -1;
             const bool monitoring = monitorSlot >= 0 && fxMonitor->capturing(size_t(monitorSlot));
-            StereoSample monitorInput{};
+            StereoSample monitorInput{}, monitorWet{};
+            bool monitorHasWet = false;
             int monitorBands = 0;
             const auto input = [&](int pin) -> Value {
                 int contributors = 0, single = 0;
@@ -504,14 +508,22 @@ private:
                 break;
             }
             case NodeType::delay: case NodeType::reverb: case NodeType::compressor:
-            case NodeType::bitcrusher: case NodeType::granular: {
+            case NodeType::bitcrusher: case NodeType::granular:
+            case NodeType::convolution: case NodeType::saturator: {
                 value = input(0);
                 if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
                 const auto wet = step.fx->creative.process(value.audio.left, value.audio.right, fx.creative, controls.tempoBpm);
+                if (monitoring && (n.type == NodeType::convolution || n.type == NodeType::saturator)) {
+                    monitorHasWet = true;
+                    // Bypassed machines keep history but do not claim audible activity.
+                    if (fx.enabled && fx.mix > 0) monitorWet = {wet[0], wet[1]};
+                }
                 const float target = fx.enabled ? unit(fx.mix, .25f) : 0.f;
                 if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
                 else step.smoothedMix += mixSmoothing * (target - step.smoothedMix);
+                if ((n.type == NodeType::convolution || n.type == NodeType::saturator)
+                    && std::abs(step.smoothedMix - target) < 1.e-7) step.smoothedMix = target;
                 const float m = float(step.smoothedMix);
                 value.audio = {blend(value.audio.left, wet[0], m), blend(value.audio.right, wet[1], m)};
                 if (fxMonitor && monitorSlot >= 0)
@@ -551,7 +563,8 @@ private:
                 }
                 fxMonitor->capture(size_t(monitorSlot), n.id,
                     monitorInput.left, monitorInput.right,
-                    monitorOutput.left, monitorOutput.right, monitorBands, bands);
+                    monitorOutput.left, monitorOutput.right, monitorBands, bands,
+                                        monitorHasWet, monitorWet.left, monitorWet.right);
             }
         }
         auto out = values[active->output][0].audio;
@@ -607,6 +620,8 @@ private:
         case NodeType::crossover: return 8;
 
         case NodeType::compressor: case NodeType::bitcrusher: return 2;
+        case NodeType::convolution: return 3.6;
+        case NodeType::saturator: return Waveshaper::tailSeconds;
         // Cover ringing and old comb contents across mode/cutoff/feedback edits,
         // even when today's mode is non-comb or the machine is bypassed.
         case NodeType::xpFilter: case NodeType::synthFilter: return 256;
@@ -768,6 +783,7 @@ private:
             case NodeType::chorale: ++effects; break;
             case NodeType::delay: case NodeType::reverb: case NodeType::compressor:
             case NodeType::bitcrusher: case NodeType::granular:
+            case NodeType::convolution: case NodeType::saturator:
                 for (size_t p = 0; p < creativeParameterCount; ++p) {
                     const auto& d = creativeParameters[p]; const float x = n.creative.values[p];
                     if (!std::isfinite(x) || x < d.min || x > d.max) return {false, "invalid creative effect controls"};

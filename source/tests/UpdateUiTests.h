@@ -12,7 +12,7 @@ namespace vocalstack::updateUiTests {
 namespace ui = toneUiTests;
 static_assert(int(NodeType::gain) == 14 && int(NodeType::stereo) == 15 && int(NodeType::gate) == 16
               && int(NodeType::xpFilter) == 17 && int(NodeType::synthFilter) == 18);
-static_assert(creativeParameterCount == 51 && utilityParameterCount == 21);
+static_assert(creativeParameterCount == 62 && utilityParameterCount == 21);
 
 template <typename Predicate>
 inline void waitFor(Predicate predicate, const juce::String& reason) {
@@ -233,7 +233,7 @@ inline void themeState() {
         PresetManager manager(*owner, files.preferences());
         const auto patch = presetTests::document(manager.captureText("Theme isolation")).getChild(0);
         ui::require(!patch.hasProperty("skin") && !patch.hasProperty("flash"), "Preset leaked theme preference");
-        for (int factory = 0; factory < 8; ++factory) {
+        for (int factory = 0; factory < PresetManager::factoryNames().size(); ++factory) {
             presetTests::success(manager.load({PresetManager::factoryNames()[factory], {}, factory}));
             ui::require(owner->getSkin() == theme, "Factory changed current theme");
             presetTests::success(manager.undoLoad());
@@ -292,11 +292,12 @@ inline void utilityInspectors() {
                 }
             } else {
                 auto& slider = ui::slider(*panel, id); auto& parameter = ui::parameter(*owner, id);
-                ui::require(slider.getWidth() >= 64 && slider.getParentComponent()->getWidth() == 68
-                                && slider.getParentComponent()->getHeight() == 100,
+                const bool sparse = d.kind == UtilityKind::gain;
+                ui::require(slider.getWidth() >= 64 && (sparse ? slider.getParentComponent()->getHeight() == 44
+                    : slider.getParentComponent()->getWidth() == 68 && slider.getParentComponent()->getHeight() == 100),
                             "Utility rotary must retain a readable compact 68x100 cell: " + id);
-                ui::require(!bool(slider.getProperties()["vocalstackTexturedBar"]), "Utility rotary opted into linear bar styling: " + id);
-                ui::require(slider.isDoubleClickReturnEnabled() && slider.isTextBoxEditable(), "Utility reset/numeric entry: " + id);
+                ui::require(bool(slider.getProperties()["vocalstackTexturedBar"]) == sparse, "Utility sparse-group styling: " + id);
+                ui::require(slider.isDoubleClickReturnEnabled() && slider.isTextBoxEditable() == !sparse, "Utility reset/passive fat caption: " + id);
                 ui::near(slider.getMinimum(), d.min, "Utility UI minimum"); ui::near(slider.getMaximum(), d.max, "Utility UI maximum");
                 const auto before = ui::read(*owner, id);
                 const auto track = slider.getLookAndFeel().getSliderLayout(slider).sliderBounds.toFloat();
@@ -581,18 +582,142 @@ inline void rackTabs() {
     }
 }
 
+inline void materialChromeRegression() {
+    auto owner = std::make_unique<Processor>();
+    for (int theme = 0; theme < 3; ++theme) {
+        owner->setSkin(theme);
+        std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor());
+        auto* bar = ui::find<PresetBar>(*editor, [](auto&) { return true; });
+        auto* box = ui::find<juce::ComboBox>(*bar, [](auto&) { return true; });
+        ui::require(box && bool(box->getProperties()["vocalstackPresetSelector"]), "Actual preset selector lacks themed material");
+        const auto p = themePalette(*box);
+        ui::require(box->findColour(juce::ComboBox::textColourId) == p.text
+                    && box->findColour(juce::ComboBox::outlineColourId) == p.border, "Preset selector ignored theme");
+        ui::passive(*bar);
+        auto* style = dynamic_cast<PixelLookAndFeel*>(&box->getLookAndFeel());
+        ui::require(style != nullptr, "Preset selector lost pixel look-and-feel");
+        juce::Image popup(juce::Image::RGB, 240, 100, false);
+        { juce::Graphics g(popup); style->drawPopupMenuBackgroundWithOptions(g, 240, 100,
+            juce::PopupMenu::Options().withTargetComponent(box)); }
+        ui::require(popup.getPixelAt(0, 0) == p.border, "Popup theme/square border mismatch");
+        std::set<juce::uint32> shades;
+        for (int y = 2; y < 98; ++y) for (int x = 2; x < 238; ++x) shades.insert(popup.getPixelAt(x, y).getARGB());
+        ui::require(shades.size() > 4, "Popup has no procedural texture");
+        auto& slider = ui::slider(*editor, voiceParameterId(0, "Gain"));
+        ui::require(slider.isTextBoxEditable() && !bool(slider.getProperties()["vocalstackTexturedBar"]),
+                    "Voice numeric entry replaced by passive FX Mix caption");
+        slider.showTextBox();
+        auto* label = ui::find<juce::Label>(slider, [](auto& l) { return l.getCurrentTextEditor() != nullptr; });
+        ui::require(label && label->getCurrentTextEditor()->getWantsKeyboardFocus(), "Voice numeric entry cannot own keys");
+        slider.hideTextBox(true);
+        ui::require(!slider.getWantsKeyboardFocus(), "Voice edit retained host focus policy");
+        ParameterKnob::Style railStyle;
+        juce::Slider rail; inheritTheme(rail, theme); rail.setRange(0, 1);
+        rail.setColour(juce::Slider::trackColourId, p.accent);
+        juce::Image image(juce::Image::ARGB, 160, 40, true);
+        { juce::Graphics g(image); railStyle.drawLinearSlider(g, 10, 0, 140, 40, 80, 0, 140, juce::Slider::LinearHorizontal, rail); }
+        for (int y = 0; y < 40; ++y) {
+            const bool onRail = y >= 16 && y < 26;
+            ui::require((image.getPixelAt(30, y).getAlpha() != 0) == onRail
+                        && (image.getPixelAt(79, y).getAlpha() != 0) == onRail,
+                        "Linear track must match the 10-pixel white pointer height");
+        }
+        ui::require(image.getPixelAt(79, 20) == p.text, "Linear pointer lost readable theme foreground");
+    }
+}
+inline void squareChromeAndBadges() {
+    materialChromeRegression();
+    auto owner = std::make_unique<Processor>();
+    for (int theme = 0; theme < 3; ++theme) {
+        for (int slot : {-1, 0, 7}) {
+            VoiceControls card(*owner, slot);
+            inheritTheme(card, theme); card.setSize(220, 480);
+            juce::Image actual(juce::Image::ARGB, 220, 480, true);
+            { juce::Graphics g(actual); card.paint(g); }
+            const auto colour = theme == 0
+                ? (slot < 0 ? juce::Colour(0xfff8de6b) : VoiceMonitor::voiceColour(size_t(slot)))
+                : (slot < 0 ? themePalette(card).secondary : themePalette(card).accent);
+            juce::Image expected(juce::Image::ARGB, 22, 22, true);
+            { juce::Graphics g(expected);
+                g.fillAll(colour); g.setColour(juce::Colour(0xff151b20));
+                g.setFont(juce::Font(pixelFontOptions(12.f, juce::Font::bold)));
+                g.drawText(juce::String(slot + 1), 0, 0, 22, 22, juce::Justification::centred);
+            }
+            for (int y = 0; y < 22; ++y) for (int x = 0; x < 22; ++x)
+                ui::require(actual.getPixelAt(x + 12, y + 10) == expected.getPixelAt(x, y),
+                            "Card badge must be square and display Lead 0 / stable voice number");
+        }
+        PixelLookAndFeel style;
+        juce::ComboBox box; box.setSize(100, 30);
+        box.setColour(juce::ComboBox::backgroundColourId, juce::Colours::red);
+        box.setColour(juce::ComboBox::outlineColourId, juce::Colours::red);
+        juce::Image image(juce::Image::ARGB, 100, 30, true);
+        { juce::Graphics g(image); style.drawComboBox(g, 100, 30, false, 0, 0, 0, 0, box); }
+        for (auto point : {juce::Point<int>(0, 0), {99, 0}, {0, 29}, {99, 29}})
+            ui::require(image.getPixelAt(point.x, point.y).getAlpha() == 255,
+                        "Shared dropdown has a rounded corner");
+    }
+}
+
+inline void saveImage(const juce::Image& image, const juce::String& name) {
+    juce::FileOutputStream stream(juce::File::getCurrentWorkingDirectory().getChildFile(name));
+    ui::require(stream.openedOk() && stream.setPosition(0) && stream.truncate().wasOk(), "Cannot open " + name);
+    ui::require(juce::PNGImageFormat().writeImageToStream(image, stream), "Cannot encode " + name);
+}
+// Component snapshots of the actual separate popup peers, placed at their real
+// screen coordinates over the editor snapshot; no painted/mock menu substitute.
+inline void captureOpenPopup(juce::Component& editor, const juce::String& name) {
+    auto& desktop = juce::Desktop::getInstance();
+    std::vector<juce::Component*> popups;
+    auto bounds = editor.getScreenBounds();
+    for (int i = 0; i < desktop.getNumComponents(); ++i) {
+        auto* c = desktop.getComponent(i);
+        if (c != &editor && c->isVisible() && c->isCurrentlyModal()) {
+            popups.push_back(c); bounds = bounds.getUnion(c->getScreenBounds());
+        }
+    }
+    ui::require(!popups.empty(), "No actual expanded popup peer for " + name);
+    juce::Image image(juce::Image::ARGB, bounds.getWidth(), bounds.getHeight(), true);
+    {
+    juce::Graphics g(image);
+    g.drawImageAt(editor.createComponentSnapshot(editor.getLocalBounds()), editor.getScreenX() - bounds.getX(), editor.getScreenY() - bounds.getY());
+    for (auto* c : popups) {
+        const auto popup = c->createComponentSnapshot(c->getLocalBounds());
+        ui::require(popup.getPixelAt(0, 0) == themePalette(editor).border, "Live popup lost originating theme/square border");
+        if (name.startsWith("routing-context")) ui::require(popup.getHeight() < 200, "Captured Add menu instead of node context menu");
+        g.drawImageAt(popup, c->getScreenX() - bounds.getX(), c->getScreenY() - bounds.getY());
+        saveImage(popup, name + "-popup-crop.png");
+    }
+    }
+    saveImage(image, name + ".png");
+    juce::PopupMenu::dismissAllActiveMenus();
+}
+
 // Render the actual editor, with the selected inspector in situ, not a mock panel.
 inline void screenshots() {
-    rackTabs();
     constexpr std::array<NodeType, 4> types{NodeType::xpFilter, NodeType::synthFilter, NodeType::reverb, NodeType::waveshaper};
     constexpr std::array<const char*, 4> names{"xp-filter", "synth-filter", "reverb", "waveshaper"};
     for (int theme = 0; theme < 3; ++theme) {
         auto owner = std::make_unique<Processor>(); owner->setSkin(theme);
-        std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor()); editor->setVisible(true);
+        std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor()); editor->addToDesktop(0); editor->setVisible(true);
         auto& add = ui::button(*editor, "+ Add voice");
         for (int i = 0; i < 6; ++i) add.onClick();
         ui::require(!add.isEnabled(), "Full Stack render did not reach eight voices");
+        auto* lead = ui::find<VoiceControls>(*editor, [](auto& card) { return card.getComponentID() == "leadCard"; });
+        ui::require(lead != nullptr, "Stack preview is missing the Lead card");
+        auto* cards = lead->findParentComponentOfClass<juce::Viewport>();
+        ui::require(cards != nullptr, "Stack preview is missing the card viewport");
+        cards->setViewPosition(0, 0);
         ui::screenshot(*editor, "update-stack-full-" + themeName(theme) + ".png");
+        auto* voice = ui::find<VoiceControls>(*editor, [](auto& card) { return card.getComponentID() != "leadCard"; });
+        ui::require(voice != nullptr, "Voice card crop missing");
+        saveImage(voice->createComponentSnapshot(voice->getLocalBounds()), "voice-sliders-" + themeName(theme) + "-crop.png");
+        auto* preset = ui::find<juce::ComboBox>(*editor, [](auto& c) { return bool(c.getProperties()["vocalstackPresetSelector"]); });
+        ui::require(preset != nullptr, "Actual preset selector missing");
+        const auto* focus = juce::Component::getCurrentlyFocusedComponent();
+        preset->showPopup();
+        captureOpenPopup(*editor, "stack-presets-expanded-" + themeName(theme));
+        ui::require(juce::Component::getCurrentlyFocusedComponent() == focus, "Preset menu stole host focus");
         editor.reset();
         for (size_t i = 0; i < types.size(); ++i) {
             install(*owner, types[i]);
@@ -607,6 +732,29 @@ inline void screenshots() {
             else if (i == 2) ui::require(ui::find<CreativeEffectPanel>(*routing, [](auto&) { return true; }) != nullptr, "Screenshot reverb inspector missing");
             else ui::require(ui::find<ToneEffectPanel>(*routing, [](auto&) { return true; }) != nullptr, "Screenshot waveshaper inspector missing");
             ui::screenshot(*editor, "update-" + juce::String(names[i]) + "-" + themeName(theme) + ".png");
+            if (i == 2) {
+                auto* canvas = ui::find<juce::Component>(*routing, [](auto& c) { return c.getName() == "Routing node canvas"; });
+                ui::require(canvas != nullptr, "Routing canvas missing");
+                ui::action(*routing, "Fit");
+                const auto layout = owner->getRoutingLayout();
+                juce::Point<float> position;
+                bool foundNode = false;
+                for (auto n : layout) if (int(n.getProperty("id")) == 100) {
+                    position = {float(n.getProperty("x")), float(n.getProperty("y"))}; foundNode = true;
+                }
+                ui::require(foundNode, "Context-menu capture lacks persisted node geometry");
+                const auto point = (position + juce::Point<float>(24, 14)) * float(layout.getProperty("zoom", 1.f))
+                    + juce::Point<float>(float(layout.getProperty("panX")), float(layout.getProperty("panY")));
+                auto mouseSource = juce::Desktop::getInstance().getMainMouseSource();
+                const auto previousPointer = mouseSource.getScreenPosition();
+                mouseSource.setScreenPosition(canvas->localPointToGlobal(point));
+                const auto* contextFocus = juce::Component::getCurrentlyFocusedComponent();
+                canvas->mouseDown(ui::mouse(*canvas, point, point, false, juce::ModifierKeys::rightButtonModifier));
+                captureOpenPopup(*editor, "routing-context-" + themeName(theme));
+                mouseSource.setScreenPosition(previousPointer);
+                ui::require(juce::Component::getCurrentlyFocusedComponent() == contextFocus, "Node context menu stole host focus");
+                saveImage(canvas->createComponentSnapshot(canvas->getLocalBounds()), "routing-nodes-" + themeName(theme) + "-crop.png");
+            }
             editor.reset();
         }
     }

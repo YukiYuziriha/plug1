@@ -274,7 +274,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                 const float cutoff = settings.values[panel.cutoffField()];
                 const float x = plot.getX() + plot.getWidth() * float(std::log(cutoff / 20) / std::log(1000.0));
                 const float y = plot.getBottom() - settings.values[panel.resonanceField()] * .01f * plot.getHeight();
-                g.setColour(c.accent); g.drawEllipse(x - 4, y - 4, 8, 8, 1.5f);
+                g.setColour(c.accent); g.drawRect(x - 4, y - 4, 8.f, 8.f, 1.5f);
             }
             g.setColour(c.muted);
             g.drawText("L: response dB | R: FFT dBFS | Mix " + juce::String(mix, 0) + "%", 7, getHeight() - 30, getWidth() - 14, 13, juce::Justification::centredLeft);
@@ -560,6 +560,12 @@ public:
             if (d.kind == kind) addRow(utilityParameterId(slot, i), d.label, d.unit, d.discrete,
                 i == size_t(UtilityParameter::xpMode) || i == size_t(UtilityParameter::synthMode), i);
         }
+        // Count actual displayed continuous controls, including the slot dry/wet.
+        const auto count = std::count_if(rows.begin(), rows.end(), [](const auto& row) { return row->slider.isVisible(); });
+        if (count <= 2) for (auto& row : rows) if (row->slider.isVisible()) {
+            row->slider.getProperties().set("vocalstackTexturedBar", true);
+            row->slider.setSliderStyle(juce::Slider::LinearHorizontal);
+        }
         viewport.setViewedComponent(&content, false); viewport.setScrollBarsShown(true, false); addAndMakeVisible(viewport);
         detail::passiveControl(*this); setNeon(false); timerCallback(); startTimerHz(60);
     }
@@ -598,7 +604,7 @@ public:
     }
     void paint(juce::Graphics& g) override {
             const auto palette = themePalette(*this, neon);
-            background.paint(g, getLocalBounds(), palette.panel, palette.accent, fluidAnimationSeconds(*this));
+            background.paint(g, {0, -viewport.getViewPositionY(), content.getWidth(), content.getHeight()}, palette.panel, palette.accent, fluidAnimationSeconds(*this));
         }
     void resized() override {
         const auto position = viewport.getViewPosition();

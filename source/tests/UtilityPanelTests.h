@@ -139,14 +139,14 @@ struct UtilityPanelTests {
                     } else if (row->combo.isVisible()) {
                         require(row->getWidth() == controlWidth, "Filter mode lost its control-group row");
                     } else {
-                        const bool mix = row->id == fxParameterId(1, "Mix");
+                        const bool mix = row->id == fxParameterId(1, "Mix") || kind == UtilityKind::gain;
                         require(row->slider.getSliderStyle() == (mix ? juce::Slider::LinearHorizontal
                                                                  : juce::Slider::RotaryHorizontalVerticalDrag),
                                 "Utility parameter changed control style");
                         require(row->getWidth() == (mix ? controlWidth : 68)
                                 && row->getHeight() == (mix ? 44 : 100), "Utility control stretched with inspector");
                         require(bool(row->slider.getProperties()["vocalstackTexturedBar"]) == mix,
-                                "Only Utility Mix should opt into the textured FX bar");
+                                "Only Mix or a sparse gain group should use the textured FX bar");
                         if (mix) {
                             const auto layout = row->style.getSliderLayout(row->slider);
                             const auto track = ParameterKnob::Style::texturedBarBounds(layout.sliderBounds.toFloat());

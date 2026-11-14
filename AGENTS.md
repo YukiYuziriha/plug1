@@ -68,6 +68,21 @@
   and bypass/latency as relevant. Cover parameter/state and UI changes too.
 - Verify GUI layout in both skins when changing controls or meters. Distinguish
   automated checks from a listening check in the user's actual DAW.
+- Permanent user preference: always do GUI testing and screenshotting on the
+  non-primary second monitor when available. At the start of every GUI test or
+  capture session, enumerate the actual connected displays, their primary flags,
+  work areas, and DPI/scaling; do not assume a display number or cached layout.
+  Place native plugin/test windows on the selected non-primary display before
+  interaction or capture, within its usable work area, respecting per-monitor DPI
+  and negative desktop coordinates. Ensure transient owned windows (popups,
+  menus, and dialogs) follow their owner onto that display and remain in its work
+  area. Prefer an existing harness placement facility when available.
+  Never move the user's host or unrelated windows, or change the primary display,
+  display resolution, or scaling. If no second monitor is available, report the
+  primary-monitor fallback explicitly. Pure offscreen snapshots and DSP-only
+  tests have no physical monitor placement: label them accordingly and never
+  claim they ran on the second monitor. Do not retroactively claim earlier
+  screenshots used the second monitor without verified placement evidence.
 - Do not terminate Bitwig or overwrite a loaded plugin to force installation.
   Ask the user to close the host when files are locked.
 - If rebuilding, tests, installation, or pushing is blocked, state exactly what

@@ -164,8 +164,15 @@ void resizeTabs() {
         owner.setFlash(neon);
         owner.setAdvancedVisible(true);
         std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
-        editor->addToDesktop(0);
-        editor->setVisible(true);
+        vocalstack::guiTestDisplay::enumerate();
+        // Keep the native peer confined to monitor 2 even for the deliberate
+        // 1400px-tall layout case. Its overflowing child is tested offscreen.
+        juce::Component nativeHost;
+        const auto work = vocalstack::guiTestDisplay::selected().userArea;
+        nativeHost.setSize(juce::jmin(1480, work.getWidth()), juce::jmin(1000, work.getHeight()));
+        nativeHost.addAndMakeVisible(*editor);
+        vocalstack::guiTestDisplay::attach(nativeHost);
+        std::cout << "Resize layout beyond native host bounds: offscreen/clipped child, not desktop interaction\n";
         expect(editor->isShowing() && editor->getPeer(), "Resize fixture has no showing native peer");
         auto& canvas = *ui::slider(*editor, "outputGain").getParentComponent();
         auto& routing = component<vocalstack::RoutingPanel>(*editor);
@@ -174,8 +181,9 @@ void resizeTabs() {
         for (const auto size : {juce::Point<int>(940, 560), juce::Point<int>(1480, 1040), juce::Point<int>(1480, 1400)}) {
             editor->setSize(size.x, size.y);
             viewport->setViewPosition(0, 0);
-            const int contentHeight = size.y - 52;
-            expect(canvas.getWidth() == 940 && canvas.getHeight() == 1148 && canvas.getTransform().isIdentity(),
+            const int contentHeight = size.y - vocalstack::editorLayout::presetFooterHeight;
+            expect(canvas.getWidth() == vocalstack::editorLayout::editorWidth &&
+                               canvas.getHeight() == vocalstack::editorLayout::stackCanvasHeight && canvas.getTransform().isIdentity(),
                    "Stack retains native-size controls rather than shrinking to fit height");
             expect(viewport->getHeight() == contentHeight, "Stack scrolling excludes fixed preset footer");
             expect(viewport->getVerticalScrollBar().isVisible() == (contentHeight < canvas.getHeight()),
@@ -183,7 +191,8 @@ void resizeTabs() {
             auto& rack = component<vocalstack::MainBusFxRackPanel>(*editor);
             auto& stack = component<vocalstack::DoublerPanel>(*editor);
             expect(rack.getBounds() == juce::Rectangle<int>(18, 344, 904, 340)
-                       && stack.getBounds() == juce::Rectangle<int>(18, 706, 904, 430)
+                       && stack.getBounds() == juce::Rectangle<int>(18, vocalstack::editorLayout::stackPanelY, 904,
+                                                                                       vocalstack::editorLayout::stackPanelHeight)
                        && canvas.getLocalBounds().contains(stack.getBounds())
                        && !rack.getBounds().intersects(stack.getBounds()),
                    "Full FX row and voice cards retain non-overlapping native layout");
@@ -212,11 +221,12 @@ void resizeTabs() {
                    "Routing grows with available space");
             action(*editor, "Stack");
             owner.setAdvancedVisible(false); pumpTimers();
-            expect(canvas.getHeight() == 1148 && stack.isShowing() && editor->getWidth() == size.x && editor->getHeight() == size.y,
+            expect(canvas.getHeight() == vocalstack::editorLayout::stackCanvasHeight && stack.isShowing() && editor->getWidth() == size.x && editor->getHeight() == size.y,
                    "Legacy drawer state cannot change Stack layout or window dimensions");
         }
         editor.reset();
         editor.reset(owner.createEditor());
+        nativeHost.addAndMakeVisible(*editor);
         expect(editor->getWidth() == 1480 && editor->getHeight() == 1400 && component<vocalstack::DoublerPanel>(*editor).isVisible(),
                "Editor reopen lost resized dimensions or always-visible Stack");
     }
@@ -905,7 +915,7 @@ void modulatedWaveshaperCurve() {
 }
 
 void menuCursorPlacement() {
-    struct MenuProbe final : juce::LookAndFeel_V4 {
+    struct MenuProbe final : vocalstack::PixelLookAndFeel {
         juce::LookAndFeel* previous = &juce::LookAndFeel::getDefaultLookAndFeel();
         std::optional<juce::Rectangle<int>> target;
         MenuProbe() { juce::LookAndFeel::setDefaultLookAndFeel(this); }
@@ -921,6 +931,7 @@ void menuCursorPlacement() {
     for (const bool neon : {false, true}) {
         MenuProbe probe;
         routingPolish::Fixture fixture(serialFxGraph(), neon);
+        fixture.panel->setLookAndFeel(&probe);
         auto& canvas = fixture.canvas();
         const auto check = [&](juce::Point<float> position) {
             const auto cursor = juce::Desktop::getMousePosition();

@@ -158,11 +158,15 @@ inline constexpr size_t creativeParameterStart = waveAlgorithmParameterStart + 1
 // Keep all original 48-field slot blocks at their historical host indices.
 // Expanded Reverb fields append after those blocks, before Utility parameters.
 inline constexpr size_t legacyCreativeParameterCount = 48;
+inline constexpr size_t releasedCreativeParameterCount = 51;
+inline constexpr size_t newCreativeParameterStart = 2087;
 inline constexpr size_t creativeParameterIndex(size_t slot, size_t p) noexcept {
+    if (p >= releasedCreativeParameterCount)
+        return newCreativeParameterStart + (slot - 1) * (creativeParameterCount - releasedCreativeParameterCount) + p - releasedCreativeParameterCount;
     return p < legacyCreativeParameterCount
         ? creativeParameterStart + (slot - 1) * legacyCreativeParameterCount + p
         : creativeParameterStart + 15 * legacyCreativeParameterCount
-            + (slot - 1) * (creativeParameterCount - legacyCreativeParameterCount) + p - legacyCreativeParameterCount;
+            + (slot - 1) * (releasedCreativeParameterCount - legacyCreativeParameterCount) + p - legacyCreativeParameterCount;
 }
 inline const auto creativeParameterIdStorage = [] {
     std::array<std::string, 15 * creativeParameterCount> ids;
@@ -175,7 +179,7 @@ inline juce::String creativeParameterId(size_t slot, size_t p) {
     return slot > 0 && slot < 16 && p < creativeParameterCount
         ? juce::String(creativeParameterIdStorage[(slot - 1) * creativeParameterCount + p]) : juce::String();
 }
-inline constexpr size_t utilityParameterStart = creativeParameterStart + 15 * creativeParameterCount;
+inline constexpr size_t utilityParameterStart = creativeParameterStart + 15 * releasedCreativeParameterCount;
 inline const auto utilityParameterIdStorage = [] {
     std::array<std::string, 15 * utilityParameterCount> ids;
     for (size_t slot = 1; slot < 16; ++slot)
@@ -188,7 +192,8 @@ inline juce::String utilityParameterId(size_t slot, size_t p) {
         ? juce::String(utilityParameterIdStorage[(slot - 1) * utilityParameterCount + p]) : juce::String();
 }
 inline const auto parameterIds = [] {
-    std::array<const char*, utilityParameterStart + 15 * utilityParameterCount> ids{};
+    std::array<const char*, newCreativeParameterStart + 15 * (creativeParameterCount - releasedCreativeParameterCount)> ids{};
+        static_assert(utilityParameterStart + 15 * utilityParameterCount == newCreativeParameterStart);
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
         ids[legacyParameterIds.size() + i] = toneParameterIdStorage[i].c_str();
@@ -327,6 +332,8 @@ public:
 
     int getSkin() const noexcept { return skin.load(std::memory_order_relaxed); }
     void setSkin(int);
+    double getMotionPercent() const noexcept { return motionPercent.load(std::memory_order_relaxed); }
+    void setMotionPercent(double);
     bool isFlash() const noexcept { return getSkin() == 1; }
     void setFlash(bool enabled);
     Meters getMeters() const;
@@ -381,6 +388,7 @@ private:
     juce::String routingError;
     // FxMonitor's large windows live on its heap, not the Processor/test stack.
     // Declared before engine so the non-owning executor pointer outlives it.
+    std::atomic<double> motionPercent{3.0}; // Presentation state, never a host parameter.
     FxMonitor fxMonitor;
     GrainSnapshotBridge grainBridge;
     VocalEngine engine;

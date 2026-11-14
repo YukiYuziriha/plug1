@@ -138,10 +138,9 @@ public:
 protected:
     void paintBackground(juce::Graphics& g) const {
         const auto palette = visualPalette(*this, neon);
-        g.setColour(palette.inset);
-        g.fillRoundedRectangle(getLocalBounds().toFloat(), 5);
+        surfaceMaterial.paint(g, getLocalBounds(), palette.inset, palette.accent, fluidAnimationSeconds(*this), .25f);
         g.setColour(palette.border.withAlpha(0.6f));
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 5, 1);
+        g.drawRect(getLocalBounds().toFloat().reduced(0.5f), 1);
         g.setFont(juce::Font(pixelFontOptions(10.0f)));
         g.setColour(palette.muted);
     }
@@ -171,7 +170,8 @@ protected:
     Processor& monitorOwner;
     size_t monitorSlot;
     FxMonitorFrame frame{};
-    bool neon = false, valid = false;
+    mutable FluidBackground surfaceMaterial;
+        bool neon = false, valid = false;
     float opacity = 0;
 private:
     void clear() { valid = false; opacity = 0; frame = {}; input.clear(); output.clear(); }

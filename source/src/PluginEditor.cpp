@@ -9,7 +9,7 @@ Font font(float height, bool bold = false) {
     return Font(pixelFontOptions(height, bold ? Font::bold : Font::plain));
 }
 
-constexpr int editorWidth = 940, editorHeight = 610, drawerHeight = 442;
+using namespace editorLayout;
 const std::array<Rectangle<int>, 4> controlPlates{{
     {18, 76, 104, 214}, {132, 76, 306, 214},
     {448, 76, 104, 214}, {562, 76, 104, 214}
@@ -82,6 +82,25 @@ Editor::Editor(Processor& processor)
     setResizeLimits(940, 560, 2400, 2200);
     const auto savedLayout = owner.getRoutingLayout();
     selectedVoiceSlot = juce::jlimit(-1, 7, int(savedLayout.getProperty("selectedVoiceSlot", -1)));
+    layoutCanvas.addAndMakeVisible(motion);
+    motion.setComponentID("decorativeMotion");
+    motion.setName("Motion"); motion.setTitle("Motion");
+    motion.setLookAndFeel(&motionStyle);
+    motion.getProperties().set("vocalstackTexturedBar", true);
+    motion.setSliderStyle(Slider::LinearHorizontal);
+    motion.setRange(0, 100, .01);
+    motion.setValue(owner.getMotionPercent(), dontSendNotification);
+    motion.setTextBoxStyle(Slider::TextBoxAbove, false, 100, 25);
+    motion.setDoubleClickReturnValue(true, 3);
+    motion.setScrollWheelEnabled(false);
+    motion.textFromValueFunction = [](double v) { return String(v, 2).trimCharactersAtEnd("0").trimCharactersAtEnd(".") + "%"; };
+    motion.valueFromTextFunction = [](const String& s) { return s.getDoubleValue(); };
+    motion.updateText();
+    motion.setTooltip("Decorative Motion only: 0% freeze, 3% original speed, 100% = 33.333x. Shift-drag for fine control. Does not slow audio telemetry.");
+    motion.onValueChange = [this] {
+        decorativeMotion.advance(Time::getMillisecondCounterHiRes() * .001, isShowing(), owner.getMotionPercent());
+        owner.setMotionPercent(motion.getValue());
+    };
     layoutCanvas.addAndMakeVisible(globalMix);
     globalMix.slider.setTextBoxStyle(Slider::TextBoxRight, false, 42, 19);
     globalMix.slider.setTooltip("Untouched input / complete processed output. Bypass preserves this setting");
@@ -189,7 +208,7 @@ Editor::Editor(Processor& processor)
     syncDrawer();
     applyTheme();
     setSize(juce::jlimit(940, 2400, int(savedLayout.getProperty("editorWidth", editorWidth))),
-            juce::jlimit(560, 2200, int(savedLayout.getProperty("editorHeight", editorHeight + drawerHeight + 52))));
+            juce::jlimit(560, 2200, int(savedLayout.getProperty("editorHeight", defaultWindowHeight))));
     restoringWindow = false;
     bypassUiLink = std::make_unique<ParameterAttachment>(*owner.parameters.getParameter("bypass"),
         [this](float value) { updateBypassControls(value); }, nullptr);
@@ -200,6 +219,7 @@ Editor::Editor(Processor& processor)
 
 Editor::~Editor() {
     stopTimer();
+    motion.setLookAndFeel(nullptr);
     bypassUiLink.reset();
     rememberWindow();
     setLookAndFeel(nullptr);
@@ -219,7 +239,19 @@ void Editor::applyTheme() {
     getProperties().set(vocalstackThemeProperty, int(selectedTheme));
     style.flash = selectedTheme == Theme::neon;
     const auto palette = themePalette(*this);
+    style.setColour(TooltipWindow::backgroundColourId, palette.inset);
+    style.setColour(TooltipWindow::textColourId, palette.text);
+    style.setColour(TooltipWindow::outlineColourId, palette.border);
+    style.setColour(TextEditor::backgroundColourId, palette.inset);
+    style.setColour(TextEditor::textColourId, palette.text);
+    style.setColour(TextEditor::outlineColourId, palette.border);
+    style.setColour(TextEditor::focusedOutlineColourId, palette.accent);
+    presets.applyTheme();
     globalMix.setNeon(style.flash);
+    motion.setColour(Slider::trackColourId, palette.secondary);
+    motion.setColour(Slider::textBoxTextColourId, palette.text);
+    motion.setColour(Slider::textBoxBackgroundColourId, Colours::transparentBlack);
+    motion.setColour(Slider::textBoxOutlineColourId, Colours::transparentBlack);
     assignmentBanner.setColour(Label::textColourId, selectedTheme == Theme::spectral ? palette.accent : rgb(0xb798ff));
     meterPanel.setNeon(style.flash);
     advancedPanel.setNeon(style.flash);
@@ -259,15 +291,13 @@ void Editor::applyTheme() {
 
 void Editor::resized() {
     if (getWidth() <= 0 || getHeight() <= 0) return;
-    const int rackExtraHeight = MainBusFxRackPanel::preferredHeight - 244;
-    const int designHeight = editorHeight + drawerHeight + rackExtraHeight;
-    const int contentHeight = jmax(1, getHeight() - 52);
+    const int contentHeight = jmax(1, getHeight() - presetFooterHeight);
     presets.setBounds(18, getHeight() - 48, jmax(0, getWidth() - 36), 44);
     const int viewportWidth = routingVisible ? getWidth() : jmin(getWidth(), editorWidth + stackViewport.getScrollBarThickness());
     stackViewport.setBounds((getWidth() - viewportWidth) / 2, 0, viewportWidth, contentHeight);
     stackViewport.setScrollBarsShown(!routingVisible, false);
     layoutCanvas.setTransform(AffineTransform());
-    layoutCanvas.setSize(routingVisible ? getWidth() : editorWidth, routingVisible ? contentHeight : designHeight);
+    layoutCanvas.setSize(routingVisible ? getWidth() : editorWidth, routingVisible ? contentHeight : stackCanvasHeight);
     if (routingVisible) stackViewport.setViewPosition(0, 0);
     constexpr std::array<int, 6> centers{70, 183, 285, 387, 500, 614};
     for (size_t i = 0; i < knobs.size(); ++i) {
@@ -286,13 +316,14 @@ void Editor::resized() {
     paste.setBounds(215, 306, 64, 23);
     meterPanel.setBounds(678, 76, 244, 246);
 
+    motion.setBounds(228, 14, 146, 40);
     stackTab.setBounds(382, 26, 70, 26);
     routingTab.setBounds(458, 26, 78, 26);
     routingPanel.setBounds(18, 100, jmax(0, getWidth() - 36), jmax(0, contentHeight - 118));
     assignmentBanner.setBounds(24, routingVisible ? 70 : 588 + rackExtraHeight, routingVisible ? jmax(0, getWidth() - 118) : 760, 22);
     endAssignment.setBounds(routingVisible ? getWidth() - 88 : 790, routingVisible ? 70 : 588 + rackExtraHeight, 64, 22);
     mainBusFxRack.setBounds(18, 344, 904, MainBusFxRackPanel::preferredHeight);
-    advancedPanel.setBounds(18, editorHeight + rackExtraHeight, 904, drawerHeight - 12);
+    advancedPanel.setBounds(18, stackPanelY, 904, stackPanelHeight);
     if (!restoringWindow) rememberWindow();
 }
 
@@ -330,25 +361,33 @@ void Editor::updateBypassControls(float bypassValue) {
 }
 
 void Editor::visibilityChanged() {
-    lastVisibleTick = -1.0;
+    decorativeMotion.pause();
 }
 
 void Editor::timerCallback() {
     if (isShowing()) {
         const double now = Time::getMillisecondCounterHiRes() * 0.001;
-        if (lastVisibleTick >= 0.0) animationSeconds += jmax(0.0, now - lastVisibleTick);
-        lastVisibleTick = now;
-        getProperties().set(vocalstackAnimationTimeProperty, animationSeconds);
+        decorativeMotion.advance(now, true, owner.getMotionPercent());
+        motion.setValue(owner.getMotionPercent(), dontSendNotification);
+        getProperties().set(vocalstackAnimationTimeProperty, decorativeMotion.seconds());
         // Sliders consume the fresh phase through their existing modulation
         // refresh. Repaint whole surfaces only for a new background frame.
         const double frame = std::floor(jlimit(0.0, 1.0e9, fluidAnimationSeconds(*this)) * 10.0);
         if (frame != lastBackgroundFrame) {
             lastBackgroundFrame = frame;
+            style.setDecorativePhase(fluidAnimationSeconds(*this));
+            // Popup and tooltip peers are outside this component subtree. Repaint
+            // only peers sharing this editor's look-and-feel, on the same clock.
+            auto& desktop = Desktop::getInstance();
+            for (int i = 0; i < desktop.getNumComponents(); ++i) {
+                auto* peer = desktop.getComponent(i);
+                if (peer != this && &peer->getLookAndFeel() == &style) peer->repaint();
+            }
             repaint();
             if (layoutCanvas.isShowing()) layoutCanvas.repaint();
         }
     } else {
-        lastVisibleTick = -1.0;
+        decorativeMotion.pause();
     }
     if (advancedPanel.isVisible() != !routingVisible)
         syncDrawer();
@@ -422,29 +461,29 @@ void Editor::paint(Graphics& g) {
 void Editor::drawDevice(Graphics& g) {
     canvasBackground.paint(g, layoutCanvas.getLocalBounds(), rgb(0x292b2a),
                            themePalette(*this).accent, fluidAnimationSeconds(*this));
-    g.setColour(rgb(0x373a37));
-    g.fillRoundedRectangle(18.0f, 14.0f, routingVisible ? float(getWidth() - 36) : 904.0f, 50.0f, 5.0f);
+    headerBackground.paint(g, {18, 14, routingVisible ? getWidth() - 36 : 904, 50},
+        rgb(0x373a37), themePalette(*this).accent, fluidAnimationSeconds(*this), .45f);
     g.setColour(rgb(0xf5a24b));
-    g.fillRoundedRectangle(27.0f, 25.0f, 4.0f, 25.0f, 2.0f);
+    g.fillRect(27.0f, 25.0f, 4.0f, 25.0f);
     text(g, "Vocal Stack", {41, 20, 168, 32}, rgb(0xf4f4ea), 22.0f, true);
-    text(g, "VOCAL PROCESSOR", {211, 26, 160, 26}, rgb(0xa6aaa0), 11.0f, true);
+
 
     if (routingVisible)
         return;
 
-    g.setColour(rgb(0x1c1f1e));
-    g.fillRoundedRectangle(14.0f, 72.0f, 656.0f, 222.0f, 6.0f);
+    plateSurround.paint(g, {14, 72, 656, 222}, rgb(0x1c1f1e),
+        themePalette(*this).accent, fluidAnimationSeconds(*this), .45f);
     for (size_t i = 0; i < controlPlates.size(); ++i) {
         const auto& plate = controlPlates[i];
         const auto area = plate.toFloat();
         {
             Graphics::ScopedSaveState state(g);
-            Path clip; clip.addRoundedRectangle(area, 4.0f);
+            Path clip; clip.addRectangle(area);
             g.reduceClipRegion(clip);
             controlBackgrounds[i].paint(g, plate, rgb(0x252826), themePalette(*this).accent, fluidAnimationSeconds(*this), 1.f, 24);
         }
         g.setColour(rgb(0x343a35));
-        g.drawRoundedRectangle(area, 4.0f, 1.0f);
+        g.drawRect(area, 1.0f);
     }
     text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(0xaeb1a9), 11.0f, true, Justification::centred);
     const std::array<const char*, 4> captions{
@@ -461,8 +500,8 @@ void Editor::drawFlash(Graphics& g) {
     canvasBackground.paint(g, layoutCanvas.getLocalBounds(), rgb(night),
                            themePalette(*this).accent, fluidAnimationSeconds(*this));
     const auto drawPlate = [&](Rectangle<int> plate) {
-        g.setColour(rgb(panel));
-        g.fillRect(plate);
+        headerBackground.paint(g, plate, rgb(panel), themePalette(*this).accent,
+            fluidAnimationSeconds(*this), .45f);
         g.setColour(rgb(outline));
         g.drawRect(plate);
     };
@@ -473,8 +512,8 @@ void Editor::drawFlash(Graphics& g) {
     g.drawRect(35, 22, 32, 32);
     for (int x = 40; x <= 52; x += 6)
         g.drawLine(static_cast<float>(x), 46.0f, static_cast<float>(x + 8), 30.0f, 2.3f);
-    text(g, "VOCAL STACK", {78, 16, 236, 30}, rgb(nightText), 27.0f, true);
-    text(g, "TOKYO  /  AFTER DARK", {79, 43, 212, 14}, rgb(nightMuted), 11.0f, true);
+    text(g, "VOCAL STACK", {78, 20, 142, 30}, rgb(nightText), 22.0f, true);
+
 
     if (routingVisible)
         return;
@@ -510,12 +549,12 @@ void Editor::drawFlash(Graphics& g) {
 void Editor::drawSpectral(Graphics& g) {
     const auto p = themePalette(*this);
     canvasBackground.paint(g, layoutCanvas.getLocalBounds(), p.background, p.accent, fluidAnimationSeconds(*this));
-    g.setColour(p.panel);
-    g.fillRect(18, 14, routingVisible ? getWidth() - 36 : 904, 50);
+    headerBackground.paint(g, {18, 14, routingVisible ? getWidth() - 36 : 904, 50},
+        p.panel, p.accent, fluidAnimationSeconds(*this), .45f);
     g.setColour(p.accent);
     g.fillRect(18, 14, 3, 50);
     text(g, "Vocal Stack", {36, 21, 168, 30}, p.text, 23.0f);
-    text(g, "VOCAL PROCESSOR", {211, 26, 160, 26}, p.muted, 10.5f);
+
     if (routingVisible) return;
     const std::array<const char*, 4> captions{
         "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
@@ -573,6 +612,9 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
         g.setGradientFill(ColourGradient(rgb(0x414641), centre.x, face.getY(),
                                          rgb(0x282b28), centre.x, face.getBottom(), false));
     g.fillEllipse(face);
+    { Path clip; clip.addEllipse(face); Graphics::ScopedSaveState state(g);
+      g.reduceClipRegion(clip); g.setOpacity(.18f);
+      buttonBackground.paint(g, slider, face.toNearestInt(), spectral || flash ? p.inset : rgb(0x343a34), p.accent); }
     g.setColour(spectral ? p.border : rgb(flash ? outline : 0x555b54));
     g.drawEllipse(face, 1.0f);
     g.setColour(accent);
@@ -599,12 +641,11 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
     if (hover) fill = fill.brighter(0.12f);
     if (down) fill = fill.darker(0.12f);
     // Keep lit/pressed/hover colours as the material base, with the existing
-    // border and text painted afterwards. Clip the Device corner silhouette.
+    // border and text painted afterwards, clipped to the square silhouette.
     {
         Graphics::ScopedSaveState state(g);
         Path clip;
-        if (selectedTheme == Theme::device) clip.addRoundedRectangle(area, 3.0f);
-        else clip.addRectangle(area);
+        clip.addRectangle(area);
         g.reduceClipRegion(clip);
         buttonBackground.paint(g, button, button.getLocalBounds(), fill, p.accent);
     }
@@ -614,7 +655,7 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
         g.drawRect(area, focused ? 2.0f : 1.0f);
     } else {
         g.setColour(lit || routingAction ? accent.brighter(0.13f) : rgb(0x515850));
-        g.drawRoundedRectangle(area, 3.0f, focused ? 1.6f : 0.7f);
+        g.drawRect(area, focused ? 1.6f : 0.7f);
     }
 }
 

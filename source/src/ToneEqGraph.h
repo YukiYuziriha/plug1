@@ -119,8 +119,8 @@ public:
         const auto bounds = getLocalBounds().toFloat();
         const auto palette = themePalette(*this, neon);
         const bool device = componentTheme(*this, neon) == Theme::device;
-        g.setColour(device ? juce::Colour(0xff1c211f) : palette.inset);
-        g.fillRoundedRectangle(bounds, device ? 5.0f : 0.0f);
+        surfaceMaterial.paint(g, bounds.toNearestInt(), device ? juce::Colour(0xff1c211f) : palette.inset,
+            palette.accent, fluidAnimationSeconds(*this), .25f);
         const auto area = plot();
         if (area.getWidth() < 10 || area.getHeight() < 10) return;
         g.setFont(juce::Font(pixelFontOptions(10.0f)));
@@ -161,18 +161,18 @@ public:
             const auto colour = bandColour(b, *this, neon);
             paintModulation(g, b, p);
             g.setColour(colour.withAlpha(b == selected ? 0.22f : 0.1f));
-            g.fillEllipse(p.x - 12, p.y - 12, 24, 24);
+            g.fillRect(p.x - 12, p.y - 12, 24.f, 24.f);
             g.setColour(colour);
-            g.fillEllipse(p.x - 7, p.y - 7, 14, 14);
+            g.fillRect(p.x - 7, p.y - 7, 14.f, 14.f);
             if (b == selected) {
                 g.setColour(device ? juce::Colour(0xffeef2ee) : palette.text);
-                g.drawEllipse(p.x - 9, p.y - 9, 18, 18, 1.3f);
+                g.drawRect(p.x - 9, p.y - 9, 18.f, 18.f, 1.3f);
             }
             g.setColour(juce::Colour(0xff151b20));
             g.drawText(juce::String(int(b + 1)), int(p.x) - 7, int(p.y) - 7, 14, 14, juce::Justification::centred);
         }
         g.setColour(device ? juce::Colour(0xff7e9297).withAlpha(0.5f) : palette.border);
-        g.drawRoundedRectangle(bounds.reduced(0.5f), device ? 5.0f : 0.0f, 1);
+        g.drawRect(bounds.reduced(0.5f), 1);
         g.setColour(device ? juce::Colour(0xffa8b3bb) : palette.muted);
         auto title = getLocalBounds().removeFromTop(18).reduced(7, 0);
         g.drawText("FFT dBFS", title.removeFromRight(62), juce::Justification::centredRight);
@@ -291,6 +291,7 @@ public:
         refresh();
     }
 private:
+    FluidBackground surfaceMaterial;
     void setTooltipText() {
         // Component is deliberately not a keyboard command target.
         const juce::String instructions = "Single-click empty space: bell. Click a band: select. Drag a curve end: shelf. "
@@ -379,7 +380,7 @@ private:
         g.setColour(bandColour(b, *this, neon).withAlpha(0.65f));
         g.drawLine(base.x, base.y, effective.x, effective.y, 1);
         g.setColour(bandColour(b, *this, neon));
-        g.drawEllipse(effective.x - 4, effective.y - 4, 8, 8, 1.5f);
+        g.drawRect(effective.x - 4, effective.y - 4, 8.f, 8.f, 1.5f);
     }
     int edgeMode(juce::Point<float> p) const {
         const auto area = plot();

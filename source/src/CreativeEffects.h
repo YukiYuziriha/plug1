@@ -7,10 +7,12 @@
 #include <cstdint>
 #include <limits>
 #include <vector>
+#include "FactoryConvolution.h"
+#include "Waveshaper.h"
 
 namespace vocalstack {
 
-enum class CreativeKind { delay, reverb, compressor, bitcrusher, granular };
+enum class CreativeKind { delay, reverb, compressor, bitcrusher, granular, convolution, saturator };
 
 // Append, never reorder, when these indices/IDs become part of host state.
 enum class CreativeParameter : std::size_t {
@@ -24,7 +26,10 @@ enum class CreativeParameter : std::size_t {
     crusherBits, crusherRate, crusherLowpass, crusherDrive, crusherDither,
     granularPitch, granularSize, granularDensity, granularSpread, granularPosition,
     granularFreeze, granularReverse, granularLowCut, granularHighCut, granularJitter,
-    granularDrive, reverbPitch, reverbPitchAmount, reverbSwell, count
+    granularDrive, reverbPitch, reverbPitchAmount, reverbSwell,
+    convolutionSpace, convolutionBrightness, convolutionPredelay, convolutionTail,
+    convolutionDuck, convolutionOutput, saturatorDrive, saturatorCharacter,
+    saturatorTone, saturatorOutput, saturatorLevelMatch, count
 };
 inline constexpr std::size_t creativeParameterCount = static_cast<std::size_t>(CreativeParameter::count);
 struct CreativeParameterDescriptor {
@@ -86,7 +91,18 @@ inline constexpr std::array<CreativeParameterDescriptor, creativeParameterCount>
     {"granular_drive", "Capture drive", "dB", 0, 24, 0, CreativeKind::granular},
     {"reverb_pitch", "Feedback pitch", "st", -12, 12, 12, CreativeKind::reverb},
     {"reverb_pitch_amount", "Pitched feedback", "%", 0, 100, 0, CreativeKind::reverb},
-    {"reverb_swell", "Wet attack", "ms", 0, 2000, 0, CreativeKind::reverb}
+    {"reverb_swell", "Wet attack", "ms", 0, 2000, 0, CreativeKind::reverb},
+    {"convolution_space", "Synthetic space", "", 0, 3, 0, CreativeKind::convolution, true},
+    {"convolution_brightness", "Brightness", "dB", -12, 12, 0, CreativeKind::convolution},
+    {"convolution_predelay", "PreDelay", "ms", 0, 250, 20, CreativeKind::convolution},
+    {"convolution_tail", "Tail", "%", 25, 100, 100, CreativeKind::convolution},
+    {"convolution_duck", "Duck", "dB", 0, 30, 0, CreativeKind::convolution},
+    {"convolution_output", "Output", "dB", -24, 12, 0, CreativeKind::convolution},
+    {"saturator_drive", "Drive", "dB", 0, 36, 6, CreativeKind::saturator},
+    {"saturator_character", "Character", "%", 0, 100, 35, CreativeKind::saturator},
+    {"saturator_tone", "Tone", "dB", -12, 12, 0, CreativeKind::saturator},
+    {"saturator_output", "Output", "dB", -24, 12, -6, CreativeKind::saturator},
+    {"saturator_level_match", "Level match", "", 0, 1, 0, CreativeKind::saturator, true}
 }};
 struct CreativeSettings {
     std::array<float, creativeParameterCount> values{};
@@ -222,6 +238,8 @@ public:
         } else if (kind == CreativeKind::granular) {
             for (int i = 0; i < 2; ++i) rings_[i].allocate(static_cast<std::size_t>(sr_ * 3) + 8);
         }
+        if (kind == CreativeKind::convolution) convolution_.prepare(sr_);
+        if (kind == CreativeKind::saturator) saturator_.prepare(sr_);
         smoothStep_ = 1.f - std::exp(-1.f / static_cast<float>(sr_ * .025));
         duckAttack_ = std::exp(-1.f / static_cast<float>(sr_ * .005));
         ready_ = true;
@@ -231,6 +249,7 @@ public:
         for (auto& b : rings_) b.reset();
         for (auto& b : allpass_) b.reset();
         for (auto& b : reverbPitchRings_) b.reset();
+        convolution_.reset(); saturator_.reset(); saturatorLow_ = {};
         swellPeak_ = swellEnvelope_ = 0;
         capturedFrames_ = 0; granularFrozen_ = false;
         for (auto& b : bands_) b.reset();
@@ -260,6 +279,27 @@ public:
             case CreativeKind::compressor: out = compressor(left, right); break;
             case CreativeKind::bitcrusher: out = crusher(left, right); break;
             case CreativeKind::granular: out = granular(left, right); break;
+            case CreativeKind::convolution:
+                out = convolution_.process(left, right,
+                    int(std::round(std::isfinite(settings[P::convolutionSpace]) ? std::clamp(settings[P::convolutionSpace], 0.f, 3.f) : 0.f)),
+                    value(P::convolutionBrightness), value(P::convolutionPredelay), value(P::convolutionTail),
+                    value(P::convolutionDuck), value(P::convolutionOutput)); break;
+            case CreativeKind::saturator: {
+                WaveshaperSettings s;
+                s.driveDb = value(P::saturatorDrive); s.shape = 3;
+                s.shapeAmount = value(P::saturatorCharacter) * .01f;
+                s.outputDb = value(P::saturatorOutput); s.quality = 1;
+                s.levelMatch = value(P::saturatorLevelMatch) >= .5f;
+                saturator_.process(left, right, s);
+                out = {left, right};
+                const float pole = float(1 - std::exp(-2 * creative_detail::pi * 1000 / sr_));
+                const float bass = std::pow(10.f, -value(P::saturatorTone) / 40.f);
+                for (size_t c = 0; c < 2; ++c) {
+                    saturatorLow_[c] += pole * (out[c] - saturatorLow_[c]);
+                    out[c] = bass * saturatorLow_[c] + (out[c] - saturatorLow_[c]) / bass;
+                }
+                break;
+            }
         }
         ++tick_;
         return {creative_detail::clean(out[0]), creative_detail::clean(out[1])};
@@ -272,6 +312,9 @@ public:
 private:
     using P = CreativeParameter;
     using Ring = creative_detail::Ring;
+    FactoryConvolution convolution_;
+    Waveshaper saturator_;
+    std::array<float, 2> saturatorLow_{};
     double sr_ = 48000;
     CreativeKind kind_ = CreativeKind::delay;
     bool ready_ = false, initialized_ = false;
@@ -358,6 +401,7 @@ private:
                 density_ = value(P::granularDensity) / static_cast<float>(sr_);
                 drive_ = dbGain(value(P::granularDrive)); makeup_ = 1.f / std::sqrt(drive_);
                 setBand(value(P::granularLowCut), value(P::granularHighCut)); break;
+            case CreativeKind::convolution: case CreativeKind::saturator: break;
         }
     }
     float duck(float l, float r) noexcept {

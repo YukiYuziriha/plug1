@@ -82,17 +82,15 @@ void MeterPanel::paint(Graphics& g) {
     const auto holdColour = rgb(device ? 0xf5a24b : 0xf8de6b);
     const auto overload = rgb(0xff726e);
     const auto track = selectedTheme == Theme::neon ? p.background : p.inset;
-    const float radius = device ? 5.0f : 0.0f;
 
     // One geometry for all skins. The editor supplies a 244 x 246 panel.
     Graphics::ScopedSaveState state(g);
     g.addTransform(AffineTransform::scale(static_cast<float>(getWidth()) / 244.0f,
                                          static_cast<float>(getHeight()) / 246.0f));
     const Rectangle<float> frame{0.5f, 0.5f, 243.0f, 245.0f};
-    g.setColour(background);
-    g.fillRoundedRectangle(frame, radius);
+    frameMaterial.paint(g, frame.toNearestInt(), background, p.accent, fluidAnimationSeconds(*this), .35f);
     g.setColour(hasKeyboardFocus(false) ? good : border);
-    g.drawRoundedRectangle(frame, radius, hasKeyboardFocus(false) ? 2.0f : 1.0f);
+    g.drawRect(frame, hasKeyboardFocus(false) ? 2.0f : 1.0f);
     g.setColour(selectedTheme == Theme::spectral ? p.border : good);
     g.fillRect(6.0f, 1.0f, 232.0f, selectedTheme == Theme::spectral ? 1.0f : 2.0f);
 
@@ -169,7 +167,7 @@ void MeterPanel::paint(Graphics& g) {
 
         const Rectangle<float> clipBadge{x + 20, 197, 48, 14};
         g.setColour(clipped ? overload : track);
-        g.fillRoundedRectangle(clipBadge, 2.0f);
+        g.fillRect(clipBadge);
         text(g, "CLIP", clipBadge, clipped ? rgb(0x17171c) : muted, 10.0f, true);
     };
     drawGroup(meters.input, meters.inputChannels, 8.0f, "IN");

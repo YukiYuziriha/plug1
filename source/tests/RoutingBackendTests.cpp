@@ -390,10 +390,11 @@ void activePlanTails() {
     check(allocations == 0 && destructions == 0,"tail publication allocated/destroyed on audio");
 }
 #include "RoutingSplitterTests.h"
+#include "DryWetRoutingTests.h"
 
 int main() {
     try {
-        routingSplitter::run(); activePlanTails(); toneEffectsAndTypeIdentity(); automaticFanIn(); disconnectionsAreLive(); validation(); defaultAndCompensation(); machinesAndPublication(); smoothSplice(); pendingMachineResetRace(); invalidControlValues(); concurrentEdits();
+        dryWetRouting::run(); routingSplitter::run(); activePlanTails(); toneEffectsAndTypeIdentity(); automaticFanIn(); disconnectionsAreLive(); validation(); defaultAndCompensation(); machinesAndPublication(); smoothSplice(); pendingMachineResetRace(); invalidControlValues(); concurrentEdits();
         std::cout << "Routing backend: active longest-path tails, engine tail forwarding, validation, endpoints, lineage compensation, independent FX, history, RT ownership and concurrent edits passed\n";
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

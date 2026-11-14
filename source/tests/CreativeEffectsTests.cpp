@@ -65,7 +65,7 @@ void finite(const std::array<float, 2>& v) {
     check(std::abs(v[0]) <= 64 && std::abs(v[1]) <= 64, "Unbounded output");
 }
 void descriptors() {
-    check(creativeParameterCount == 51, "Host parameter count changed");
+    check(creativeParameterCount == 62, "Host parameter count changed");
     constexpr std::array<const char*, 48> legacyIds {{
         "delay_time", "delay_sync", "delay_beats", "delay_feedback", "delay_pingpong",
         "delay_lowcut", "delay_highcut", "delay_drive", "delay_duck", "delay_duck_release", "delay_pitch",
@@ -84,7 +84,7 @@ void descriptors() {
         && static_cast<std::size_t>(P::reverbPitchAmount) == 49
         && static_cast<std::size_t>(P::reverbSwell) == 50, "Reverb controls must be appended");
     CreativeSettings s;
-    std::array<int, 5> counts{};
+    std::array<int, 7> counts{};
     for (std::size_t i = 0; i < creativeParameterCount; ++i) {
         const auto& d = creativeParameters[i];
         check(d.id && *d.id && d.label && *d.label && d.unit, "Incomplete descriptor");
@@ -546,7 +546,7 @@ int main() {
         reverbPitchAndSwell(); reverbPitchFreezeAndReset(); reverbPitchedDecay();
         crusherTests(); granularTests(); granularOverlapAutomation(); duckingAndCrusherRate(); pitchedDelayAndTempoSlew();
         automationAndRealtime(); blockIndependenceAndPreparation(); decayingTails();
-        std::cout << "CreativeEffects: all tests passed (51 parameters, 5 effects; zero audio allocations/frees)\n";
+        std::cout << "CreativeEffects: all tests passed (62 parameters, legacy 5 effects; zero audio allocations/frees)\n";
         return 0;
     } catch (const std::exception& e) {
         audioThread = false;

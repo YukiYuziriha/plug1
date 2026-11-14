@@ -24,7 +24,7 @@ inline void styleRotary(juce::Slider& slider, bool neon) {
 
 // Scoped to inspector panels; rotary controls retain their own drawing styles.
 class PanelStyle final : public PixelLookAndFeel {
-    ButtonFluidBackground buttonBackground;
+    ButtonFluidBackground buttonBackground, selectorBackground;
 public:
     void setPalette(const ThemePalette& p) {
         setColour(juce::Label::textColourId, p.text);
@@ -63,8 +63,8 @@ public:
                       juce::ComboBox& box) override {
         const auto p = themePalette(box);
         const auto area = juce::Rectangle<float>(0.5f, 0.5f, float(width) - 1, float(height) - 1);
-        g.setColour(box.findColour(juce::ComboBox::backgroundColourId));
-        g.fillRect(area);
+        selectorBackground.paint(g, box, area.toNearestInt(),
+            box.findColour(juce::ComboBox::backgroundColourId), p.accent);
         g.setColour(box.hasKeyboardFocus(false) ? p.accent : p.border);
         g.drawRect(area, 1.0f);
         const auto x = float(width) - 12, y = float(height) * 0.5f;
@@ -135,6 +135,7 @@ inline void showDiscreteAssignmentMenu(Processor& owner, juce::Component& contro
     const auto assigning = owner.modulationAssignmentId();
     const auto selected = assigning ? assigning : selectedModulator(owner);
     juce::PopupMenu menu;
+    menu.setLookAndFeel(&control.getLookAndFeel());
     menu.addSectionHeader(parameter->getName(80) + " / stepped modulation");
     struct Action { uint32_t source; float depth; bool erase; };
     std::vector<Action> actions;
@@ -210,7 +211,7 @@ public:
         if (owner->modulationAssignmentId() || assigned) {
             const bool device = componentTheme(*this) == Theme::device;
             g.setColour((device ? juce::Colour(0xffb798ff) : themePalette(*this).accent).withAlpha(assigned ? .9f : .5f));
-            g.drawRoundedRectangle(this->getLocalBounds().toFloat().reduced(1), device ? 3.0f : 0.0f, assigned ? 2.0f : 1.0f);
+            g.drawRect(this->getLocalBounds().toFloat().reduced(1), assigned ? 2.0f : 1.0f);
         }
     }
 private:

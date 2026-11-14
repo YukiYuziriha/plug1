@@ -143,7 +143,7 @@ inline void filesAndLocalPreferences() {
     Processor& p = *pStorage;
     PresetManager manager(p, files.preferences());
     std::vector<PresetManager::Entry> entries;
-    require(manager.refresh(entries).failed() && entries.size() == 8, "Missing folder should surface choice while keeping factories");
+    require(manager.refresh(entries).failed() && entries.size() == 10, "Missing folder should surface choice while keeping factories");
     const auto file = userFolder.getChildFile("Saved.vocalstackpreset");
     require(manager.saveNew(file).failed(), "Saved without an explicit folder choice");
     success(manager.setFolder(userFolder));
@@ -155,7 +155,7 @@ inline void filesAndLocalPreferences() {
     require(manager.saveNew(userFolder.getChildFile("wrong.xml")).failed(), "Wrong extension accepted");
     require(manager.saveNew(files.root.getChildFile("outside.vocalstackpreset")).failed(), "Saved outside selected folder");
     success(manager.refresh(entries));
-    require(entries.size() == 9 && entries.back().name == "Saved", "User browser refresh failed");
+    require(entries.size() == 11 && entries.back().name == "Saved", "User browser refresh failed");
     success(manager.load(entries.back()));
     require(std::abs(read(p, "outputGain") + 6) < .001f, "File load failed");
     {
@@ -177,7 +177,7 @@ inline void factories() {
     std::unique_ptr<Processor> pStorage = std::make_unique<Processor>();
     Processor& p = *pStorage;
     PresetManager manager(p, files.preferences());
-    require(PresetManager::factoryNames().size() == 8, "Expected eight factory patches");
+    require(PresetManager::factoryNames().size() == 10, "Expected ten factory patches");
     require(p.parameters.getParameter("fx1delay_time") != nullptr, "Creative factory parameters are not integrated");
     for (int i = 0; i < PresetManager::factoryNames().size(); ++i) {
         juce::ValueTree clean, dirty;
@@ -193,7 +193,7 @@ inline void factories() {
         success(manager.load({PresetManager::factoryNames()[i], {}, i}));
     }
     juce::ValueTree ignored;
-    require(manager.factoryPatch(-1, ignored).failed() && manager.factoryPatch(8, ignored).failed(), "Invalid factory index accepted");
+    require(manager.factoryPatch(-1, ignored).failed() && manager.factoryPatch(PresetManager::factoryNames().size(), ignored).failed(), "Invalid factory index accepted");
 }
 
 inline void toolbarFocusPolicy() {

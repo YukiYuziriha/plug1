@@ -1,6 +1,27 @@
-# Vocal Stack 1.9.10
+# Vocal Stack — 1.10.0
 
-Approved release: square slider markers and butt-ended circular knob arcs;
+**Approved, built, packaged and installed.** Adds a separate
+Convolution FX with original synthetic Church, Hall, Room and Plate IRs, wet
+Brightness tilt, PreDelay, Tail taper, Duck, Output and Mix; and a focused
+Saturator using the existing 2x IIR + ADAA warm curve with Drive, Character,
+Tone, Output, Mix and optional RMS level match. Existing algorithmic Reverb and
+Delay feedback saturation are unchanged. All original 2087 host parameter
+indices are preserved; 165 controls append at indices 2087–2251. The preceding
+square/clustered-material UI preview is retained.
+
+Includes the approved coordinated Motion/material/reactive presentation, repeated
+Dry/Wet nodes, denser Routing inspector controls, 14/22 px scrollbars and chunky
+square Routing nodes with double-weight connections. Circular knobs and shared
+Stack layout constants are preserved. SIDECHAIN / Spectral Morph remains roadmap
+only, unimplemented.
+
+See [1.10.0 release validation and installation hashes](docs/Release-1.10.0-Validation.md)
+and the [historical preview/constraints](docs/Preview-1.10.0.md).
+Both tracked Windows formats and per-user installations are **1.10.0**, with
+matching build/package/installed SHA256 hashes. All 38 suites passed across split
+runs; parallel grain UI concurrency failures remain documented, not hidden.
+
+Historical **1.9.10** release: square slider markers and butt-ended circular knob arcs;
 explicit embedded Pixelify Sans Stack readouts and unemboldened labels;
 stronger sparse, slow generated-pixel accent glints, including the coarse Stack
 card grids. Tracked Windows x64 CLAP and VST3 packages are updated to 1.9.10.
@@ -9,7 +30,7 @@ See `docs/Preview-1.9.10.md` for validation, installation hashes and approval sc
 Windows x64 audio effect for Bitwig Studio. The archive contains a CLAP plugin,
 a VST3 fallback, and C++ source with CMake and tests.
 
-**1.9.9 is built, tested, packaged and installed.**
+**Historical 1.9.9 — built, tested, packaged and installed.**
 Only the four top Stack knob cards use a coarser 24-texel grid (previously 80):
 Leveler, generated takes, Formant and Output now have visibly chunky pixels.
 The same theme noise, rare integrated glints and 20%-faster animation remain;
@@ -129,9 +150,11 @@ packaged CLAP smoke passed. **Actual Bitwig listening/transport remains unperfor
 
 ## Install
 
-**1.9.8 installation succeeded:** `source/build/install-release.ps1` reported
+**1.10.0 installation succeeded:** `source/build/install-release.ps1` reported
 **Installed and SHA256 verified for both per-user CLAP and VST3**.
-Packaging and packaged CLAP smoke are complete. Do not terminate Bitwig or overwrite a loaded plugin to force
+Packaged and installed CLAP smoke passed; both formats have matching SHA256 and
+PE file/product version 1.10.0. Bundled legal notices include Pixelify Sans OFL.
+Do not terminate Bitwig or overwrite a loaded plugin to force
 replacement. Actual Bitwig listening/transport and native FPS remain unchecked.
 
 1. Extract the ZIP.
@@ -203,12 +226,17 @@ The preview uses synthetic readings to demonstrate peak hold and clip indication
 ### Window and control layout
 
 Drag the window corner to resize (940x560 minimum, 2400x2200 maximum;
-default 940x1104). Stack keeps its native 940x1148 body unscaled in a vertical
+default 940x1104). Stack keeps its native 940x1158 body unscaled in a vertical
 viewport, with the preset footer fixed outside the scrolling body. Routing expands
 the canvas and inspector height; expanded node controls scale with canvas zoom.
 The inspector defaults to 320 px wide; drag its left divider to resize between 320 and 480 px. Width is saved, and dragging neither
 refits the graph nor rebuilds the selected effect. Small inspectors scroll. Window size and graph
 pan/zoom are saved; tab changes do not resize the window or refit the graph.
+Scrollbars are 1.8x their previous logical-pixel thickness, rounded once: **8 → 14 px**
+for default vertical/horizontal tracks, **12 → 22 px** for the Stack voice strip.
+Square textured tracks/thumbs retain the active theme; audio sliders and Motion
+are unchanged. The voice strip reserves the extra 10 px without shortening cards
+or changing the saved/default window size. See the [scrollbar preview validation](docs/Preview-1.10.0.md#thicker-scrollbars--source-preview).
 Stack cards use four rows of two horizontal sliders in narrower, unchanged-height
 cards. Selecting a Lead/Voice node opens the same parameters as larger two-row
 rotary controls on the right. Selection follows between views. Numeric entry, double-click
@@ -872,7 +900,19 @@ mix/sum pins, disconnected-output silence, graph recall, and node deletion.
 
 ## Verification
 
-**1.9.7:** Release build, all 34 focused CTests (521.33 s), focused Stack material
+**1.10.0:** final incremental Release build passed. Final split validation: 36/36
+non-editor/non-grain-UI CTests (130.24 s), isolated editor (116.89 s, 75 groups),
+and three isolated grain UI passes (27.05 s total). The two earlier 37-suite
+parallel runs each failed only the grain UI concurrent-reader assertion; no clean
+combined run is claimed. Legacy DSP, baseline compatibility, factory FX zero-RT-
+allocation checks, state/parameter compatibility and all ten factory-audio shards
+passed. Seven render modes passed (441 offscreen PNGs). Packaged and installed
+CLAP version/state/latency/bypass/automation/layout smoke passed. Both formats
+installed and independently hash/version-verified; actual DAW listening/transport,
+VST3 host validation and native FPS remain unverified. See the
+[release record](docs/Release-1.10.0-Validation.md).
+
+**Historical 1.9.7:** Release build, all 34 focused CTests (521.33 s), focused Stack material
 captures in all three themes, packaged CLAP smoke and hash-verified CLAP/VST3
 installation succeeded. Broad screenshot runner: `Tone UI: Missing FX tab`;
 legacy DSP and actual DAW checks not rerun. See

@@ -442,14 +442,14 @@ juce::String interruptionName(InterruptedControl control, Unmount removal) {
 Graph interruptionGraph(InterruptedControl control) {
     return control == InterruptedControl::output ? graph()
          : vocalstack::updateUiTests::effectGraph(control == InterruptedControl::creative ? NodeType::delay
-             : control == InterruptedControl::utility ? NodeType::gain
+             : control == InterruptedControl::utility ? NodeType::gate
              : control == InterruptedControl::synthHandle ? NodeType::synthFilter : NodeType::equalizer);
 }
 juce::String interruptionSliderId(InterruptedControl control) {
     if (control == InterruptedControl::output) return "outputGain";
     if (control == InterruptedControl::creative)
         return vocalstack::creativeParameterId(1, size_t(vocalstack::CreativeParameter::delayFeedback));
-    return vocalstack::utilityParameterId(1, size_t(vocalstack::UtilityParameter::gainDb));
+    return vocalstack::utilityParameterId(1, size_t(vocalstack::UtilityParameter::gateThreshold));
 }
 void setupInterruptedControl(Fixture& f, InterruptedControl control) {
     inspector(f, false);

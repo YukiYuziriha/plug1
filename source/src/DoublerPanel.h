@@ -167,21 +167,19 @@ class VoiceControls final : public juce::Component {
             const auto p = themePalette(*this, neon);
             const auto selectedTheme = componentTheme(*this, neon);
             const bool device = selectedTheme == Theme::device;
-            const float radius = device ? 4.0f : 0.0f;
-            g.setColour(p.panel);
-            g.fillRoundedRectangle(getLocalBounds().toFloat(), radius);
+            cardMaterial.paint(g, getLocalBounds(), p.panel, p.accent, fluidAnimationSeconds(*this), .45f, 24);
             const auto colour = device
                 ? (voiceSlot < 0 ? juce::Colour(0xfff8de6b) : VoiceMonitor::voiceColour(size_t(voiceSlot)))
                 : (voiceSlot < 0 ? p.secondary : p.accent);
             g.setColour(selected ? colour : device ? juce::Colour(0xff515850) : p.border);
-            g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.7f), radius, selected ? 1.6f : 1.0f);
+            g.drawRect(getLocalBounds().toFloat().reduced(0.7f), selected ? 1.6f : 1.0f);
             g.setColour(colour.withAlpha(device || selected ? 0.12f : 0.05f));
-            g.fillRoundedRectangle(5.0f, 5.0f, float(getWidth() - 10), 32.0f, device ? 3.0f : 0.0f);
+            g.fillRect(5.0f, 5.0f, float(getWidth() - 10), 32.0f);
             g.setColour(colour);
-            g.fillEllipse(12, 10, 22, 22);
+            g.fillRect(12, 10, 22, 22);
             g.setFont(juce::Font(pixelFontOptions(12.0f, juce::Font::bold)));
             g.setColour(juce::Colour(0xff151b20));
-            g.drawText(voiceSlot < 0 ? "L" : juce::String(voiceSlot + 1), 12, 10, 22, 22, juce::Justification::centred);
+            g.drawText(voiceSlot < 0 ? "0" : juce::String(voiceSlot + 1), 12, 10, 22, 22, juce::Justification::centred);
             g.setColour(p.text);
             g.drawText(voiceSlot < 0 ? "LEAD" : "VOICE", 42, 10, 66, 22, juce::Justification::centredLeft);
         }
@@ -203,6 +201,7 @@ class VoiceControls final : public juce::Component {
         }
         std::function<void()> onSelect;
     private:
+        FluidBackground cardMaterial;
         const int voiceSlot;
         const ControlMode controlMode;
         bool neon = false, selected = false, compact = false;
@@ -243,7 +242,7 @@ public:
                 };
         viewport.setViewedComponent(&cardArea, false);
         viewport.setScrollBarsShown(false, true);
-        viewport.setScrollBarThickness(12);
+        viewport.setScrollBarThickness(scrollbarMetrics::voiceStrip);
         viewport.setScrollOnDragEnabled(false);
         addAndMakeVisible(viewport);
         clicks.onClick = [this](juce::Component* c) {
@@ -372,8 +371,7 @@ public:
         addAndMakeVisible(enabled);
         addAndMakeVisible(mix);
         addAndMakeVisible(motion);
-        for (auto* control : {&mix, &motion})
-            control->slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 54, 19);
+        for (auto* control : {&mix, &motion}) control->setLinear(true);
         link = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner.parameters, "choraleOn", enabled);
         detail::passiveControl(*this);
     }
@@ -385,11 +383,9 @@ public:
     void paint(juce::Graphics& g) override {
         const auto p = themePalette(*this, neon);
         const bool device = componentTheme(*this, neon) == Theme::device;
-        const float radius = device ? 4.0f : 0.0f;
-        g.setColour(p.panel);
-        g.fillRoundedRectangle(getLocalBounds().toFloat(), radius);
+        cardMaterial.paint(g, getLocalBounds(), p.panel, p.accent, fluidAnimationSeconds(*this), .45f, 24);
         g.setColour(device ? juce::Colour(0xff515850) : p.border);
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), radius, 1.0f);
+        g.drawRect(getLocalBounds().toFloat().reduced(0.5f), 1.0f);
     }
     void setNeon(bool value) {
         neon = value;
@@ -400,6 +396,7 @@ public:
         repaint();
     }
 private:
+    FluidBackground cardMaterial;
     bool neon = false;
     modulationui::Button enabled;
     ParameterKnob mix, motion;

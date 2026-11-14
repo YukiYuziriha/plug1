@@ -146,14 +146,14 @@ int main(int argc, char** argv) {
         if (argc == 2) {
             char* end = nullptr;
             const long value = std::strtol(argv[1], &end, 10);
-            require(end != argv[1] && *end == '\0' && value >= 0 && value < 8, "Invalid factory index");
+            require(end != argv[1] && *end == '\0' && value >= 0 && value < 10, "Invalid factory index");
             selected = int(value);
         }
         juce::ScopedJuceInitialiser_GUI init;
         juce::ScopedNoDenormals noDenormals;
         TemporaryFolder files;
         const auto names = PresetManager::factoryNames();
-        require(names.size() == 8, "Review coverage when factory preset count changes");
+        require(names.size() == 10, "Review coverage when factory preset count changes");
         std::puts("preset,rate,channels,trim_db,latency,input_peak_dbfs,input_rms_dbfs,output_peak_dbfs,active_rms_dbfs,tail_peak_dbfs,tail_rms_dbfs,first_tail_rms_dbfs,final_tail_rms_dbfs,clipped_samples,hash");
         int cases = 0;
         for (int preset = 0; preset < names.size(); ++preset)

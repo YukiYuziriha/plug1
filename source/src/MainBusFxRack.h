@@ -107,7 +107,7 @@ inline Edit add(const Graph& original, NodeType type) {
     if (!eligible(type)) { edit.error = "Structural nodes are only available in Routing."; return edit; }
     if (auto problem = capacityProblem(original); !problem.empty()) { edit.error = problem; return edit; }
     RoutingNode node;
-    node.type = type; node.mix = type == NodeType::chorale ? .25f : 1.0f;
+    node.type = type; node.mix = type == NodeType::chorale || type == NodeType::convolution ? .25f : 1.0f;
     for (uint32_t id = 100; id <= 114; ++id) if (!find(original, id)) { node.id = id; break; }
     edit.graph.nodes.push_back(node);
     auto ordered = segment.effects; ordered.push_back(node.id); wire(edit.graph, segment, ordered);

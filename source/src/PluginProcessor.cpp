@@ -270,7 +270,11 @@ State::ParameterLayout Processor::makeParameters() {
                 return 0;
             })));
     const auto appendDescriptor = [&](const juce::String& id, const juce::String& name, const auto& d) {
-        if (d.discrete && d.min == 0 && d.max == 1) {
+        if (id.endsWith("convolution_space")) {
+            juce::StringArray choices;
+            for (const auto* space : FactoryConvolution::names) choices.add(juce::String(space) + " (synthetic)");
+            layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id, 1}, name, choices, int(d.initial)));
+        } else if (d.discrete && d.min == 0 && d.max == 1) {
             layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id, 1}, name, d.initial >= .5f));
         } else if (d.discrete) {
             layout.add(std::make_unique<DiscreteAudioParameterInt>(juce::ParameterID{id, 1}, name,
@@ -286,7 +290,7 @@ State::ParameterLayout Processor::makeParameters() {
     for (int pass = 0; pass < 2; ++pass)
         for (size_t slot = 1; slot < 16; ++slot)
             for (size_t p = pass == 0 ? 0 : legacyCreativeParameterCount;
-                 p < (pass == 0 ? legacyCreativeParameterCount : creativeParameterCount); ++p) {
+                 p < (pass == 0 ? legacyCreativeParameterCount : releasedCreativeParameterCount); ++p) {
                 const auto& d = creativeParameters[p];
                 appendDescriptor(creativeParameterId(slot, p), "FX " + juce::String(int(slot)) + " " + d.label, d);
             }
@@ -294,6 +298,11 @@ State::ParameterLayout Processor::makeParameters() {
         for (size_t p = 0; p < utilityParameterCount; ++p) {
             const auto& d = utilityParameters[p];
             appendDescriptor(utilityParameterId(slot, p), "FX " + juce::String(int(slot)) + " " + d.label, d);
+        }
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t p = releasedCreativeParameterCount; p < creativeParameterCount; ++p) {
+            const auto& d = creativeParameters[p];
+            appendDescriptor(creativeParameterId(slot, p), "FX " + juce::String(int(slot)) + " " + d.label, d);
         }
     return layout;
 }
@@ -514,6 +523,7 @@ juce::ValueTree Processor::copyState() {
     const std::lock_guard<std::recursive_mutex> lock(controlMutex);
     auto state = parameters.copyState();
     state.setProperty("skin", getSkin(), nullptr);
+    state.setProperty("motionPercent", getMotionPercent(), nullptr);
     state.setProperty(themeProperty, isFlash(), nullptr);
     state.setProperty("advancedVisible", isAdvancedVisible(), nullptr);
     state.setProperty("advancedInitialized", advancedInitialized.load(std::memory_order_relaxed), nullptr);
@@ -686,7 +696,7 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
             if (graphTree.isValid() && i >= creativeParameterStart && i < utilityParameterStart) {
                 const size_t offset = i - creativeParameterStart;
                 const bool legacy = offset < 15 * legacyCreativeParameterCount;
-                const size_t width = legacy ? legacyCreativeParameterCount : creativeParameterCount - legacyCreativeParameterCount;
+                const size_t width = legacy ? legacyCreativeParameterCount : releasedCreativeParameterCount - legacyCreativeParameterCount;
                 const size_t relative = legacy ? offset : offset - 15 * legacyCreativeParameterCount;
                 const size_t slot = 1 + relative / width;
                 const size_t field = relative % width + (legacy ? 0 : legacyCreativeParameterCount);
@@ -694,7 +704,15 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                     if (isCreativeEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
                         initial = node.creative.values[field];
             }
-            if (graphTree.isValid() && i >= utilityParameterStart) {
+            if (graphTree.isValid() && i >= newCreativeParameterStart) {
+                const size_t width = creativeParameterCount - releasedCreativeParameterCount;
+                const size_t slot = 1 + (i - newCreativeParameterStart) / width;
+                const size_t field = releasedCreativeParameterCount + (i - newCreativeParameterStart) % width;
+                for (const auto& node : active.nodes)
+                    if (isCreativeEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
+                        initial = node.creative.values[field];
+            }
+            if (graphTree.isValid() && i >= utilityParameterStart && i < newCreativeParameterStart) {
                 const size_t slot = 1 + (i - utilityParameterStart) / utilityParameterCount;
                 const size_t field = (i - utilityParameterStart) % utilityParameterCount;
                 for (const auto& node : active.nodes)
@@ -710,6 +728,8 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
         || static_cast<bool>(restored.getProperty("advancedInitialized", hasAdvancedState));
     skin.store(std::clamp(int(restored.getProperty("skin",
         static_cast<bool>(restored.getProperty(themeProperty, false)) ? 1 : 0)), 0, 2), std::memory_order_relaxed);
+    const double motion = double(restored.getProperty("motionPercent", 3.0));
+    motionPercent.store(std::isfinite(motion) ? std::clamp(motion, 0.0, 100.0) : 3.0, std::memory_order_relaxed);
     advancedVisible.store(static_cast<bool>(restored.getProperty("advancedVisible", false)), std::memory_order_relaxed);
     parameters.replaceState(restored);
     advancedInitialized.store(initialized, std::memory_order_relaxed);
@@ -746,6 +766,12 @@ bool Processor::pasteSettings(const juce::String& text) {
 void Processor::setSkin(int requested) {
     const int next = std::clamp(requested, 0, 2);
     if (skin.exchange(next, std::memory_order_relaxed) != next)
+        updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+}
+
+void Processor::setMotionPercent(double requested) {
+    const double next = std::isfinite(requested) ? std::clamp(requested, 0.0, 100.0) : 3.0;
+    if (motionPercent.exchange(next, std::memory_order_relaxed) != next)
         updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
 }
 

@@ -180,7 +180,7 @@ void concurrentSnapshots() {
     FxMonitor monitor;
     monitor.reset(48000); monitor.retain(1);
     for (size_t i = 0; i < 2048; ++i) {
-        monitor.beginSample(); monitor.capture(1, 100, float(i), -float(i), 2 * float(i), -2 * float(i), 0, {});
+        monitor.beginSample(); monitor.capture(1, 100, float(i), -float(i), 2 * float(i), -2 * float(i), 0, {}, true, .25f, -.5f);
     }
     std::atomic<bool> start{false}, done{false};
     std::atomic<int> errors{0}, reads{0};
@@ -193,6 +193,7 @@ void concurrentSnapshots() {
             ++reads;
             if (frame.sequence < sequence || frame.nodeId != 100 || frame.sampleRate != 48000) ++errors;
             sequence = frame.sequence;
+            if (!frame.hasWet || std::abs(frame.wetRms - std::sqrt(.15625f)) > 1.e-6f) ++errors;
             for (size_t j = 0; j < FxMonitorFrame::sampleCount; ++j) {
                 const float x = frame.input[0][j];
                 if (!std::isfinite(x) || frame.input[1][j] != -x || frame.output[0][j] != 2*x
@@ -203,7 +204,7 @@ void concurrentSnapshots() {
     std::thread a(reader), b(reader);
     start.store(true, std::memory_order_release);
     for (size_t i = 2048; i < 160000; ++i) {
-        monitor.beginSample(); monitor.capture(1, 100, float(i), -float(i), 2 * float(i), -2 * float(i), 0, {});
+        monitor.beginSample(); monitor.capture(1, 100, float(i), -float(i), 2 * float(i), -2 * float(i), 0, {}, true, .25f, -.5f);
         if (i % 4096 == 0) { monitor.retain(1); monitor.release(1); std::this_thread::yield(); }
     }
     done.store(true, std::memory_order_release); a.join(); b.join();

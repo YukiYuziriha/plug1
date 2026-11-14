@@ -33,7 +33,8 @@ public:
     void paint(juce::Graphics& g) override {
         const auto palette = themePalette(*this, neon);
         const bool device = componentTheme(*this, neon) == Theme::device;
-        g.fillAll(device ? juce::Colour(0xff202421) : palette.panel);
+        surfaceMaterial.paint(g, getLocalBounds(), device ? juce::Colour(0xff202421) : palette.panel,
+                    palette.accent, fluidAnimationSeconds(*this), .25f);
         auto plot = plotBounds();
         g.setFont(juce::Font(pixelFontOptions(11.0f)));
         g.setColour(device ? juce::Colour(0xffaebaca) : palette.muted);
@@ -58,15 +59,14 @@ public:
             const auto p = point({s.pan, s.detuneCents});
             const float activity = juce::jlimit(0.0f, 1.0f, (juce::Decibels::gainToDecibels(s.activity, -72.0f) + 60.0f) / 48.0f);
             g.setColour(colour.withAlpha(s.enabled ? 0.28f + 0.72f * activity : 0.18f));
-            if (i == leadSlot) g.fillRect(p.x - 7, p.y - 7, 14.0f, 14.0f);
-            else g.fillEllipse(p.x - 7, p.y - 7, 14, 14);
+            g.fillRect(p.x - 7, p.y - 7, 14.0f, 14.0f);
             if (i == selected) {
                 g.setColour(device ? juce::Colours::white : palette.text);
-                g.drawEllipse(p.x - 9, p.y - 9, 18, 18, 1.0f);
+                g.drawRect(p.x - 9, p.y - 9, 18.0f, 18.0f, 1.0f);
             }
             g.setColour(device ? juce::Colours::white
                 : s.enabled && activity > 0.5f ? palette.background : palette.text);
-            g.drawText(i == leadSlot ? juce::String("L") : juce::String(int(i + 1)),
+            g.drawText(i == leadSlot ? juce::String("0") : juce::String(int(i + 1)),
                 int(p.x - 7), int(p.y - 7), 14, 14, juce::Justification::centred);
         }
         const auto& s = snapshots[selected];
@@ -100,7 +100,8 @@ private:
         return {p.getCentreX() + juce::jlimit(-1.0f, 1.0f, value.x) * p.getWidth() * 0.5f,
                 p.getCentreY() - juce::jlimit(-150.0f, 150.0f, value.y) / 150.0f * p.getHeight() * 0.5f};
     }
-    bool neon = false;
+    FluidBackground surfaceMaterial;
+        bool neon = false;
     size_t selected = 0;
     std::array<VoiceSnapshot, 9> snapshots{};
     std::array<std::deque<juce::Point<float>>, 9> trails;

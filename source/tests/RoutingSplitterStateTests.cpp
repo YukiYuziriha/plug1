@@ -41,7 +41,7 @@ void codec() {
               "splitter XML roundtrip failed");
         sameTopology(decoded, graph());
         auto bad = encoded.createCopy();
-        bad.getChildWithProperty("id", juce::int64(300)).setProperty("type", 20, nullptr);
+        bad.getChildWithProperty("id", juce::int64(300)).setProperty("type", 22, nullptr);
         check(!processorRouting::decode(bad, decoded), "unknown appended type accepted");
         for (int pin : {-1, 2}) {
             bad = encoded.createCopy();
@@ -66,7 +66,7 @@ std::vector<float> parameterValues(Processor& owner) {
 void processorRecall() {
     auto owner = std::make_unique<Processor>();
     const auto before = parameterValues(*owner);
-    check(before.size() == 2087, "splitter changed the host parameter count");
+    check(before.size() == 2252, "splitter changed the host parameter count");
     juce::String error;
     check(owner->setRoutingGraph(graph(), error), "processor rejected splitter graph");
     check(parameterValues(*owner) == before, "splitter graph edit changed host parameters");
@@ -129,11 +129,65 @@ void presets() {
         sameTopology(owner->getRoutingGraph(), graph());
     }
 }
+void dryWetRecall() {
+    auto owner = std::make_unique<Processor>();
+    auto g = graph();
+    g.nodes.push_back({200, NodeType::mix}); g.nodes.back().mix = .73f;
+    g.nodes.push_back({201, NodeType::mix}); g.nodes.back().mix = .19f;
+    g.nodes.push_back({247, NodeType::mix}); g.nodes.back().mix = .41f;
+    g.links = {{1, 300, 0}, {300, 200, 0, 0}, {300, 201, 1, 1},
+               {200, 247, 0}, {201, 247, 1}, {247, 13, 0}};
+    juce::String error;
+    check(owner->setRoutingGraph(g, error), "Dry/Wet recall fixture rejected");
+    const auto verify = [&](Processor& target) {
+        sameTopology(target.getRoutingGraph(), g);
+        check(target.getParameters().size() == 2252, "Dry/Wet changed host parameter count");
+        for (size_t i = 0; i < parameterIds.size(); ++i)
+            check(target.getParameters()[int(i)] == target.parameters.getParameter(parameterIds[i]), "Dry/Wet changed existing host indices");
+        for (auto pair : {std::pair<uint32_t, float>{200u, 73.f}, {201u, 19.f}, {247u, 41.f}}) {
+            const auto id = localMixParameterId(pair.first);
+            const auto* p = target.parameters.getParameter(id);
+            check(p && p->getParameterIndex() == 944 + int(pair.first - 200), "Dry/Wet explicit index mapping changed");
+            check(std::abs(target.parameters.getRawParameterValue(id)->load() - pair.second) < .001f, "Dry/Wet independent balance recall failed");
+        }
+    };
+    verify(*owner);
+    juce::MemoryBlock saved; owner->getStateInformation(saved);
+    auto copy = std::make_unique<Processor>(); copy->setStateInformation(saved.getData(), int(saved.getSize())); verify(*copy);
+    check(copy->pasteSettings(owner->settingsText()), "Dry/Wet copy/paste failed"); verify(*copy);
+    TemporaryFolder files; PresetManager manager(*owner, files.root.getChildFile("drywet.settings"));
+    const auto text = manager.captureText("Dry/Wet instances");
+    check(owner->setRoutingGraph(defaultGraph(), error), "Dry/Wet preset fixture reset failed");
+    check(manager.loadText(text).wasOk(), "Dry/Wet preset recall failed"); verify(*owner);
+    // Legacy graph-only state seeds the existing mappings from node-authored balances.
+    auto legacy = juce::ValueTree::fromXml(*juce::parseXML(owner->settingsText()));
+    for (int i = legacy.getNumChildren(); --i >= 0;) {
+        const auto child = legacy.getChild(i);
+        if (child.hasType("PARAM") && child["id"].toString().startsWith("mix") && child["id"].toString().endsWith("Balance"))
+            legacy.removeChild(i, nullptr);
+    }
+    check(copy->pasteSettings(legacy.toXmlString()), "Dry/Wet legacy graph-only recall failed"); verify(*copy);
+    // Whole-plugin bypass remains latency-aligned dry, regardless of routed blends.
+    auto* bypass = owner->parameters.getParameter("bypass");
+    bypass->setValueNotifyingHost(1.f);
+    owner->prepareToPlay(48000, 127); owner->reset();
+    const int latency = owner->getLatencySamples();
+    juce::MidiBuffer midi;
+    for (int position = 0; position < latency + 800;) {
+        const int count = std::min(position % 2 ? 7 : 127, latency + 800 - position);
+        juce::AudioBuffer<float> audio(2, count); audio.clear();
+        if (!position) { audio.setSample(0, 0, .25f); audio.setSample(1, 0, -.125f); }
+        owner->processBlockBypassed(audio, midi);
+        for (int ch = 0; ch < 2; ++ch) for (int i = 0; i < count; ++i)
+            check(std::abs(audio.getSample(ch, i) - (position + i == latency ? (ch ? -.125f : .25f) : 0.f)) < 1.e-6f, "Dry/Wet graph broke full-plugin aligned bypass");
+        position += count;
+    }
+}
 } // namespace
 int main() {
     juce::ScopedJuceInitialiser_GUI juce;
     try {
-        codec(); processorRecall(); presets();
+        dryWetRecall(); codec(); processorRecall(); presets();
         std::cout << "Splitter state: codecs, legacy compatibility, host recall, unchanged parameters and preset validation passed\n";
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

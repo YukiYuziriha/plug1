@@ -52,8 +52,8 @@ struct Fixture {
         }
         owner.setRoutingLayout(layout);
         panel = std::make_unique<vocalstack::RoutingPanel>(owner);
-        panel->addToDesktop(0);
-        panel->setVisible(true);
+        vocalstack::guiTestDisplay::enumerate();
+        vocalstack::guiTestDisplay::attach(*panel);
     }
     juce::Component& canvas() { return *panel->getChildComponent(0); }
     juce::Point<float> point(std::uint32_t id, float dx, float dy) {

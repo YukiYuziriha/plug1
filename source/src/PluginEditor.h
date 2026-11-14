@@ -12,6 +12,20 @@
 
 namespace vocalstack {
 
+namespace editorLayout {
+constexpr int editorWidth = 940, editorHeight = 610, baseDrawerHeight = 442;
+constexpr int presetFooterHeight = 52;
+// Reserve only the growth beyond the original 12px voice scrollbar in the
+// scrollable design; saved/default window dimensions must not grow with it.
+constexpr int additionalVoiceScrollbarHeight = scrollbarMetrics::voiceStrip - 12;
+constexpr int drawerHeight = baseDrawerHeight + additionalVoiceScrollbarHeight;
+constexpr int rackExtraHeight = MainBusFxRackPanel::preferredHeight - 244;
+constexpr int stackPanelY = editorHeight + rackExtraHeight;
+constexpr int stackPanelHeight = drawerHeight - 12;
+constexpr int stackCanvasHeight = stackPanelY + stackPanelHeight + 12;
+constexpr int defaultWindowHeight = editorHeight + baseDrawerHeight + presetFooterHeight;
+}
+
 class Editor final : public juce::AudioProcessorEditor, private juce::Timer {
 public:
     explicit Editor(Processor&);
@@ -24,7 +38,7 @@ private:
     public:
         bool flash = false;
         ButtonFluidBackground buttonBackground;
-        FluidBackground arcTexture;
+        FluidBackground arcTexture{FluidBackground::Material::control};
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
             auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
             label->setFont(juce::Font(pixelFontOptions(14.f)));
@@ -58,10 +72,12 @@ private:
         void paint(juce::Graphics& g) override { if (draw) draw(g); }
     };
     LayoutCanvas layoutCanvas;
-    FluidBackground rootBackground, canvasBackground;
+    FluidBackground rootBackground, canvasBackground, headerBackground, plateSurround;
     std::array<FluidBackground, 4> controlBackgrounds;
-    double animationSeconds = 0.0;
-    double lastVisibleTick = -1.0;
+    DecorativeMotion decorativeMotion;
+    ModulationSlider motion;
+    ParameterKnob::Style motionStyle;
+
     double lastBackgroundFrame = -1.0;
     PassiveViewport stackViewport;
 

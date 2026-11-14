@@ -56,6 +56,19 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
     private:
         bool editing = false;
     };
+    class SpaceChoice final : public modulationui::ComboBox {
+    public:
+        void resized() override {
+            modulationui::ComboBox::resized();
+            for (auto* child : getChildren()) if (auto* text = dynamic_cast<juce::Label*>(child)) {
+                text->setFont(juce::Font(pixelFontOptions(12.f))); text->setMinimumHorizontalScale(1.f);
+            }
+        }
+        void lookAndFeelChanged() override {
+            modulationui::ComboBox::lookAndFeelChanged();
+            detail::passiveControl(*this);
+        }
+    };
     struct Row final : juce::Component {
         Row(Processor& owner, const juce::String& id, const juce::String& name,
             const juce::String& tooltip, const char* unit, bool discrete) {
@@ -66,7 +79,13 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             label.setMinimumHorizontalScale(1.f);
             label.setInterceptsMouseClicks(false, false);
             addAndMakeVisible(label);
-            if (discrete) {
+            if (id.endsWith("convolution_space")) {
+                for (int s = 0; s < 4; ++s) space.addItem(juce::String(FactoryConvolution::names[size_t(s)]) + " (synthetic)", s + 1);
+                space.setComponentID(id); space.setTooltip("Original synthetic stereo IRs, not measured venues. Selection crossfades preprepared convolution kernels.");
+                space.setModulationOwner(owner); space.setScrollWheelEnabled(false); spaceChoice = true;
+                addAndMakeVisible(space);
+                space.setSelectedId(1 + int(owner.parameters.getRawParameterValue(id)->load()), juce::dontSendNotification);
+            } else if (discrete) {
                 toggle.owner = &owner; toggle.setModulationOwner(owner);
                 toggle.setComponentID(id); toggle.setButtonText(name);
                 toggle.setClickingTogglesState(true); toggle.setTooltip(tooltip);
@@ -118,17 +137,38 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             const bool textured = slider.getSliderStyle() == juce::Slider::LinearHorizontal
                 && bool(slider.getProperties()["vocalstackTexturedBar"]);
             label.setVisible(!buttonLink && !textured);
-            if (!textured) label.setBounds(area.removeFromBottom(28));
+            const bool inspectorRotary = inspectorLayout && sliderLink && !textured;
+            slider.getProperties().set("vocalstackInspectorRotary", inspectorRotary);
+            if (!textured) label.setBounds(area.removeFromBottom(inspectorRotary ? captionHeight(getWidth()) : 28));
             slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, juce::jmin(82, area.getWidth()), 20);
             slider.setBounds(area);
+            if (inspectorRotary) for (auto* child : slider.getChildren())
+                if (auto* value = dynamic_cast<juce::Label*>(child)) value->setMinimumHorizontalScale(1.f);
+            space.setBounds(area.withSizeKeepingCentre(area.getWidth(), 28));
             // Keep two-state controls button-sized, rather than filling a knob cell.
-            toggle.setBounds(getLocalBounds().withSizeKeepingCentre(juce::jmin(58, getWidth()), 28));
+            toggle.setBounds(getLocalBounds().withSizeKeepingCentre(juce::jmin(toggle.getComponentID().endsWith("saturator_level_match") ? 90 : 58, getWidth()), 28));
         }
-        int preferredWidth() const { return buttonLink ? 60 : 68; }
-        bool textEditing = false;
+        int captionHeight(int width) const {
+            juce::AttributedString text; text.append(label.getText(), label.getFont());
+            juce::TextLayout layout;
+            layout.createLayout(text, float(juce::jmax(1, width - 10)));
+            return juce::jmax(16, int(std::ceil(layout.getHeight())) + 2);
+        }
+        int inspectorHeight(int width) const {
+            if (spaceChoice) return 60;
+            if (buttonLink) return 44;
+            return 20 + juce::jmin(96, juce::jmax(1, width - 2)) + captionHeight(width);
+        }
+        int preferredWidth() const {
+            if (spaceChoice) return 200;
+            if (buttonLink) return toggle.getComponentID().endsWith("saturator_level_match") ? 92 : 60;
+            return slider.getComponentID().endsWith("convolution_brightness") ? 88 : 68;
+        }
+        bool textEditing = false, inspectorLayout = false;
         void setNeon(bool neon) {
             const auto palette = themePalette(*this, neon);
             const auto accent = palette.accent;
+            modulationui::styleCombo(space, palette);
             label.setColour(juce::Label::textColourId, palette.text);
             slider.setColour(juce::Slider::trackColourId, accent);
             slider.setColour(juce::Slider::thumbColourId, palette.text);
@@ -144,6 +184,8 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
         juce::Label label;
         Slider slider;
         Toggle toggle;
+        SpaceChoice space;
+        bool spaceChoice = false;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sliderLink;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> buttonLink;
     };
@@ -200,6 +242,8 @@ public:
             case CreativeKind::compressor: return "Compressor";
             case CreativeKind::bitcrusher: return "Bitcrusher";
             case CreativeKind::granular: return "Granular";
+            case CreativeKind::convolution: return "Convolution";
+            case CreativeKind::saturator: return "Saturator";
         }
         return {};
     }
@@ -209,6 +253,8 @@ public:
             case CreativeKind::reverb: return "Shape early reflections, tail length and tone in a diffuse stereo space. Ducking keeps the tail behind the vocal.\nFreeze holds the tail; Mix blends dry and wet.";
             case CreativeKind::compressor: return "Stereo-linked compression with a soft knee and filtered level detector.\nMakeup is manual output gain. Mix blends dry and compressed audio for parallel compression.";
             case CreativeKind::bitcrusher: return "Reduce bit depth and sample rate for digital texture. Drive colours the input; dither decorrelates quantization distortion.\nFilter the output, then blend with Mix.";
+            case CreativeKind::convolution: return "Original synthetic stereo IR spaces, not measured venues. Church 3.2 s, Hall 2.1 s, Room 0.65 s, Plate 1.5 s.\nBrightness tilts wet tone; Tail tapers decay (100% = full IR). Zero added integer latency. Factory IRs only.";
+            case CreativeKind::saturator: return "Focused warm saturation. Character shapes asymmetry; Tone tilts the wet output. Fixed 2x IIR oversampling + ADAA reduces, not eliminates, aliasing.\nLevel match is a bounded RMS audition aid before Tone, not a limiter or LUFS match. Parallel paths can change phase.";
             case CreativeKind::granular: return "Layer grains from recent audio. Shape grain length, density, pitch and stereo spread; add timing scatter.\nFreeze holds captured audio, not grain playback. The graph is a stable parameter guide, not live audio.";
         }
         return {};
@@ -224,6 +270,11 @@ public:
         }
         repaint();
     }
+    void setInspectorLayout(bool enabled) {
+        inspectorLayout = enabled;
+        for (auto& group : groups) for (auto& row : group.rows) row->inspectorLayout = enabled;
+        resized();
+    }
     void revealParameter(const juce::String& id) {
         for (auto& group : groups) for (auto& row : group.rows)
             if (row->slider.getComponentID() == id || row->toggle.getComponentID() == id)
@@ -231,7 +282,8 @@ public:
     }
     void paint(juce::Graphics& g) override {
         const auto palette = themePalette(*this, neon);
-        background.paint(g, getLocalBounds(), palette.panel, palette.accent, fluidAnimationSeconds(*this));
+        background.paint(g, {0, -viewport.getViewPositionY(), content.getWidth(), content.getHeight()},
+                         palette.panel, palette.accent, fluidAnimationSeconds(*this));
     }
     void resized() override {
         const juce::ScopedValueSetter<bool> guard(layingOut, true);
@@ -258,19 +310,58 @@ public:
         const int controlsWidth = split ? juce::jmax(1, width - controlsX - 8) : innerWidth;
         int y = split ? 8 : visualBottom;
         for (auto& group : groups) {
+            const auto visibleCount = std::count_if(group.rows.begin(), group.rows.end(), [](const auto& row) { return row->isVisible(); });
+            const bool sparse = visibleCount > 0 && visibleCount <= 2;
+            for (auto& row : group.rows) if (row->sliderLink) {
+                row->slider.getProperties().set("vocalstackTexturedBar", sparse);
+                row->slider.setSliderStyle(sparse ? juce::Slider::LinearHorizontal : juce::Slider::RotaryHorizontalVerticalDrag);
+            }
             group.heading->setBounds(controlsX, y, controlsWidth, 20);
             y += 22;
-            if (&group == &groups.front()) {
+            if (sparse) {
                 // The style overlays the editable value and name inside the track.
                 constexpr int mixHeight = 44;
-                group.rows.front()->setBounds(controlsX, y, controlsWidth, mixHeight);
-                y += mixHeight + 6;
+                for (auto& row : group.rows) if (row->isVisible()) {
+                    row->setBounds(controlsX, y, controlsWidth, row->spaceChoice ? 60 : mixHeight);
+                    y += row->getHeight() + 6;
+                }
+                continue;
+            }
+            if (inspectorLayout) {
+                // Pack by readable minimum widths, then share leftover width within
+                // each line. Cap short final lines rather than creating huge dials.
+                std::vector<Row*> line;
+                int used = 0;
+                const auto flush = [&] {
+                    if (line.empty()) return;
+                    int extra = juce::jmax(0, controlsWidth - used);
+                    int x = 0, height = 0;
+                    int rotaryCount = int(std::count_if(line.begin(), line.end(), [](auto* row) { return row->sliderLink != nullptr; }));
+                    for (auto* row : line) {
+                        int cellWidth = juce::jmin(controlsWidth, row->sliderLink ? 88 : row->preferredWidth());
+                        if (row->sliderLink) {
+                            const int growth = juce::jmin(110 - cellWidth, extra / juce::jmax(1, rotaryCount--));
+                            cellWidth += growth; extra -= growth;
+                        }
+                        const int cellHeight = row->inspectorHeight(cellWidth);
+                        row->setBounds(controlsX + x, y, cellWidth, cellHeight);
+                        x += cellWidth + 2; height = juce::jmax(height, cellHeight);
+                    }
+                    y += height + 2; line.clear(); used = 0;
+                };
+                for (auto& row : group.rows) if (row->isVisible()) {
+                    const int minimum = juce::jmin(controlsWidth, row->sliderLink ? 88 : row->preferredWidth());
+                    if (!line.empty() && used + 2 + minimum > controlsWidth) flush();
+                    used += (line.empty() ? 0 : 2) + minimum;
+                    line.push_back(row.get());
+                }
+                flush(); y += 4;
                 continue;
             }
             int x = 0, lineHeight = 0;
             for (auto& row : group.rows) {
                 const int cellWidth = juce::jmin(controlsWidth, row->preferredWidth());
-                const int cellHeight = row->buttonLink ? 44 : 100;
+                const int cellHeight = row->spaceChoice ? 60 : row->buttonLink ? 44 : 100;
                 if (x > 0 && x + cellWidth > controlsWidth) {
                     y += lineHeight + 2; x = 0; lineHeight = 0;
                 }
@@ -286,6 +377,7 @@ public:
         viewport.setViewPosition(0, scrollAnchor ? scrollAnchor->getY() + scrollOffset : scrollY);
     }
 private:
+    bool inspectorLayout = false;
     class InspectorViewport final : public PassiveViewport {
     public:
         std::function<void()> onScroll;
@@ -315,10 +407,23 @@ private:
         row->slider.beginEdit = begin; row->slider.endEdit = end;
         row->slider.onValueChange = [this] { if (onValueChanged) onValueChanged(); };
         row->toggle.beginEdit = begin; row->toggle.endEdit = end;
+        if (row->spaceChoice) {
+            auto* choice = &row->space;
+            row->space.onChange = [this, id, choice, begin, end] {
+                begin();
+                if (auto* p = owner.parameters.getParameter(id)) {
+                    p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1(float(choice->getSelectedId() - 1))); p->endChangeGesture();
+                }
+                if (onValueChanged) onValueChanged(); end();
+            };
+        }
         content.addAndMakeVisible(*row); groups.back().rows.push_back(std::move(row));
     }
     static const char* groupFor(CreativeParameter p) {
         using P = CreativeParameter;
+        if (p == P::convolutionSpace) return "FACTORY IR";
+        if (p >= P::convolutionBrightness && p <= P::convolutionOutput) return "WET SHAPING";
+        if (p >= P::saturatorDrive) return "SATURATION | 2x + ADAA";
         if (p == P::reverbPitch || p == P::reverbPitchAmount || p == P::reverbSwell) return "PITCH & SWELL";
         if (p <= P::delayPingPong) return "TIMING & REPEATS";
         if (p <= P::delayPitch) return "COLOUR & DUCKING";
@@ -334,6 +439,10 @@ private:
     static juce::String parameterTip(CreativeParameter p) {
         using P = CreativeParameter;
         switch (p) {
+            case P::convolutionBrightness: return "Smoothed wet-only tilt around 1 kHz: opposite low/high gains, not feedback damping.";
+            case P::convolutionTail: return "Additional exponential decay taper, approximated at FFT partition centres. 100% retains the full factory IR; does not stretch time or extend the IR.";
+            case P::saturatorCharacter: return "Continuous warm asymmetric transfer shape using the existing Waveshaper antiderivative anti-aliasing at fixed 2x oversampling.";
+            case P::saturatorLevelMatch: return "Bounded smoothed RMS matching before Tone and manual Output; not perceptual loudness matching or peak protection.";
             case P::delaySync: return "Use host tempo and the Beats control instead of milliseconds.";
             case P::delayBeats: return "Quarter-note multiples: 0.25 = sixteenth, 0.5 = eighth, 0.75 = dotted eighth, 1 = quarter. Long times are limited to the delay buffer.";
             case P::delayTime: return "Free-running repeat interval in milliseconds; inactive when Tempo sync is on.";
@@ -360,6 +469,9 @@ private:
     }
     void updateState() {
         visual.refresh();
+        if (kind == CreativeKind::convolution)
+            for (auto& group : groups) for (auto& row : group.rows) if (row->spaceChoice)
+                row->space.setSelectedId(1 + int(owner.parameters.getRawParameterValue(creativeParameterId(slot, size_t(CreativeParameter::convolutionSpace)))->load()), juce::dontSendNotification);
         if (kind == CreativeKind::delay) {
             // Control dependencies must update even when the visual is scrolled
             // out of view. Keep its heavy model/animation refresh visibility-gated.

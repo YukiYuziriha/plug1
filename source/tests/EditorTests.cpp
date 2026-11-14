@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
 #include "MeterPanel.h"
 #include "DoublerPanel.h"
 #include "RoutingPanel.h"
@@ -17,6 +18,18 @@
 #include "CreativePanelLayoutTests.h"
 #include "FluidBackgroundTests.h"
 #include "RackUndoIntegrationTests.h"
+#include "FactoryFxUiTests.h"
+#include "CoordinatedPreviewTests.h"
+#include "InspectorControlLayoutTests.h"
+#include "ScrollbarTests.h"
+#if JUCE_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#undef near
+#undef far
+#endif
 
 #include <algorithm>
 #include <array>
@@ -65,11 +78,12 @@ void advancedParameterContract() {
     Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 2087, "Expected 1007 preserved + 765 creative + 315 utility parameters");
+    expect(owner.getParameters().size() == 2252, "Expected 2087 preserved + 165 new effect parameters");
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
             const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
-                                                  : 1727 + (slot - 1) * 3 + field - 48;
+                                                  : field < 51 ? 1727 + (slot - 1) * 3 + field - 48
+                                                                                                                 : 2087 + (slot - 1) * 11 + field - 51;
             expect(vocalstack::creativeParameterIndex(slot, field) == expectedIndex,
                    "Creative append-only mapping changed");
             expect(parameter(owner, vocalstack::creativeParameterId(slot, field)).getParameterIndex() == int(expectedIndex),
@@ -511,7 +525,8 @@ void checkDrawerControls(Processor& owner, juce::Component& parent, int& sliders
         if (auto* slider = dynamic_cast<juce::Slider*>(child)) {
             ++sliders;
             const auto id = slider->getComponentID();
-            const bool linear = stackSliders || id.endsWith("Mix");
+            const bool linear = stackSliders || id.endsWith("Mix") || id == "choraleMotion"
+                            || (id.startsWith("fx") && id.endsWith("Motion"));
             expect(slider->getSliderStyle() == (linear ? juce::Slider::LinearHorizontal
                                                       : juce::Slider::RotaryHorizontalVerticalDrag),
                    "Stack voice controls and standalone FX Mix use horizontal sliders");
@@ -613,6 +628,7 @@ void editorSkin(int theme) {
     owner.setSkin(theme);
     const juce::String skin = theme == 2 ? "Spectral" : theme == 1 ? "Neon" : "Device";
     const auto filename = "editor-" + skin.toLowerCase();
+    std::cout << skin << " editor snapshots: OFFSCREEN, no native peer or physical monitor placement\n";
     std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
     expect(editor != nullptr, skin + " editor creation failed");
     editor->setVisible(true);
@@ -635,6 +651,12 @@ void editorSkin(int theme) {
         });
         if (!slider) slider = dynamic_cast<juce::Slider*>(child);
         if (slider) {
+            if (slider->getComponentID() == "decorativeMotion") {
+                expect(slider->getName() == "Motion" && slider->getSliderStyle() == juce::Slider::LinearHorizontal,
+                       skin + " Motion presentation slider missing");
+                controls.push_back(child);
+                continue;
+            }
             ++sliderCount;
             bool recognised = false;
             for (size_t index = 0; index < names.size(); ++index) {
@@ -700,10 +722,17 @@ void editorSkin(int theme) {
         expect(findButton(*editor, obsolete) == nullptr, "Obsolete Stack action remains: " + juce::String(obsolete));
     expect(!owner.settings().advanced, "Always-visible Stack changed legacy activation");
     // Stack preserves native control sizes and scrolls vertically below the FX row.
-    expect(editor->isResizable() && windowHeight == 1104 && windowWidth == 940,
-           "Fresh editor must be resizable at 940x1104, including the 52px preset footer");
-    expect(canvas.getBounds() == juce::Rectangle<int>(0, 0, 940, 1148) && canvas.getTransform().isIdentity(),
-           "Fresh Stack must use its fixed unscaled 940x1148 design");
+    static_assert(vocalstack::editorLayout::defaultWindowHeight == 1104);
+    static_assert(vocalstack::editorLayout::additionalVoiceScrollbarHeight == 10);
+    static_assert(vocalstack::editorLayout::stackCanvasHeight == 1148 + 10);
+    expect(editor->isResizable() && windowHeight == vocalstack::editorLayout::defaultWindowHeight
+               && windowWidth == vocalstack::editorLayout::editorWidth,
+           "Fresh editor must remain resizable at 940x1104, including the 52px preset footer");
+    expect(canvas.getBounds() == juce::Rectangle<int>(0, 0, vocalstack::editorLayout::editorWidth,
+                                                      vocalstack::editorLayout::stackCanvasHeight)
+               && canvas.getTransform().isIdentity(),
+           "Fresh Stack must retain its unscaled design plus the voice scrollbar growth");
+
     int advancedSliders = 0, advancedButtons = 0, choraleSliders = 0, choraleButtons = 0;
     for (auto* child : canvas.getChildren()) {
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
@@ -713,7 +742,8 @@ void editorSkin(int theme) {
     expect(rack && rack->isVisible() && rack->getBounds() == juce::Rectangle<int>(18, 344, 904, 340),
            "Stack must retain the 904x340 horizontal Main Bus FX row below the main controls");
     auto* freshStack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(canvas, [](auto&) { return true; });
-    expect(freshStack && freshStack->getBounds() == juce::Rectangle<int>(18, 706, 904, 430)
+    expect(freshStack && freshStack->getBounds() == juce::Rectangle<int>(18, vocalstack::editorLayout::stackPanelY, 904,
+                                                                        vocalstack::editorLayout::stackPanelHeight)
                && canvas.getLocalBounds().contains(freshStack->getBounds())
                && !rack->getBounds().intersects(freshStack->getBounds()),
            "The rack must not overlap or clip the full Stack panel at its new 706px origin");
@@ -764,12 +794,16 @@ void editorSkin(int theme) {
     owner.setAdvancedVisible(false);
     juce::Timer::callPendingTimersSynchronously();
     auto* stack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(*editor, [](auto&) { return true; });
-    expect(stack && stack->isVisible() && canvas.getHeight() == 1148 && owner.settings().advanced,
+    expect(stack && stack->isVisible() && canvas.getHeight() == vocalstack::editorLayout::stackCanvasHeight && owner.settings().advanced,
            "Legacy visibility state hid Stack or changed activation");
     editor.reset();
+    const auto savedWindow = owner.getRoutingLayout();
+    expect(int(savedWindow.getProperty("editorWidth")) == windowWidth &&
+           int(savedWindow.getProperty("editorHeight")) == windowHeight,
+           "Scrollable canvas growth changed saved/default window dimensions");
     editor.reset(owner.createEditor());
     stack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(*editor, [](auto&) { return true; });
-    expect(editor->getHeight() == windowHeight && stack && stack->isVisible(),
+    expect(editor->getWidth() == windowWidth && editor->getHeight() == windowHeight && stack && stack->isVisible(),
            "Editor reopen lost dimensions or always-visible Stack");
     expectPassiveControls(*editor);
 }
@@ -778,6 +812,8 @@ void editorSkin(int theme) {
 #include "RoutingPolishTests.h"
 #include "StackModulationUiTests.h"
 #include "RoutingExpansionTests.h"
+#include "DryWetUiTests.h"
+#include "RoutingChunkyTests.h"
 
 void deviceEditor() { editorSkin(0); }
 void neonEditor() { editorSkin(1); }
@@ -786,6 +822,30 @@ void spectralEditor() { editorSkin(2); }
 
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI gui;
+    if (argc == 2 && juce::String(argv[1]) == "--render-routing-chunky") {
+        try { routingChunky::screenshots(); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Routing render: " << error.what() << '\n'; return 1; }
+    }
+    if (argc == 2 && juce::String(argv[1]) == "--render-scrollbars") {
+        try { vocalstack::scrollbarTests::screenshots(); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Scrollbar render: " << error.what() << '\n'; return 1; }
+    }
+    if (argc == 2 && juce::String(argv[1]) == "--render-inspector-controls") {
+        try { vocalstack::inspectorControlLayoutTests::screenshots(); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Inspector render: " << error.what() << '\n'; return 1; }
+    }
+    if (argc == 2 && juce::String(argv[1]) == "--render-drywet") {
+        try { dryWetUi::screenshots(); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Dry/Wet render: " << error.what() << '\n'; return 1; }
+    }
+    if (argc == 2 && juce::String(argv[1]) == "--render-coordinated") {
+        try { vocalstack::coordinatedPreviewTests::screenshots(); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Coordinated preview render: " << error.what() << '\n'; return 1; }
+    }
+    if (argc == 2 && juce::String(argv[1]) == "--render-factoryfx") {
+        try { vocalstack::factoryFxUiTests::screenshots(); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Factory FX render: " << error.what() << '\n'; return 1; }
+    }
     if (argc == 2 && juce::String(argv[1]) == "--render") {
         try {
             vocalstack::updateUiTests::screenshots();
@@ -816,7 +876,10 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 68> tests{{
+    const std::array<Test, 75> tests{{
+            {"Scrollbar thickness, nested axes, confinement and dense inspectors", vocalstack::scrollbarTests::run},
+            {"Dry/Wet repeated Add, Duplicate, independent controls and history", dryWetUi::run},
+        {"Coordinated Motion, sparse groups and real factory FX telemetry", vocalstack::coordinatedPreviewTests::run},
         {"Advanced and Chorale host contract", advancedParameterContract},
         {"Advanced activation and isolated reset", advancedActivationAndReset},
         {"Advanced and Chorale state", advancedStateRoundTrips},
@@ -830,6 +893,8 @@ int main(int argc, char** argv) {
         {"Fresh voices, stable identity and reset", voiceLifecycle},
         {"Legacy four-voice migration including mute", legacyFourVoiceMigration},
         {"Musical pitch host bridge", musicalPitchParameters},
+        {"Routing square chunky chrome, pin corners and all effect cards", routingChunky::run},
+        {"Routing inspector useful dial area, text lanes and narrow reflow", vocalstack::inspectorControlLayoutTests::run},
         {"Routing drafts, active fallback and layout state", routingStateRegression},
         {"Fixed FX automation slots", fxAutomationRegression},
         {"Tone FX parameters, recall and rendered automation", vocalstack::toneProcessorTests::run},
@@ -841,8 +906,10 @@ int main(int argc, char** argv) {
         {"Utility processor, append-only parameters, state and audio", [] {
             expect(vocalstack::utilityIntegrationTests::run(), "Utility integration group failed; see named failures above");
         }},
+        {"Factory convolution and saturator state, processor, layout and focus", vocalstack::factoryFxUiTests::run},
         {"Three-theme state, legacy migration and preset isolation", vocalstack::updateUiTests::themeState},
         {"All utility inspectors in all three themes", vocalstack::updateUiTests::utilityInspectors},
+        {"Square chrome and zero Lead badges in all themes", vocalstack::updateUiTests::squareChromeAndBadges},
                 {"Responsive Creative controls, compact switches and scroll anchors", vocalstack::creativePanelLayoutTests::run},
         {"Half-speed relative sliders across sizes, skew and themes", vocalstack::updateUiTests::halfSpeedSliders},
         {"Slider selection, feedback, alignment, sensitivity and knob modes", vocalstack::sliderRenderingTests::run},

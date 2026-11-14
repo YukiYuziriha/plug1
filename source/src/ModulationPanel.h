@@ -28,7 +28,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             const auto palette = themePalette(*this);
             const bool device = componentTheme(*this) == Theme::device;
             g.setColour(device ? juce::Colour(0xff171f2b) : palette.inset);
-            g.fillRoundedRectangle(a, device ? 4.0f : 0.0f);
+            g.fillRect(a);
             g.setColour(device ? juce::Colour(0xff46515b) : palette.border);
             g.drawHorizontalLine(int(a.getCentreY()), a.getX(), a.getRight());
             juce::Path p;
@@ -201,6 +201,8 @@ public:
         content.addAndMakeVisible(title);
         content.addAndMakeVisible(message); message.setJustificationType(juce::Justification::topLeft);
         rowsViewport.setViewedComponent(&rowsArea, false); rowsViewport.setScrollBarsShown(false, true); content.addAndMakeVisible(rowsViewport);
+        rowsViewport.setScrollBarThickness(scrollbarMetrics::standard);
+        contentViewport.setScrollBarThickness(scrollbarMetrics::standard);
         contentViewport.setViewedComponent(&content, false);
         contentViewport.setScrollBarsShown(true, true);
         juce::Component::addAndMakeVisible(contentViewport);

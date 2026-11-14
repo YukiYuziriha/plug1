@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.9.10 LANGUAGES C CXX)
+project(VocalStack VERSION 1.10.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -60,10 +60,20 @@ if(VOCALSTACK_BUILD_PLUGIN)
         CLAP_ID "audio.vocalstack.effect"
         CLAP_FEATURES audio-effect pitch-shifter utility stereo mono
         CLAP_PROCESS_EVENTS_RESOLUTION_SAMPLES 1)
+    if(WIN32)
+        # JUCE 8.0.12 omits this input dependency, leaving PE versions stale on incremental builds.
+        set(vocalstack_version_info "${CMAKE_CURRENT_BINARY_DIR}/VocalStack_artefacts/JuceLibraryCode")
+        add_custom_command(OUTPUT "${vocalstack_version_info}/VocalStack_resources.rc"
+            APPEND DEPENDS "${vocalstack_version_info}/Info.txt")
+        target_sources(VocalStack_CLAP PRIVATE $<TARGET_OBJECTS:VocalStack_rc_lib>)
+    endif()
 endif()
 
 if(VOCALSTACK_BUILD_TESTS)
     enable_testing()
+    add_executable(vocalstack_factoryfx_tests tests/FactoryFxTests.cpp)
+    target_include_directories(vocalstack_factoryfx_tests PRIVATE src)
+    add_test(NAME VocalStackFactoryFx COMMAND vocalstack_factoryfx_tests)
     add_executable(vocalstack_creative_tests tests/CreativeEffectsTests.cpp)
     target_include_directories(vocalstack_creative_tests PRIVATE src)
     add_test(NAME VocalStackCreative COMMAND vocalstack_creative_tests)
@@ -109,6 +119,7 @@ if(VOCALSTACK_BUILD_TESTS)
     endif()
     if(VOCALSTACK_BUILD_PLUGIN)
         add_executable(vocalstack_clap_smoke tests/ClapSmoke.cpp)
+        target_compile_definitions(vocalstack_clap_smoke PRIVATE VOCALSTACK_EXPECTED_VERSION="${PROJECT_VERSION}")
         target_link_libraries(vocalstack_clap_smoke PRIVATE clap-core ${CMAKE_DL_LIBS})
         add_test(NAME VocalStackCLAP COMMAND vocalstack_clap_smoke $<TARGET_FILE:VocalStack_CLAP>)
 
@@ -152,7 +163,7 @@ if(VOCALSTACK_BUILD_TESTS)
         target_sources(VocalStackFactoryPresetAudioTests PRIVATE tests/FactoryPresetAudioTests.cpp)
         target_link_libraries(VocalStackFactoryPresetAudioTests PRIVATE VocalStack vocalstack_dsp
             juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
-        foreach(preset RANGE 0 7)
+        foreach(preset RANGE 0 9)
             add_test(NAME VocalStackFactoryPresetAudio${preset} COMMAND VocalStackFactoryPresetAudioTests ${preset})
         endforeach()
 

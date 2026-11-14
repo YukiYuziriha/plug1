@@ -4,3 +4,5 @@ ThirdParty/Vital/src/** -text -whitespace
 ThirdParty/Vital/reference/Upstream.h -whitespace
 ThirdParty/Vital/LICENSE -text
 ThirdParty/Vital/UPSTREAM_README.md -text
+# Preserve verbatim legal notices and pinned source in the Windows package.
+Windows-x64/ThirdParty/** -text -whitespace

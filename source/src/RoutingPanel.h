@@ -11,8 +11,17 @@
 
 namespace vocalstack {
 
+namespace routingCableStyle {
+// Absolute screen-pixel widths: exactly twice the 2 / 3.5 px preview baseline.
+constexpr float normal = 4.0f, selected = 7.0f, hit = 12.0f;
+inline juce::PathStrokeType stroke(bool isSelected = false) {
+    return {isSelected ? selected : normal, juce::PathStrokeType::mitered, juce::PathStrokeType::butt};
+}
+}
+
 // Header-only presentation. The processor owns the accepted graph and publication.
 class RoutingPanel final : public juce::Component, private juce::Timer {
+    PixelLookAndFeel routingStyle;
     struct EditState {
         Graph graph;
         juce::ValueTree layout;
@@ -67,6 +76,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
                 addKnob(fxParameterId(size_t(slot), "Motion"), "Motion", "%");
             } else if (slot > 0 && isCreativeEffect(n.type)) {
                 creative = std::make_unique<CreativeEffectPanel>(panel.owner, size_t(slot), creativeKind(n.type));
+                creative->setInspectorLayout(true);
                 panel.bindCardEdits(*creative, slot, false, editing); addAndMakeVisible(*creative);
             } else if (slot > 0 && isUtilityEffect(n.type)) {
                 utility = std::make_unique<UtilityEffectPanel>(panel.owner, size_t(slot), utilityKind(n.type));
@@ -111,9 +121,12 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             if (tone) tone->setBounds(body);
             if (creative) creative->setBounds(body);
             if (utility) utility->setBounds(body);
-            const int width = juce::jmin(140, body.getWidth() / juce::jmax(1, int(knobs.size())));
-            for (size_t i = 0; i < knobs.size(); ++i) knobs[i]->setBounds(body.getX() + int(i) * width, body.getY(), width, juce::jmin(110, body.getHeight()));
-            localMix.setBounds(body.withWidth(140).withHeight(110));
+            const int width = body.getWidth() / juce::jmax(1, int(knobs.size()));
+            for (size_t i = 0; i < knobs.size(); ++i) {
+                if (model.type == NodeType::chorale || (model.type == NodeType::mix && !model.mainControls)) knobs[i]->setBounds(body.getX(), body.getY() + int(i) * 46, body.getWidth(), 44);
+                else knobs[i]->setBounds(body.getX() + int(i) * width, body.getY(), width, body.getHeight());
+            }
+            localMix.setBounds(body);
         }
         void setNeon(bool neon) {
             if (voice) voice->setNeon(neon);
@@ -143,7 +156,11 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         bool matches(const RoutingNode& n) const { return model.type == n.type && model.voiceSlot == n.voiceSlot && model.mainControls == n.mainControls; }
     private:
         void addKnob(const juce::String& id, const juce::String& label, const char* unit) {
-            knobs.push_back(std::make_unique<ParameterKnob>(panel.owner, id, label, unit)); addAndMakeVisible(*knobs.back());
+            knobs.push_back(std::make_unique<ParameterKnob>(panel.owner, id, label, unit));
+            if (model.type == NodeType::chorale || (model.type == NodeType::mix && !model.mainControls)) knobs.back()->setLinear(true);
+                        if (model.type == NodeType::mix && !model.mainControls)
+                            knobs.back()->slider.setTooltip("Blend Dry and Wet inputs: 0% Dry, 100% Wet; 50% is half of each.");
+            addAndMakeVisible(*knobs.back());
         }
         RoutingPanel& panel;
         RoutingNode model;
@@ -242,8 +259,9 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         void paintButton(juce::Graphics& g, bool hovered, bool down) override {
             auto bounds = getLocalBounds().toFloat().reduced(1);
             const auto accent = findColour(juce::TextButton::buttonOnColourId);
-            g.setColour(findColour(juce::TextButton::buttonColourId).brighter(hovered || down ? .15f : 0));
-            g.fillRect(bounds);
+            tileMaterial.paint(g, bounds.toNearestInt(),
+                findColour(juce::TextButton::buttonColourId).brighter(hovered || down ? .15f : 0),
+                accent, fluidAnimationSeconds(*this), .35f, 24);
             g.setColour(getToggleState() ? accent : accent.withAlpha(.25f));
             g.drawRect(bounds, getToggleState() ? 2.0f : 1.0f);
             g.setColour(findColour(juce::TextButton::textColourOffId));
@@ -271,9 +289,11 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
                 g.drawLine(x, plot.getY(), x, plot.getBottom(), 1);
             }
         }
+        FluidBackground tileMaterial{FluidBackground::Material::control};
     };
 public:
     explicit RoutingPanel(Processor& processor) : canvas(*this), owner(processor), inspectorDivider(*this), modulationPanel(processor), modulationDivider(*this) {
+        setLookAndFeel(&routingStyle);
         setName("Audio routing canvas and inspector");
         addAndMakeVisible(canvas);
         addAndMakeVisible(inspector);
@@ -290,6 +310,8 @@ public:
         };
         addAndMakeVisible(status);
                 addAndMakeVisible(modulatorViewport); modulatorViewport.setViewedComponent(&modulatorStrip, false);
+                modulatorViewport.setScrollBarThickness(scrollbarMetrics::standard);
+                toneViewport.setScrollBarThickness(scrollbarMetrics::standard);
                 modulatorViewport.setScrollBarsShown(true, false);
                 addAndMakeVisible(addModulator); addModulator.setButtonText("+ Mod");
                 addModulator.onClick = [this] { showModulatorMenu(); };
@@ -367,6 +389,7 @@ public:
         }
         toneViewport.setViewedComponent(nullptr, false);
         modulatorViewport.setViewedComponent(nullptr, false); nodeValue.setLookAndFeel(nullptr);
+        setLookAndFeel(nullptr);
     }
     // Rack topology edits share Routing's history, including lifecycle parameter snapshots.
     bool commitExternalGraphEdit(const Graph& candidate, juce::String& rejectionReason) {
@@ -540,7 +563,7 @@ private:
         assignmentBanner.setButtonText(text); assignmentBanner.setVisible(text.isNotEmpty());
     }
     void showModulatorMenu() {
-        juce::PopupMenu menu; menu.addItem(1, "Classic LFO"); menu.addItem(2, "Random");
+        juce::PopupMenu menu; menu.setLookAndFeel(&getLookAndFeel()); menu.addItem(1, "Classic LFO"); menu.addItem(2, "Random");
         juce::Component::SafePointer<RoutingPanel> safe(this);
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(addModulator), [safe](int result) {
             if (!safe || result == 0) return;
@@ -668,6 +691,8 @@ private:
         case NodeType::compressor:
         case NodeType::bitcrusher:
         case NodeType::granular:
+        case NodeType::convolution:
+        case NodeType::saturator:
             return CreativeEffectPanel::effectName(creativeKind(n.type)).toUpperCase() + " " + juce::String(routingFxSlot(n.id));
         }
         return {};
@@ -843,7 +868,7 @@ private:
     }
     float bodyTop(const RoutingNode& n) const {
         const int rows = juce::jmax(inputs(n), outputPins(n) + (hasStoredPort(n) ? 1 : 0));
-        return float(juce::jmax(64, 40 + rows * 22) + 6);
+        return float(juce::jmax(64, 40 + rows * 22) + (isEffect(n.type) && !effectEnabled(n) ? 18 : 0) + 6);
     }
     juce::Point<int> bodySize(const RoutingNode& n) const {
         if (n.type == NodeType::voice || n.type == NodeType::lead) return {400, 258};
@@ -1019,16 +1044,21 @@ private:
     juce::Rectangle<float> nodeBounds(const RoutingNode& n) const {
         const auto it = positions.find(n.id);
         const auto p = it == positions.end() ? juce::Point<float>() : it->second;
-        const int rows = juce::jmax(inputs(n), outputPins(n) + (hasStoredPort(n) ? 1 : 0));
         if (isExpanded(n)) {
             const auto size = bodySize(n);
             return {p.x, p.y, float(size.x + 16), bodyTop(n) + float(size.y) + 8};
         }
-        return {p.x, p.y, 190.0f, float(juce::jmax(64, 40 + rows * 22))};
+        return {p.x, p.y, 190.0f, bodyTop(n) - 6};
     }
     juce::Point<float> pinPoint(const RoutingNode& n, int pin, bool output) const {
         const auto b = nodeBounds(n);
         return {output ? b.getRight() : b.getX(), b.getY() + 42 + float(pin * 22)};
+    }
+    bool pinHit(juce::Point<float> pin, juce::Point<float> point) const {
+        // Twice the painted pin at <=100%; cap at 20 screen pixels above
+        // that so adjacent port targets remain disjoint at every zoom.
+        const float half = 10 * juce::jmin(1.0f, zoom);
+        return juce::Rectangle<float>(pin.x - half, pin.y - half, half * 2, half * 2).contains(point);
     }
     juce::Point<float> toScreen(juce::Point<float> p) const { return p * zoom + pan; }
     juce::Point<float> toWorld(juce::Point<float> p) const { return (p - pan) / zoom; }
@@ -1060,7 +1090,7 @@ private:
             const bool inactive = inactiveSource(l);
             g.setColour(int(i) == selectedLink ? palette.secondary : inactive ? palette.muted.withAlpha(0.5f) : accent.withAlpha(0.7f));
             const auto path = cable(pinPoint(*a, l.sourcePin, true), pinPoint(*b, l.inputPin, false));
-            const juce::PathStrokeType stroke(int(i) == selectedLink ? 3.5f : 2.0f);
+            const auto stroke = routingCableStyle::stroke(int(i) == selectedLink);
             if (inactive) {
                 juce::Path dashed; const float lengths[]{5.0f, 4.0f};
                 stroke.createDashedStroke(dashed, path, lengths, 2);
@@ -1072,59 +1102,74 @@ private:
             if (displayLink(rewiringLink, item)) if (auto* target = node(item.link.destination)) {
                 const auto& link = item.link;
                 g.setColour(accent);
-                g.strokePath(cable(toWorld(pointer), pinPoint(*target, link.inputPin, false)), juce::PathStrokeType(2.0f));
+                g.strokePath(cable(toWorld(pointer), pinPoint(*target, link.inputPin, false)), routingCableStyle::stroke());
             }
         } else if (connecting) if (auto* n = node(connecting); n && nodeVisible(*n) && connectingPin < outputPins(*n)) {
-            g.setColour(accent); g.strokePath(cable(pinPoint(*n, connectingPin, true), toWorld(pointer)), juce::PathStrokeType(2.0f));
+            g.setColour(accent); g.strokePath(cable(pinPoint(*n, connectingPin, true), toWorld(pointer)), routingCableStyle::stroke());
         }
         for (const auto& n : graph.nodes) {
             if (!nodeVisible(n)) continue;
             const auto b = nodeBounds(n);
             const auto screen = juce::Rectangle<float>(toScreen(b.getTopLeft()), toScreen(b.getBottomRight()));
-            const auto nodeAccent = n.type == NodeType::voice ? VoiceMonitor::voiceColour(size_t(juce::jlimit(0, 7, n.voiceSlot))) : accent;
-            g.setColour(palette.panel);
-            g.fillRect(screen);
-            g.setColour(nodeAccent.withAlpha(0.08f));
-            g.fillRect(screen.withHeight(28 * zoom));
+            const auto nodeAccent = n.type == NodeType::voice
+                ? (componentTheme(*this) == Theme::device ? VoiceMonitor::voiceColour(size_t(juce::jlimit(0, 7, n.voiceSlot))) : palette.secondary)
+                : accent;
+            nodeMaterials[n.id].paint(g, screen.toNearestInt(), palette.panel, palette.accent,
+                                      fluidAnimationSeconds(canvas), .65f, 24);
+            juce::Graphics::ScopedSaveState chrome(g);
+            g.addTransform(juce::AffineTransform::scale(zoom).translated(screen.getX(), screen.getY()));
+            const auto face = juce::Rectangle<float>(0, 0, b.getWidth(), b.getHeight());
+            g.setColour(nodeAccent.withAlpha(0.14f));
+            g.fillRect(face.withHeight(30));
             g.setColour(n.id == selectedNode ? accent : palette.border);
-            g.drawRect(screen, n.id == selectedNode ? 2.0f : 1.0f);
-            g.setFont(juce::Font(pixelFontOptions(juce::jmax(9.0f, 11.5f * zoom))));
+            g.drawRect(face, n.id == selectedNode ? 3.0f : 2.0f);
+            g.setColour(nodeAccent.withAlpha(.55f));
+            g.fillRect(0.0f, 29.0f, face.getWidth(), 1.0f);
+            g.setFont(juce::Font(pixelFontOptions(14.0f)));
             g.setColour(palette.text);
-            auto heading = screen.toNearestInt().reduced(8, 0).withHeight(juce::roundToInt(28 * zoom));
+            auto heading = face.toNearestInt().reduced(6, 0).withHeight(30);
             if (expandable(n)) {
                 const auto button = expansionButton(n);
-                const auto r = juce::Rectangle<float>(toScreen(button.getTopLeft()), toScreen(button.getBottomRight()));
+                const auto r = button.translated(-b.getX(), -b.getY());
+                g.setColour(palette.inset);
+                g.fillRect(r);
+                g.setColour(nodeAccent);
+                g.drawRect(r, 1.0f);
                 g.drawText(isExpanded(n) ? "-" : "+", r, juce::Justification::centred);
-                heading = heading.withTrimmedRight(juce::roundToInt(26 * zoom));
+                heading = heading.withTrimmedRight(24);
             }
-            g.drawText(title(n), isEffect(n.type) && !effectEnabled(n) ? heading.withTrimmedRight(65) : heading,
-                       juce::Justification::centredLeft);
+            g.setColour(palette.text);
+            g.drawText(title(n), heading, juce::Justification::centredLeft);
+            g.setFont(juce::Font(pixelFontOptions(12.5f)));
             for (int pin = 0; pin < inputs(n); ++pin) {
-                const auto p = toScreen(pinPoint(n, pin, false));
+                const auto p = pinPoint(n, pin, false) - b.getTopLeft();
                 const int count = connectionCount(n.id, pin);
                 g.setColour(count > 0 ? accent : palette.muted);
-                // Pill-shaped inputs advertise fan-in, rather than a single-link socket.
-                g.fillRoundedRectangle(p.x - 4, p.y - 6, 8, 12, 4);
+                g.fillRect(p.x - 5, p.y - 5, 10.0f, 10.0f);
                 g.setColour(palette.muted);
                 const juce::String name = n.type == NodeType::mix ? (pin == 0 ? "Dry" : "Wet") : "In";
-                g.drawText(name + (count > 1 ? " x" + juce::String(count) : juce::String()), int(p.x + 9), int(p.y - 7), 70, 14, juce::Justification::centredLeft);
+                g.drawText(name + (count > 1 ? " x" + juce::String(count) : juce::String()), int(p.x + 9), int(p.y - 8), 64, 16, juce::Justification::centredLeft);
             }
             for (int pin = 0; pin < outputPins(n); ++pin) {
-                const auto p = toScreen(pinPoint(n, pin, true));
+                const auto p = pinPoint(n, pin, true) - b.getTopLeft();
                 const bool silent = n.type == NodeType::crossover && !effectEnabled(n) && pin > 0;
                 g.setColour(silent ? palette.muted : nodeAccent);
-                g.fillEllipse(p.x - 4, p.y - 4, 8, 8);
+                g.fillRect(p.x - 5, p.y - 5, 10.0f, 10.0f);
                 g.setColour(palette.muted);
-                g.drawText(outputName(n, pin), int(p.x - 105 * zoom), int(p.y - 7), int(96 * zoom), 14, juce::Justification::centredRight);
+                g.drawText(outputName(n, pin), int(p.x - 112), int(p.y - 8), 103, 16, juce::Justification::centredRight);
             }
             if (hasStoredPort(n)) {
-                const auto p = toScreen(pinPoint(n, 2, true));
+                const auto p = pinPoint(n, 2, true) - b.getTopLeft();
                 g.setColour(palette.muted);
-                g.drawText("Stored #2 | silent", int(p.x - 140 * zoom), int(p.y - 7), int(132 * zoom), 14, juce::Justification::centredRight);
+                g.drawText("Stored #2 | silent", int(p.x - 164), int(p.y - 8), 155, 16, juce::Justification::centredRight);
             }
             if (isEffect(n.type) && !effectEnabled(n)) {
-                g.setColour(palette.muted);
-                g.drawText("Bypassed", heading.removeFromRight(65), juce::Justification::centredRight);
+                // Keep status out of the title lane, even on compact long names.
+                const auto badge = juce::Rectangle<float>(face.getWidth() - 86, bodyTop(n) - 23, 80, 15);
+                g.setColour(palette.inset); g.fillRect(badge);
+                g.setColour(palette.muted); g.drawRect(badge, 1.0f);
+                g.setFont(juce::Font(pixelFontOptions(11.0f)));
+                g.drawText("Bypassed", badge, juce::Justification::centred);
             }
         }
     }
@@ -1139,7 +1184,7 @@ private:
             if (!displayLink(index, item)) return false;
             const auto& link = item.link;
             const auto* target = node(sourceEnd ? link.source : link.destination);
-            if (!target || toScreen(pinPoint(*target, sourceEnd ? link.sourcePin : link.inputPin, sourceEnd)).getDistanceFrom(e.position) >= 10) return false;
+            if (!target || !pinHit(toScreen(pinPoint(*target, sourceEnd ? link.sourcePin : link.inputPin, sourceEnd)), e.position)) return false;
             rewiringLink = selectedLink = index; rewiringSource = sourceEnd; selectedNode = 0;
             if (!sourceEnd) { connecting = link.source; connectingPin = link.sourcePin; }
             rebuildInspector(); canvas.repaint(); return true;
@@ -1158,7 +1203,7 @@ private:
         for (auto it = graph.nodes.rbegin(); it != graph.nodes.rend(); ++it) {
             if (!nodeVisible(*it)) continue;
             if (!e.mods.isPopupMenu()) for (int pin = 0; pin < outputPins(*it); ++pin) {
-                if (toScreen(pinPoint(*it, pin, true)).getDistanceFrom(e.position) < 10) {
+                if (pinHit(toScreen(pinPoint(*it, pin, true)), e.position)) {
                     connecting = it->id; connectingPin = pin; selectedNode = it->id; selectedLink = -1;
                     rebuildInspector(); canvas.repaint(); return;
                 }
@@ -1183,7 +1228,7 @@ private:
             const auto& l = item.link; auto* a = node(l.source); auto* b = node(l.destination);
             if (!a || !b) continue;
             juce::Path hit;
-            juce::PathStrokeType(12.0f).createStrokedPath(hit, cable(pinPoint(*a, l.sourcePin, true), pinPoint(*b, l.inputPin, false)));
+            juce::PathStrokeType(routingCableStyle::hit, juce::PathStrokeType::mitered, juce::PathStrokeType::butt).createStrokedPath(hit, cable(pinPoint(*a, l.sourcePin, true), pinPoint(*b, l.inputPin, false)));
             if (hit.contains(e.position)) { selectedLink = i; break; }
         }
         panning = selectedLink < 0;
@@ -1208,12 +1253,12 @@ private:
                     if (!nodeVisible(n)) continue;
                     if (rewiringSource) {
                         for (int pin = 0; pin < outputPins(n); ++pin)
-                            if (toScreen(pinPoint(n, pin, true)).getDistanceFrom(e.position) < 12) {
+                            if (pinHit(toScreen(pinPoint(n, pin, true)), e.position)) {
                                 moved.source = n.id; moved.sourcePin = pin; found = true; break;
                             }
                     } else {
                         for (int pin = 0; pin < inputs(n); ++pin)
-                            if (toScreen(pinPoint(n, pin, false)).getDistanceFrom(e.position) < 12) {
+                            if (pinHit(toScreen(pinPoint(n, pin, false)), e.position)) {
                                 moved.destination = n.id; moved.inputPin = pin; found = true; break;
                             }
                     }
@@ -1242,7 +1287,7 @@ private:
                 for (const auto& n : graph.nodes) {
                     if (!nodeVisible(n)) continue;
                     for (int pin = 0; pin < inputs(n); ++pin) {
-                        if (toScreen(pinPoint(n, pin, false)).getDistanceFrom(e.position) < 12) {
+                        if (pinHit(toScreen(pinPoint(n, pin, false)), e.position)) {
                             replacement.destination = n.id; replacement.inputPin = pin;
                             found = true; break;
                         }
@@ -1387,6 +1432,8 @@ private:
             case NodeType::compressor:
             case NodeType::bitcrusher:
             case NodeType::granular:
+            case NodeType::convolution:
+            case NodeType::saturator:
             case NodeType::gain:
             case NodeType::stereo:
             case NodeType::gate:
@@ -1625,20 +1672,46 @@ private:
         if (publish()) setParameter(id, enable ? 1.0f : 0.0f);
         rebuildInspector();
     }
+    void duplicateDryWet() {
+        // Snapshot the live base, not the potentially stale canvas model or a
+        // modulated effective value. Copies are unwired: no implicit fanout or
+        // output merge may change the accepted signal path.
+        const auto current = owner.getRoutingGraph();
+        const auto source = std::find_if(current.nodes.begin(), current.nodes.end(), [this](const auto& n) {
+            return n.id == selectedNode && n.type == NodeType::mix && !n.mainControls;
+        });
+        if (source == current.nodes.end() || current.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
+        auto copy = *source;
+        copy.id = 0;
+        for (uint32_t id = 200; id < 248; ++id) if (!node(id)) { copy.id = id; break; }
+        if (!copy.id) return;
+        remember();
+        const auto insertion = positions[selectedNode] + juce::Point<float>(36, 100);
+        graph = current;
+        graph.nodes.push_back(copy);
+        positions[copy.id] = insertion; compactPositions[copy.id] = insertion;
+        expandedPositions.erase(copy.id); expanded.erase(copy.id);
+        names.erase(copy.id);
+        selectedNode = copy.id; selectedLink = -1;
+        publish(); rebuildInspector();
+    }
     void showNodeMenu() {
-        juce::PopupMenu menu;
+        juce::PopupMenu menu; menu.setLookAndFeel(&getLookAndFeel());
         const auto* n = node(selectedNode);
         menu.addItem(1, "Delete node", n && n->type != NodeType::output);
         menu.addItem(2, "Toggle FX bypass", n && isEffect(n->type));
+        menu.addItem(3, "Duplicate Dry / Wet", n && n->type == NodeType::mix && !n->mainControls
+                     && graph.nodes.size() < size_t(RoutingExecutor::maxNodes));
         juce::Component::SafePointer<RoutingPanel> safe(this);
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&canvas).withMousePosition(), [safe](int result) {
             if (!safe) return;
             if (result == 1) safe->deleteSelection(); else if (result == 2) safe->toggleBypass();
+                        else if (result == 3) safe->duplicateDryWet();
         });
     }
     void showAddMenu(bool atCursor) {
             const auto insertion = toWorld(atCursor ? pointer : canvas.getLocalBounds().getCentre().toFloat());
-        juce::PopupMenu menu;
+        juce::PopupMenu menu; menu.setLookAndFeel(&getLookAndFeel());
         int effects = 0; for (const auto& n : graph.nodes) if (isEffect(n.type)) ++effects;
         const bool room = graph.nodes.size() < size_t(RoutingExecutor::maxNodes);
         bool freeFxSlot = false;
@@ -1655,6 +1728,8 @@ private:
         menu.addItem(52, "Compressor | stereo dynamics", effectRoom);
         menu.addItem(53, "Bitcrusher | digital texture", effectRoom);
         menu.addItem(54, "Granular | capture / pitch", effectRoom);
+                menu.addItem(55, "Convolution | synthetic IR spaces", effectRoom);
+                menu.addItem(56, "Saturator | warm / 2x ADAA", effectRoom);
         menu.addSeparator();
         menu.addSectionHeader("Utilities / filters");
         menu.addItem(60, "Gain | level / mute", effectRoom);
@@ -1693,6 +1768,8 @@ private:
                 case 52: n.type = NodeType::compressor; break;
                 case 53: n.type = NodeType::bitcrusher; break;
                 case 54: n.type = NodeType::granular; break;
+                                case 55: n.type = NodeType::convolution; n.mix = .25f; break;
+                                case 56: n.type = NodeType::saturator; n.mix = 1.f; break;
                                 case 60: n.type = NodeType::gain; break;
                                 case 61: n.type = NodeType::stereo; break;
                                 case 62: n.type = NodeType::gate; break;
@@ -1706,7 +1783,7 @@ private:
             if (effects >= 16) return;
         } else if (kind == 3) {
             n.type = NodeType::mix;
-            for (std::uint32_t id = 200; id < 300; ++id) if (!node(id)) { n.id = id; break; }
+            for (std::uint32_t id = 200; id < 248; ++id) if (!node(id)) { n.id = id; break; }
             if (!n.id) return;
         } else if (kind == 300) {
             n.type = NodeType::splitter;
@@ -1794,11 +1871,13 @@ private:
                     if (n->type == NodeType::chorale) {
                         for (int f = 1; f <= 2; ++f) {
                             fields.push_back(std::make_unique<ParameterKnob>(owner, fxParameterId(size_t(slot), f), f == 1 ? "Mix" : "Motion", "%"));
+                            fields.back()->setLinear(true);
                             inspector.addAndMakeVisible(*fields.back());
                         }
                         info += "\nOne independent machine; routing chooses its input.\nNew Chorale slots start On / 25% Mix / 35% Motion.";
                     } else if (slot > 0 && isCreativeEffect(n->type)) {
                         creativePanel = std::make_unique<CreativeEffectPanel>(owner, size_t(slot), creativeKind(n->type));
+                        creativePanel->setInspectorLayout(true);
                         creativePanel->onBeginEdit = [this, slot](const juce::String& id) {
                             if (!inspectorDragging) remember();
                             undoStates.back().parameterEdit = true;
@@ -1865,8 +1944,10 @@ private:
                 } else if (localMixParameterId(n->id).isNotEmpty()) {
                     inspector.removeChildComponent(&nodeValue);
                     mixControl = std::make_unique<ParameterKnob>(owner, localMixParameterId(n->id), "Dry / Wet", "%");
+                    mixControl->setLinear(true);
+                    mixControl->slider.setTooltip("Blend Dry and Wet inputs: 0% Dry, 100% Wet; 50% is half of each.");
                     inspector.addAndMakeVisible(*mixControl);
-                    info += "\nAutomatable / modulatable Dry pin 0 / Wet pin 1";
+                    info += "\nDry pin 0 / Wet pin 1. Linear blend: 0% Dry, 100% Wet, 50% half of each. Unconnected inputs are silent.\nIndependent automation; no FX slot. Right-click to duplicate without cables.";
                 } else {
                     nodeValue.setDoubleClickReturnValue(true, 50);
                     nodeValue.setVelocityModeParameters(1.0, 1, 0.0, true,
@@ -1952,11 +2033,17 @@ private:
         int y = 76;
         const int columns = juce::jmax(1, inspector.getWidth() / 82);
         const int fieldWidth = 82;
+        const bool sparseFx = node(selectedNode) && node(selectedNode)->type == NodeType::chorale;
         for (size_t i = 0; i < fields.size(); ++i)
-            fields[i]->setBounds(int(i % size_t(columns)) * fieldWidth, y + int(i / size_t(columns)) * 104, juce::jmax(0, fieldWidth - 4), 100);
-        if (!fields.empty()) y += int((fields.size() + size_t(columns) - 1) / size_t(columns)) * 104;
+            if (sparseFx) fields[i]->setBounds(0, y + int(i) * 46, inspector.getWidth(), 44);
+            else fields[i]->setBounds(int(i % size_t(columns)) * fieldWidth, y + int(i / size_t(columns)) * 104, juce::jmax(0, fieldWidth - 4), 100);
+        if (!fields.empty()) y += sparseFx ? int(fields.size()) * 46 : int((fields.size() + size_t(columns) - 1) / size_t(columns)) * 104;
         nodeValue.setBounds(0, 40, 140, 110);
-        if (mixControl) mixControl->setBounds(0, 40, 140, 110);
+        if (mixControl) {
+            const auto* selected = node(selectedNode);
+            const bool dryWet = selected && selected->type == NodeType::mix && !selected->mainControls;
+            mixControl->setBounds(0, 40, dryWet ? inspector.getWidth() : 140, dryWet ? 44 : 110);
+        }
         const int infoY = fields.empty() ? (nodeValue.getParentComponent() == &inspector || mixControl ? 160 : selectedLink >= 0 ? 76 : 40) : y + 12;
         inspectorInfo.setBounds(0, infoY, inspector.getWidth(), juce::jmax(20, inspector.getHeight() - infoY));
     }
@@ -1969,6 +2056,7 @@ private:
         return result;
     }
     void timerCallback() override {
+        routingStyle.setDecorativePhase(fluidAnimationSeconds(*this));
         refreshAssignmentBanner();
         // A divider gesture changes bounds only; defer external rebuilds until release.
         if (resizingInspector || resizingModulation) return;
@@ -2030,6 +2118,7 @@ private:
     }
     Processor& owner;
     FluidBackground background, canvasBackground;
+    std::map<std::uint32_t, FluidBackground> nodeMaterials;
     Graph graph;
     std::map<std::uint32_t, juce::Point<float>> positions, compactPositions, expandedPositions;
     std::map<std::uint32_t, bool> expanded;

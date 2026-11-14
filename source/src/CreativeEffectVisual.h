@@ -17,6 +17,21 @@ public:
         setTooltip(kind == CreativeKind::granular
                     ? grainDescription()
                     : "Parameter-derived schematic using coherent effective modulation targets. Unassigned parameters are host base reads; DSP smoothing and signal-dependent behaviour are not simulated. Reverb is not a measured impulse response. Compressor GR is measured by the DSP.");
+        if (factoryReactive())
+            setTooltip(kind == CreativeKind::convolution
+                ? "Original generated 48 kHz left IR peak-envelope bins, normalized per space. Tail is an illustrative taper, not exact partition-centre processing; tilt, predelay and ducking are not plotted. The teal bar is actual stereo wet RMS before slot blending, from coherent bounded DSP telemetry."
+                : "Actual Warm Asymmetric transfer function at effective Drive and Character. Teal curve segment spans measured stereo PRE input extrema. This is not a sample-wise input/output scatter or an exact resampling model: Tone, Output, RMS matching, Mix, ADAA/DC blocker and IIR oversampling are excluded. Teal bar is measured pre-blend stereo wet RMS.");
+        if (kind == CreativeKind::convolution) {
+            for (int s = 0; s < 4; ++s) {
+                const auto ir = FactoryConvolution::makeImpulse(48000, s);
+                for (size_t i = 0; i < ir[0].size(); ++i) {
+                    const size_t bin = std::min(size_t(127), i * 128 / ir[0].size());
+                    irPeaks[size_t(s)][bin] = std::max(irPeaks[size_t(s)][bin], std::abs(ir[0][i]));
+                }
+                const float peak = *std::max_element(irPeaks[size_t(s)].begin(), irPeaks[size_t(s)].end());
+                for (auto& v : irPeaks[size_t(s)]) v /= std::max(peak, 1.e-12f);
+            }
+        }
         refresh();
     }
     void setNeon(bool enabled) { neon = enabled; repaint(); }
@@ -27,8 +42,12 @@ public:
                           1.0 / toneui::visualSampleRate(owner.getSampleRate()), 24.0);
     }
     double timingPhase() const { return delayPhase; }
-    void visibilityChanged() override { lastAnimationMs = -1; }
-    void parentHierarchyChanged() override { lastAnimationMs = -1; }
+    ~CreativeEffectVisual() override { if (retained) owner.releaseFxMonitor(slot); }
+    void visibilityChanged() override { lastAnimationMs = -1; syncTelemetry(); }
+    void parentHierarchyChanged() override { lastAnimationMs = -1; syncTelemetry(); }
+    bool hasMeasuredActivity() const noexcept { return liveTelemetry; }
+    float measuredWetRms() const noexcept { return liveTelemetry ? telemetry.wetRms : 0.f; }
+    uint64_t measuredSequence() const noexcept { return liveTelemetry ? telemetry.sequence : 0; }
     // Read-only rendering seam: units are milliseconds, Hz and nominal overlap.
     // History is a fixed 3 s parameter guide, not available captured audio.
     struct GranularModel {
@@ -62,7 +81,16 @@ public:
     // Explicit monotonic time also allows deterministic animation tests. This is
     // a parameter-timed illustration, not host transport or measured audio.
     void refreshAt(double nowMs) {
+        syncTelemetry();
         if (!visibleInHierarchy()) { lastAnimationMs = -1; return; }
+        if (retained) {
+            FxMonitorFrame next;
+            if (owner.readFxMonitor(slot, next) && next.hasWet) {
+                if (next.sequence != telemetry.sequence || next.epoch != telemetry.epoch) {
+                    telemetry = next; lastTelemetryMs = nowMs; liveTelemetry = true;
+                } else if (nowMs - lastTelemetryMs > 250) liveTelemetry = false;
+            } else liveTelemetry = false;
+        }
         auto next = owner.getModulationSnapshot();
         // Preserve the entire previous model on a failed bounded snapshot read.
         if (next.consistent) {
@@ -89,13 +117,14 @@ public:
 
         const auto c = themePalette(*this, neon);
         auto b = getLocalBounds().toFloat();
-        g.setColour(c.inset); g.fillRoundedRectangle(b, 5);
-        g.setColour(c.border); g.drawRoundedRectangle(b.reduced(0.5f), 5, 1);
+        surfaceMaterial.paint(g, b.toNearestInt(), c.inset, c.accent, fluidAnimationSeconds(*this), .25f);
+        g.setColour(c.border); g.drawRect(b.reduced(0.5f), 1);
         b.reduce(8, 8);
         if (kind == CreativeKind::granular) { granular(g, b, {}, c); return; }
         if (kind == CreativeKind::delay) { delay(g, b, {}, c); return; }
         text(g, b.removeFromTop(16), enabled ? "PARAMETER MODEL" : "BYPASS | stored parameter model", c.text);
-        text(g, b.removeFromTop(15), ready ? "Effective targets / base if unassigned" : "Waiting for coherent parameter snapshot", c.muted);
+        if (factoryReactive()) wetMeter(g, b.removeFromTop(24), c);
+        else text(g, b.removeFromTop(15), ready ? "Effective targets / base if unassigned" : "Waiting for coherent parameter snapshot", c.muted);
         auto footer = b.removeFromBottom(43);
         b.removeFromBottom(15); // Dedicated axis-label row.
         auto plot = b.withTrimmedLeft(23).withTrimmedRight(5).reduced(0, 6);
@@ -106,9 +135,78 @@ public:
             case CreativeKind::granular: granular(g, plot, footer, c); break;
             case CreativeKind::compressor: compressor(g, plot, footer, c); break;
             case CreativeKind::bitcrusher: crusher(g, plot, footer, c); break;
+            case CreativeKind::convolution: {
+                const size_t space = size_t(std::clamp(int(std::round(value(P::convolutionSpace))), 0, 3));
+                juce::Path path;
+                for (size_t i = 0; i < 128; ++i) {
+                    const float t = float(i) / 127;
+                    const float taper = std::exp(-t * float(FactoryConvolution::durations[space]) * (100.f / value(P::convolutionTail) - 1) * 4);
+                    const float x = plot.getX() + t * plot.getWidth();
+                    const float y = plot.getBottom() - irPeaks[space][i] * taper * plot.getHeight();
+                    if (i == 0) path.startNewSubPath(x, y); else path.lineTo(x, y);
+                }
+                curve(g, path, plot, c.accent);
+                text(g, footer.removeFromTop(15), juce::String(FactoryConvolution::names[space]) + " | SYNTHETIC IR | " + juce::String(FactoryConvolution::durations[space], 2) + " s", c.text);
+                text(g, footer.removeFromTop(14), "48 kHz L peak envelope / Tail taper guide", c.muted);
+                text(g, footer, "Tilt / pre-delay / duck not plotted", c.muted);
+                break;
+            }
+            case CreativeKind::saturator: {
+                juce::Path path;
+                const double drive = std::pow(10.0, value(P::saturatorDrive) / 20.0);
+                for (int i = 0; i <= 128; ++i) {
+                    const double x = double(i) / 64 - 1;
+                    const double y = Waveshaper::transfer(x * drive, 3, value(P::saturatorCharacter) * .01);
+                    const float px = plot.getX() + float(i) / 128 * plot.getWidth();
+                    const float py = plot.getCentreY() - float(y) * plot.getHeight() * .42f;
+                    if (!i) path.startNewSubPath(px, py); else path.lineTo(px, py);
+                }
+                g.setColour(c.accent); g.strokePath(path, juce::PathStrokeType(1.3f));
+                text(g, footer.removeFromTop(15), "STATIC TRANSFER | input -1 to +1", c.text);
+                text(g, footer.removeFromTop(14), "2x IIR + ADAA | not alias-free", c.muted);
+                text(g, footer, "Teal: measured PRE range | no Tone/Out/Match/Mix", c.muted);
+                if (liveTelemetry && enabled && mix > 0) {
+                    float lo = 0, hi = 0;
+                    for (const auto& channel : telemetry.input) for (float sample : channel) {
+                        lo = std::min(lo, sample); hi = std::max(hi, sample);
+                    }
+                    juce::Path active;
+                    for (int i = 0; i <= 64; ++i) {
+                        const float x = std::clamp(lo + (hi - lo) * float(i) / 64.f, -1.f, 1.f);
+                        const float y = float(Waveshaper::transfer(x * drive, 3, value(P::saturatorCharacter) * .01));
+                        const float px = plot.getCentreX() + x * plot.getWidth() * .5f;
+                        const float py = plot.getCentreY() - y * plot.getHeight() * .42f;
+                        if (!i) active.startNewSubPath(px, py); else active.lineTo(px, py);
+                    }
+                    g.setColour(c.secondary); g.strokePath(active, juce::PathStrokeType(3.f));
+                }
+                break;
+            }
         }
     }
 private:
+    bool factoryReactive() const { return kind == CreativeKind::convolution || kind == CreativeKind::saturator; }
+    void syncTelemetry() {
+        const bool wanted = factoryReactive() && visibleInHierarchy();
+        if (wanted != retained) {
+            if (wanted) owner.retainFxMonitor(slot); else owner.releaseFxMonitor(slot);
+            retained = wanted; liveTelemetry = false; telemetry = {}; lastTelemetryMs = -1;
+        }
+    }
+    void wetMeter(juce::Graphics& g, juce::Rectangle<float> plot, const ThemePalette& c) {
+        const bool audible = liveTelemetry && enabled && mix > 0;
+        const float rms = audible ? telemetry.wetRms : 0.f;
+        const float db = juce::Decibels::gainToDecibels(rms, -72.f);
+        auto rail = plot.withY(plot.getBottom() - 7).withHeight(7);
+        g.setColour(c.inset); g.fillRect(rail);
+        g.setColour(c.secondary); g.fillRect(rail.withWidth(rail.getWidth() * std::clamp((db + 72.f) / 72.f, 0.f, 1.f)));
+        text(g, plot.withHeight(14), audible ? "WET RMS " + juce::String(db, 1) + " dBFS (pre-blend)" : "No live wet activity / bypass or stopped", c.secondary);
+    }
+    FxMonitorFrame telemetry{};
+    double lastTelemetryMs = -1;
+    bool retained = false, liveTelemetry = false;
+    FluidBackground surfaceMaterial;
+    std::array<std::array<float, 128>, 4> irPeaks{};
     using P = CreativeParameter;
     static juce::String grainDescription() {
         return "Parameter envelope graph, not live audio or measured grains. Fixed example windows show grain length and nominal "
@@ -154,7 +252,7 @@ private:
         g.setColour(c.border); g.drawLine(lane.getX(), centre, lane.getRight(), centre, .75f);
         g.setColour(c.secondary.withAlpha(.15f + .85f * amount));
         g.drawLine(lane.getX(), centre, lane.getRight() - 3, end, 1.1f);
-        g.fillEllipse(lane.getRight() - 5, end - 2, 4, 4);
+        g.fillRect(lane.getRight() - 5, end - 2, 4.f, 4.f);
     }
     void reverb(juce::Graphics& g, juce::Rectangle<float> r, juce::Rectangle<float> f, const ThemePalette& c) const {
         const float pre = value(P::reverbPredelay) * .001f, rt = value(P::reverbDecay);
@@ -215,9 +313,9 @@ private:
                 if (weight < .001f) return;
                 const float radius = 2.5f + 3.5f * weight;
                 g.setColour(colour.withAlpha(.08f + .12f * weight));
-                g.fillEllipse(x - radius * 2, y - radius * 2, radius * 4, radius * 4);
+                g.fillRect(x - radius * 2, y - radius * 2, radius * 4, radius * 4);
                 g.setColour(colour.withAlpha(.3f + .7f * weight));
-                g.fillEllipse(x - radius, y - radius, radius * 2, radius * 2);
+                g.fillRect(x - radius, y - radius, radius * 2, radius * 2);
             };
             pulse(top, left, c.secondary); pulse(bottom, right, c.accent);
             const float nextLeft = feedback * (left * (1 - ping) + right * ping);
@@ -238,12 +336,12 @@ private:
         g.setColour(c.muted); g.drawText("3 s", historyLabel, juce::Justification::centredRight);
         auto history = r.removeFromTop(8).reduced(1, 1);
         const auto historyX = [&](float age) { return history.getRight() - age / 3000.f * history.getWidth(); };
-        g.setColour(c.border); g.fillRoundedRectangle(history, 2);
+        g.setColour(c.border); g.fillRect(history);
         auto region = juce::Rectangle<float>(historyX(model.historyFarMs), history.getY(),
             std::max(2.f, (model.historyFarMs - model.historyNearMs) / 3000.f * history.getWidth()), history.getHeight());
         g.setGradientFill(juce::ColourGradient(c.secondary.withAlpha(.18f), region.getX(), region.getY(),
             c.secondary.withAlpha(.7f), region.getRight(), region.getY(), false));
-        g.fillRoundedRectangle(region, 2);
+        g.fillRect(region);
         g.setColour(c.accent);
         g.drawLine(historyX(model.historyNearMs), history.getY() - 2, historyX(model.historyNearMs), history.getBottom() + 2, 1.5f);
         r.removeFromTop(5);

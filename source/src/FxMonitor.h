@@ -17,6 +17,8 @@ struct FxMonitorFrame {
     // Linear amplitude RMS: sqrt(mean((L*L + R*R)/2)), over this window.
     // Crossover ports only; bypass has one full-band port, unused entries zero.
     std::array<float, 3> bandRms{};
+    float wetRms = 0; // Factory FX only: processed wet signal before slot blend.
+    bool hasWet = false;
     double sampleRate = 48000;
     uint32_t nodeId = 0;
     int bandCount = 0;
@@ -124,7 +126,8 @@ public:
     }
     void capture(size_t slot, uint32_t nodeId, float inL, float inR,
                  float outL, float outR, int bandCount,
-                 const std::array<std::array<float, 2>, 3>& bands) noexcept {
+                 const std::array<std::array<float, 2>, 3>& bands,
+                                  bool hasWet = false, float wetL = 0, float wetR = 0) noexcept {
         if (slot >= slotCount) return;
         auto& s = (*slots)[slot];
         if (!s.enabled) return;
@@ -135,12 +138,14 @@ public:
             s.staging.nodeId = nodeId;
             s.staging.bandCount = bandCount;
         }
+        s.staging.hasWet = hasWet;
         const auto p = s.position;
         s.staging.input[0][p] = inL; s.staging.input[1][p] = inR;
         s.staging.output[0][p] = outL; s.staging.output[1][p] = outR;
         for (size_t b = 0; b < 3; ++b)
             s.powers[b][p] = int(b) < bandCount
-                ? (double(bands[b][0]) * bands[b][0] + double(bands[b][1]) * bands[b][1]) * 0.5 : 0;
+                ? (double(bands[b][0]) * bands[b][0] + double(bands[b][1]) * bands[b][1]) * 0.5
+                                : (b == 0 && hasWet ? (double(wetL) * wetL + double(wetR) * wetR) * .5 : 0);
         s.position = (p + 1) % FxMonitorFrame::sampleCount;
         s.used = std::min(s.used + 1, FxMonitorFrame::sampleCount);
         ++s.elapsed;
@@ -191,6 +196,9 @@ private:
                 for (auto x : s.powers[band]) power += x;
                 frame.bandRms[band] = float(std::sqrt(power / FxMonitorFrame::sampleCount));
             }
+            frame.hasWet = s.staging.hasWet;
+            frame.wetRms = frame.hasWet ? frame.bandRms[0] : 0;
+            if (frame.hasWet) frame.bandRms[0] = 0;
             frame.nodeId = s.staging.nodeId;
             frame.bandCount = s.staging.bandCount;
             frame.sampleRate = rate;

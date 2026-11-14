@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "GuiTestDisplay.h"
 #include "ProcessorRoutingState.h"
 #include <iostream>
 #include <stdexcept>
@@ -254,7 +255,7 @@ void tabSelectionLifecycleRegressions(Processor& owner) {
         return routing.commitExternalGraphEdit(candidate, rejection);
     };
     rack.sync(); rack.setBounds(0, 0, 904, MainBusFxRackPanel::preferredHeight);
-    rack.addToDesktop(0); rack.setVisible(true); pump();
+    guiTestDisplay::attach(rack); pump();
     auto* first = selectRackNode(rack, 100);
     auto* second = find(rack, "mainBusFx101");
     auto* body = viewportIn(*first);
@@ -355,7 +356,7 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
     MainBusFxRackPanel rack(owner);
     rack.commitGraph = [&](const Graph& candidate, juce::String& rejection) { return routing.commitExternalGraphEdit(candidate, rejection); };
     rack.sync(); rack.setBounds(0, 0, 904, MainBusFxRackPanel::preferredHeight);
-    rack.addToDesktop(0); rack.setVisible(true); rack.toFront(false); pump();
+    guiTestDisplay::attach(rack); rack.toFront(false); pump();
     auto* row = dynamic_cast<juce::Viewport*>(find(rack, "mainBusFxRowViewport"));
     expect(row && row->getHorizontalScrollBar().isVisible(), "rack has horizontal overflow");
     expect(row->getHeight() == 42, "tab header includes its overflow scrollbar within 42px");
@@ -427,7 +428,9 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
             expect(mixSlider && mixSlider->getSliderStyle() == juce::Slider::LinearHorizontal,
                    "rack-owned Mix uses a standalone linear slider");
             auto* mixControl = dynamic_cast<ParameterKnob*>(mixSlider->getParentComponent());
-            expect(mixControl && mixControl->getHeight() == 44 && mixControl->getWidth() <= 240,
+            expect(mixControl && mixControl->getHeight() == 44 && (node.type == NodeType::chorale
+                                ? mixControl->getWidth() == body->getViewedComponent()->getWidth() - 16
+                                : mixControl->getWidth() <= 240),
                    "standalone rack Mix uses a 44px textured row");
             for (auto* child : mixControl->getChildren())
                 if (auto* title = dynamic_cast<juce::Label*>(child))
@@ -443,16 +446,16 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
                    "standalone rack Mix retains its lane and display-only caption inside the 25px bar");
             if (node.type == NodeType::chorale) {
                 auto* motion = dynamic_cast<juce::Slider*>(find(*card, fxParameterId(slot, "Motion")));
-                expect(motion && motion->getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag
+                expect(motion && motion->getSliderStyle() == juce::Slider::LinearHorizontal
                            && motion->getTextBoxPosition() == juce::Slider::TextBoxAbove,
-                       "Chorale Motion remains a rotary with its value above");
+                       "Sparse Chorale Motion uses a thick slider");
                 auto* motionControl = motion->getParentComponent();
-                expect(motionControl->getWidth() == 68 && motionControl->getHeight() == 100
-                           && motion->getWidth() >= 64 && !bool(motion->getProperties()["vocalstackTexturedBar"]),
-                       "Chorale Motion retains a readable 68x100 rotary cell without linear bar styling");
-                expect(mixControl->getX() - motionControl->getRight() == 2
-                           && mixControl->getY() < motionControl->getBottom(),
-                       "wide Chorale places standalone Mix beside the compact Motion knob");
+                expect(motionControl->getWidth() == mixControl->getWidth() && motionControl->getHeight() == 44
+                           && motion->getWidth() >= 64 && bool(motion->getProperties()["vocalstackTexturedBar"]),
+                       "Chorale Motion and Mix retain equal full-width fat rows");
+                expect(mixControl->getX() == motionControl->getX()
+                           && mixControl->getY() - motionControl->getBottom() == 2,
+                       "Chorale stacks its two fat sliders with a 2px gap");
             } else {
                 auto* tone = find(*card, "mainBusFxFullPanel");
                 expect(tone && tone->getY() == 0 && tone->getWidth() == body->getViewedComponent()->getWidth(),
@@ -562,10 +565,14 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
         selectRackNode(rack, 100);
         row->setViewPosition(row->getViewedComponent()->getWidth(), 0);
         writeSnapshot(rack, output, juce::String("rack-row-end-") + skins[size_t(skin)]);
+        // All-tabs overview can exceed the physical work area; no native window.
+        rack.removeFromDesktop();
+        std::cout << "OFFSCREEN all-tabs overview: no physical monitor placement\n";
         rack.setSize(row->getViewedComponent()->getWidth() + 80, MainBusFxRackPanel::preferredHeight);
         row->setViewPosition(0, 0);
         writeSnapshot(rack, output, juce::String("rack-row-all-") + skins[size_t(skin)]);
         rack.setSize(904, MainBusFxRackPanel::preferredHeight);
+        guiTestDisplay::attach(rack);
     }
     expect(processorRouting::encode(owner.getRoutingGraph(), "Graph").toXmlString() == before, "layout and scrolling never publish topology");
     std::cout << "Rack row PNGs: " << output.getFullPathName() << std::endl;
@@ -646,6 +653,8 @@ void run(const juce::File& output) {
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI init;
     try {
+        guiTestDisplay::enumerate();
+        std::cout << "Rack PNGs use offscreen component rendering, not a physical framebuffer capture\n";
         const auto output = argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile(argv[1])
             : juce::File::getCurrentWorkingDirectory().getChildFile("mainbus-rack-screenshots");
         expect(output.createDirectory().wasOk(), "create rack screenshot directory");
