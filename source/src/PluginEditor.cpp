@@ -124,18 +124,11 @@ Editor::Editor(Processor& processor)
         layoutCanvas.addAndMakeVisible(knob);
         knobLinks[i] = std::make_unique<AudioProcessorValueTreeState::SliderAttachment>(
             owner.parameters, knobParameterIds[i], knob);
+        if (i == 1) configureCrossfadeDisplay(knob, true);
         if (const auto* parameter = owner.parameters.getParameter(knobParameterIds[i]))
             knob.setDoubleClickReturnValue(true, i == 4 || i == 5 ? 0.0
                 : parameter->convertFrom0to1(parameter->getDefaultValue()));
-        if (i == 1 || i == 5) {
-            knob.getProperties().set("vocalstackValueFontSize", 14.f);
-            knob.setLookAndFeel(i == 1 ? &leadMixStyle : &outputStyle);
-            knob.getProperties().set("vocalstackTexturedBar", true);
-            knob.getProperties().set("vocalstackSeparateBarValue", true);
-            knob.setSliderStyle(Slider::LinearHorizontal);
-            knob.setTextBoxStyle(Slider::TextBoxAbove, false, 90, 20);
-            if (i == 1) configureCrossfadeDisplay(knob, true);
-        }
+
         labels[i].setText(knobNames[i], dontSendNotification);
         labels[i].setJustificationType(Justification::centred);
         labels[i].setInterceptsMouseClicks(false, false);
@@ -307,7 +300,7 @@ void Editor::resized() {
     constexpr std::array<int, 6> centers{70, 183, 285, 387, 500, 614};
     for (size_t i = 0; i < knobs.size(); ++i) {
         labels[i].setBounds(centers[i] - 44, 121, 88, 20);
-        knobs[i].setBounds(centers[i] - 45, i == 1 || i == 5 ? 170 : 148, 90, i == 1 || i == 5 ? 72 : 114);
+        knobs[i].setBounds(centers[i] - 45, 148, 90, 114);
     }
     switches[0].setBounds(32, 88, 76, 23);
     switches[1].setBounds(244, 88, 82, 23);

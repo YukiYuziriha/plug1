@@ -23,7 +23,7 @@ inline void crossfadePresentation() {
     slider.setRange(0, 100, .01);
     for (bool stack : {false, true}) {
         configureCrossfadeDisplay(slider, stack);
-        require(hasMidpointCrossfade(slider), "Crossfade missing midpoint presentation");
+        require(!hasMidpointCrossfade(slider), "Mix must fill from dry to wet, not from its midpoint");
         require(slider.getMinimum() == 0 && slider.getMaximum() == 100, "Presentation changed mix range");
         for (double value : {0., 25., 50., 75., 100.}) {
             const auto text = slider.textFromValueFunction(value);
@@ -42,13 +42,12 @@ inline void outputAndRingGeometry() {
     auto owner = std::make_unique<Processor>();
     ParameterKnob output(*owner, "outputGain", "Output trim", "dB");
     output.setSize(240, 64);
-    require(output.slider.getSliderStyle() == juce::Slider::LinearHorizontal,
-            "Output node trim regressed to a knob");
+    require(output.slider.getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag,
+            "Output trim must remain a knob");
     require(output.slider.getMinimum() == -24 && output.slider.getMaximum() == 12,
             "Global output range changed (Gain FX +24 is a different parameter)");
-    const auto layout = output.slider.getLookAndFeel().getSliderLayout(output.slider);
-    const auto track = ParameterKnob::Style::texturedBarBounds(layout.sliderBounds.toFloat());
-    require(track.getHeight() == 25 && track.getY() >= 8, "Output lost thick bar or modulation lane");
+    ParameterKnob mix(*owner, "double", "Lead / Stack", "%");
+    require(!hasMidpointCrossfade(mix.slider), "Lead / Stack must not use midpoint styling");
     for (float radius : {20.f, 36.f, 48.f}) {
         const float outer = radius + 2.4f;
         const float width = ParameterKnob::Style::rotaryRingWidth(outer);
@@ -104,7 +103,10 @@ inline void editorControls() {
     require(MainBusFxRackPanel::preferredHeight == 388, "Stack FX allocation changed");
     for (const auto* id : {"outputGain", "double", "globalMix"}) {
         auto* slider = dynamic_cast<juce::Slider*>(find(*editor, id));
-        require(slider && slider->getSliderStyle() == juce::Slider::LinearHorizontal, "Stack control is not horizontal");
+        const auto expected = juce::String(id) == "globalMix" ? juce::Slider::LinearHorizontal
+            : juce::Slider::RotaryHorizontalVerticalDrag;
+        require(slider && slider->getSliderStyle() == expected, "Stack control has incorrect knob/slider style");
+        require(!hasMidpointCrossfade(*slider), "Stack Mix must not use bipolar presentation");
         const auto lanes = slider->getLookAndFeel().getSliderLayout(*slider);
         require(!lanes.textBoxBounds.intersects(lanes.sliderBounds), "Compact Stack value overlaps track");
         for (auto value : {slider->getMinimum(), 50. <= slider->getMaximum() ? 50. : 0., slider->getMaximum()}) {

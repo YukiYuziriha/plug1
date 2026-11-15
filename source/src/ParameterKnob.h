@@ -61,7 +61,7 @@ public:
 
 // Presentation only: the underlying parameter remains an unsigned 0..100 crossfade.
 inline void configureCrossfadeDisplay(juce::Slider& slider, bool leadStack = false) {
-    slider.getProperties().set("vocalstackMidpointCrossfade", true);
+    slider.getProperties().set("vocalstackMidpointCrossfade", false);
     slider.textFromValueFunction = [leadStack](double value) {
         return juce::String(juce::jlimit(0.0, 100.0, value), 0) + (leadStack ? "% Stack" : "% Wet");
     };
@@ -540,10 +540,7 @@ public:
                 return value;
             };
         }
-        if (id == "outputGain" || id == "globalOutput") {
-            slider.getProperties().set("vocalstackSeparateBarValue", true);
-            setLinear(true);
-        }
+
         slider.updateText(); setNeon(false);
         setWantsKeyboardFocus(false); setMouseClickGrabsKeyboardFocus(false);
     }
