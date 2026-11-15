@@ -1,4 +1,4 @@
-# Vocal Stack v1.11.1: licenses and corresponding source
+# Vocal Stack v1.11.2: licenses and corresponding source
 
 These CLAP/VST3 binaries combine GPLv3-covered Vocal Stack/Vital code with JUCE
 8.0.12 under **AGPLv3**, using the combination permission in section 13 of both
@@ -10,7 +10,7 @@ complete `ThirdParty` folder with redistributed copies. The software is supplied
 without warranty, as detailed in those licenses.
 
 Binary-producing source revision:
-<https://github.com/YukiYuziriha/plug1/tree/e6bd0ff28b3d103c4045cf141680e51286e4d0f3>
+<https://github.com/YukiYuziriha/plug1/tree/39687ca28fc3945a99843fa0e5d77851c7e67274e>
 
 Project source and build scripts:
 <https://github.com/YukiYuziriha/plug1>
@@ -21,7 +21,13 @@ repository (also supplied in the corresponding-source ZIP). Dependencies include
 the complete pinned JUCE source, CLAP extensions and both CLAP submodules,
 Signalsmith Linear/Stretch, the retained Vital subset and embedded font.
 
-## Source downloads (release v1.11.1)
+## Source downloads
+
+For the v1.11.2 correction, use the binary-producing revision linked above
+([editable project source ZIP](https://github.com/YukiYuziriha/plug1/archive/39687ca28fc3945a99843fa0e5d77851c7e67274e.zip)).
+The complete dependency sources and pins are unchanged from v1.11.1 and are
+included in its corresponding-source ZIP below. The v1.11.1 release binaries
+remain unchanged; the current v1.11.2 plugin files are in this repository.
 
 - [Complete corresponding source, including dependencies](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-corresponding-source.zip)
 - [Complete repository source history and per-commit binary/dependency matrix](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/VocalStack-source-history.zip)
@@ -32,9 +38,9 @@ project sources and all external dependency pins used in the audited history.
 Read `VocalStack-history/README.md` for offline restoration/build instructions.
 The matrix records binary bytes co-delivered at each commit; it is not a claim
 that every historical binary has been independently reproduced. The source
-revision above identifies the current v1.11.1 package. Later legal/docs-only
+revision above identifies the current v1.11.2 package. Later legal/docs-only
 updates do not rebuild or change those bytes.
 
 The v1.11.0 history archive covers earlier releases; the v1.11.1 source ZIP
-provides the current revision. Source access accompanies binary access at no extra charge
+provides the previous project revision and the complete unchanged dependencies. Source access accompanies binary access at no extra charge
 under GPLv3/AGPLv3 section 6(d), rather than a future source-on-request offer.
