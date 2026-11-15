@@ -53,22 +53,27 @@ void gainReductionTelemetry() {
 }
 
 void routedCompressorReduction() {
-    FxMonitor monitor; RoutingExecutor executor;
-    executor.prepare(48000); executor.setFxMonitor(&monitor); monitor.retain(1);
+    FxMonitor monitor; RoutingExecutor executor, unmonitored;
+    executor.prepare(48000); unmonitored.prepare(48000); executor.setFxMonitor(&monitor); monitor.retain(1);
     RoutingNode compressor{100, NodeType::compressor}; compressor.mix = 1;
     compressor.creative.values[size_t(CreativeParameter::compressorThreshold)] = -30;
     compressor.creative.values[size_t(CreativeParameter::compressorRatio)] = 4;
     compressor.creative.values[size_t(CreativeParameter::compressorMakeup)] = 0;
     Graph graph{{{1, NodeType::lead}, compressor, {13, NodeType::output}}, {{1, 100, 0}, {100, 13, 0}}};
-    install(executor, graph);
+    install(executor, graph); install(unmonitored, graph);
     RoutingSources sources; RoutingControls controls;
     for (int i = 0; i < 48000; ++i) {
         const float sample = .8f * float(std::sin(2 * pi * 1000 * i / 48000));
-        sources.lead = {sample, -sample}; executor.process(sources, controls);
+        sources.lead = {sample, -sample};
+        const auto measured=executor.process(sources,controls), plain=unmonitored.process(sources,controls);
+        check(measured.left==plain.left && measured.right==plain.right,"Compressor telemetry changed sounding DSP");
     }
     FxMonitorFrame frame; check(monitor.read(1, frame), "actual compressor snapshot missing");
     check(frame.nodeKind == int(NodeType::compressor) && frame.hasGainReduction, "actual compressor history metadata missing");
     check(frame.gainReductionDb > 10 && frame.gainReductionDb < 30, "actual compressor GR absent/unbounded");
+    check(frame.hasWet && frame.historyUsed > 30 && frame.history.back().inputRms > .5f
+          && frame.history.back().wetRms > 0 && frame.history.back().wetRms < .1f,
+          "Actual routed compressor input/wet energy missing");
     double inputPower = 0, outputPower = 0;
     for (size_t i = 0; i < FxMonitorFrame::sampleCount; ++i) {
         inputPower += double(frame.input[0][i]) * frame.input[0][i];
@@ -78,6 +83,8 @@ void routedCompressorReduction() {
     compressor.enabled = false; graph.nodes[1] = compressor; install(executor, graph);
     for (int i = 0; i < 4096; ++i) executor.process(sources, controls);
     near(monitor.gainReduction(1), 0, "bypassed compressor retained GR");
+    check(monitor.read(1,frame) && !frame.hasWet && !frame.hasGainReduction,
+          "Bypassed compressor retained live energy/GR metadata");
 }
 
 void subscriptions() {

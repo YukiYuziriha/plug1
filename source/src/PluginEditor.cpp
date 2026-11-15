@@ -496,15 +496,15 @@ void Editor::drawDevice(Graphics& g) {
         g.setColour(rgb(0x343a35));
         g.drawRect(area, 1.0f);
     }
-    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(0xaeb1a9), 11.0f, true, Justification::centred);
+    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(0xaeb1a9), 12.0f, true, Justification::centred);
     const std::array<const char*, 4> captions{
         "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
     };
     for (size_t i = 0; i < controlPlates.size(); ++i)
         text(g, captions[i], {controlPlates[i].getX(), 269, controlPlates[i].getWidth(), 15},
-             rgb(0xaeb1a9), 9.5f, false, Justification::centred);
+             rgb(0xaeb1a9), 11.5f, false, Justification::centred);
     text(g, "TRUE MIX", {542, 306, 124, 23},
-         rgb(0x9b9f96), 10.0f, true, Justification::centredRight);
+         rgb(0x9b9f96), 12.0f, true, Justification::centredRight);
 }
 
 void Editor::drawFlash(Graphics& g) {
@@ -545,16 +545,16 @@ void Editor::drawFlash(Graphics& g) {
         g.setColour(rgb(accents[i]));
         g.fillRect(plate.getX(), plate.getY(), plate.getWidth(), 2);
         text(g, captions[i], {plate.getX(), 269, plate.getWidth(), 15},
-             rgb(nightMuted), 9.5f, false, Justification::centred);
+             rgb(nightMuted), 11.5f, false, Justification::centred);
     }
-    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(signPink), 11.0f, true, Justification::centred);
+    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(signPink), 12.0f, true, Justification::centred);
     g.setColour(rgb(outline));
     for (const int x : {234, 336})
         g.drawVerticalLine(x, 121.0f, 260.0f);
     g.drawHorizontalLine(298, 18.0f, 666.0f);
 
     text(g, "TRUE MIX", {542, 306, 124, 23},
-         rgb(nightMuted), 11.0f, true, Justification::centredRight);
+         rgb(nightMuted), 12.0f, true, Justification::centredRight);
 }
 
 void Editor::drawSpectral(Graphics& g) {
@@ -576,10 +576,10 @@ void Editor::drawSpectral(Graphics& g) {
         g.setColour(p.border);
         g.drawRect(plate);
         text(g, captions[i], {plate.getX(), 269, plate.getWidth(), 15},
-             p.muted, 9.5f, false, Justification::centred);
+             p.muted, 11.5f, false, Justification::centred);
     }
-    text(g, "FINAL GAIN", {570, 88, 88, 23}, p.muted, 10.5f, false, Justification::centred);
-    text(g, "TRUE MIX", {542, 306, 124, 23}, p.muted, 10.0f, false, Justification::centredRight);
+    text(g, "FINAL GAIN", {570, 88, 88, 23}, p.muted, 12.0f, false, Justification::centred);
+    text(g, "TRUE MIX", {542, 306, 124, 23}, p.muted, 12.0f, false, Justification::centredRight);
 }
 
 void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, float position,

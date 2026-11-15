@@ -1211,7 +1211,7 @@ private:
                 const auto badge = juce::Rectangle<float>(face.getWidth() - 86, bodyTop(n) - 23, 80, 15);
                 g.setColour(palette.inset); g.fillRect(badge);
                 g.setColour(palette.muted); g.drawRect(badge, 1.0f);
-                g.setFont(juce::Font(pixelFontOptions(11.0f)));
+                g.setFont(juce::Font(pixelFontOptions(12.0f)));
                 g.drawText("Bypassed", badge, juce::Justification::centred);
             }
         }

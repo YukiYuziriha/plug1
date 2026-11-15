@@ -6,7 +6,7 @@
 #include <functional>
 
 namespace vocalstack {
-class SpectralMorphPanel final : public juce::Component, private juce::Timer {
+class SpectralMorphPanel final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer {
 public:
     SpectralMorphPanel(Processor& processor, size_t fxSlot) : owner(processor), slot(fxSlot) {
         setComponentID("spectralMorphPanel");
@@ -44,6 +44,13 @@ public:
     static bool usesWideLayout(int width, bool inspector) { return !inspector && width >= 680; }
     bool usesSideBySideLayout() const { return usesWideLayout(getWidth(), inspectorLayout); }
     juce::Rectangle<int> spectrumBounds() const { return plot; }
+    static std::pair<juce::String, juce::String> axisLabels(int width, double sampleRate) {
+        const juce::Font font(pixelFontOptions(12.f));
+        const auto fits = [&](const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text) <= width; };
+        const juce::String level = "Peak bins -60..0 dBFS";
+        const juce::String frequency = sampleRate > 0 ? "Log Hz: 20 to " + juce::String(int(sampleRate / 2)) : "Waiting for analysis";
+        return {fits(level) ? level : juce::String("-60..0 dBFS"), fits(frequency) ? frequency : juce::String("20 Hz..Nyquist")};
+    }
     void revealParameter(const juce::String&) {}
     void refresh() {
         const auto graph = owner.getRoutingGraph(); donorWired = false;
@@ -84,7 +91,8 @@ public:
         const int width = availableWidth / columns;
         for (size_t i = 0; i < knobs.size(); ++i)
             knobs[i]->setBounds(int(i) % columns * width, int(i) / columns * 138, width, 138);
-        plot = (usesSideBySideLayout() ? visual : area).reduced(0, 18);
+        // Two explicit axis rows keep technical units readable in narrow inspectors.
+                plot = (usesSideBySideLayout() ? visual : area).withTrimmedTop(18).withTrimmedBottom(32);
     }
     void paint(juce::Graphics& g) override {
         const auto p = themePalette(*this, neon);
@@ -96,20 +104,24 @@ public:
             field.set(2, col, frame.result[col]);
         }
         material.paintSpectrum(g, plot.toFloat(), field, p.inset, {p.accent, p.secondary, p.text}, fluidAnimationSeconds(*this));
-        g.setFont(juce::Font(pixelFontOptions(11.f)));
+        g.setFont(juce::Font(pixelFontOptions(12.f)));
         const int legendY = plot.getY() - 17;
         const int legendWidth = std::min(145, plot.getWidth() / 3);
         g.setColour(p.accent); g.drawText("MAIN", plot.getX(), legendY, legendWidth, 16, juce::Justification::left);
         g.setColour(p.secondary); g.drawText("DONOR", plot.getX() + legendWidth, legendY, legendWidth, 16, juce::Justification::left);
         g.setColour(p.text); g.drawText(plot.getWidth() < 320 ? "RESULT" : "RESULT / pre Mix", plot.getX() + 2 * legendWidth, legendY, std::max(0, plot.getWidth() - 2 * legendWidth), 16, juce::Justification::left);
         g.setColour(p.muted);
-        const auto axis = frame.sampleRate > 0
-            ? "Peak bins -60..0 dBFS | log Hz: 20 to " + juce::String(int(frame.sampleRate / 2))
-            : juce::String("Waiting for analysis | fixed -60..0 dBFS");
-        g.drawText(axis, plot.getX(), plot.getBottom(), plot.getWidth(), 16, juce::Justification::left);
+        const auto axes = axisLabels(plot.getWidth(), frame.sampleRate);
+        g.drawText(axes.first, plot.getX(), plot.getBottom(), plot.getWidth(), 16, juce::Justification::left);
+        g.drawText(axes.second, plot.getX(), plot.getBottom() + 16, plot.getWidth(), 16, juce::Justification::left);
         juce::String status = !donorWired ? "DONOR UNROUTED" : frame.capturePending ? "CAPTURE WAITING" : frame.frozen ? "DONOR FROZEN" : !frame.donorConnected ? "DONOR ROUTED / UNAVAILABLE" : "DONOR ROUTED / LIVE";
         g.setColour(!donorWired ? p.secondary : p.text);
-        g.drawText(status, 6, getHeight() - 29, std::max(0, getWidth() - 125), 24, juce::Justification::left);
+        const int statusWidth = std::max(0, getWidth() - 125);
+                const juce::Font statusFont(pixelFontOptions(12.f));
+                const auto shortStatus = !donorWired ? "UNROUTED" : frame.capturePending ? "WAITING" : frame.frozen ? "FROZEN" : !frame.donorConnected ? "NO DATA" : "LIVE";
+                g.drawText(juce::GlyphArrangement::getStringWidth(statusFont, status) <= statusWidth ? status : juce::String(shortStatus),
+                           6, getHeight() - 29, statusWidth, 24, juce::Justification::left);
+                setTooltip("MAIN / DONOR / RESULT: measured peak bins, fixed -60..0 dBFS; logarithmic frequency 20 Hz to Nyquist. Result is before Mix. " + status);
         setTooltipText();
     }
 private:

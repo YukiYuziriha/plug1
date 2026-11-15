@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ToneUiTests.h"
+#include "GuiTestDisplay.h"
 #include "PresetTests.h"
 #include "CreativeEffectPanel.h"
 #include "CreativeEffectVisual.h"
@@ -421,6 +422,7 @@ inline void halfSpeedSliders() {
 }
 
 inline void creativeVisuals() {
+    guiTestDisplay::enumerate();
     constexpr std::array<CreativeKind, 5> kinds{CreativeKind::delay, CreativeKind::reverb, CreativeKind::compressor, CreativeKind::bitcrusher, CreativeKind::granular};
     constexpr std::array<CreativeParameter, 5> fields{CreativeParameter::delayTime, CreativeParameter::reverbDecay, CreativeParameter::compressorThreshold, CreativeParameter::crusherBits, CreativeParameter::granularPitch};
     for (int theme = 0; theme < 3; ++theme) for (size_t k = 0; k < kinds.size(); ++k) {
@@ -450,8 +452,8 @@ inline void creativeVisuals() {
         }
         CreativeEffectVisual visual(*owner, 1, kinds[k]); inheritTheme(visual, theme); visual.setSize(400, 238);
         CreativeEffectVisual expected(*reference, 1, kinds[k]); inheritTheme(expected, theme); expected.setSize(400, 238);
-        visual.addToDesktop(0); visual.setVisible(true); visual.setNeon(theme == 1);
-        expected.addToDesktop(0); expected.setVisible(true); expected.setNeon(theme == 1);
+        guiTestDisplay::attach(visual); visual.setNeon(theme == 1);
+        guiTestDisplay::attach(expected); expected.setNeon(theme == 1);
         ui::require(visual.visibleInHierarchy() && expected.visibleInHierarchy(), "Creative model fixture must be showing");
         // Compare parameter models at one explicit clock instant: independent
         // wall-clock refreshes advance Delay by different amounts.

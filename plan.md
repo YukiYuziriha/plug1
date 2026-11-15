@@ -1,6 +1,12 @@
 # Vocal Stack: Current roadmap and release history
 
-## Current release — 1.11.0 approved, packaged and installed
+## Current release — 1.11.1 approved, packaged and installed
+
+Unified Compressor plot, larger small technical text, and the Motion comparison
+showcase are delivered. See [1.11.1 validation](docs/Release-1.11.1-Validation.md).
+Sound algorithms, host parameter layout and prepared latency policy are unchanged.
+
+## Previous release — 1.11.0 approved, packaged and installed
 
 **All source-owner handoffs are complete. The user approved delivery of the entire
 pending preview; matching Release CLAP/VST3 packages are installed.** See

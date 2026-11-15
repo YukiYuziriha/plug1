@@ -29,6 +29,7 @@
 #include "ReactiveMaterialTests.h"
 #include "SpectralMorphUiTests.h"
 #include "NodeGalleryTests.h"
+#include "TypographyMotionTests.h"
 #if JUCE_WINDOWS
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -927,6 +928,10 @@ int main(int argc, char** argv) {
         try { benchmarkRoutingWork(); return 0; }
         catch (const std::exception& error) { std::cerr << "[FAIL] Native Routing cost probe: " << error.what() << '\n'; return 1; }
     }
+    if (argc == 2 && juce::String(argv[1]) == "--render-typography-motion") {
+        try { vocalstack::typographyMotionTests::capture(); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Typography/Motion capture: " << error.what() << '\n'; return 1; }
+    }
     if (argc == 4 && juce::String(argv[1]) == "--render-update-gallery") {
         try { vocalstack::nodeGalleryTests::run(argv[2], juce::String(argv[3]).getIntValue(), true); return 0; }
         catch (const std::exception& error) { std::cerr << "[FAIL] Coordinated update capture: " << error.what() << '\n'; return 1; }
@@ -997,7 +1002,8 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 81> tests{{
+    const std::array<Test, 82> tests{{
+                {"Technical typography fits reserved lanes in all themes", vocalstack::typographyMotionTests::run},
             {"Control layout update, midpoint sliders, inward rings and wide Morph", vocalstack::controlLayoutUpdateTests::run},
             {"Compressor measured four-second gain reduction history", vocalstack::compressorHistoryTests::run},
             {"Utility visual telemetry, Gate history and Mono Audition", [] {

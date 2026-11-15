@@ -7,7 +7,7 @@ vocal doubling, expand to **eight generated voices plus a separate Lead**, then
 shape individual branches or the whole mix with a modular effects graph. Stack
 and Routing are two views of the same patch—not separate processing modes.
 
-**v1.11.0** · [Download & install](#download--install) ·
+**v1.11.1** · [Download & install](#download--install) ·
 [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase) ·
 [Build from source](docs/Building.md) · [GPLv3 + AGPLv3 licensing](docs/Licensing.md)
 
@@ -52,10 +52,10 @@ guides keeping the shape of the space in view.
 
 ### Compressor — inspect the attenuation actually applied
 
-![Compressor rack with measured four-second gain-reduction history](docs/showcase/compressor.gif)
+![Compressor with a unified transfer curve, sound history and gain-reduction plot](docs/showcase/compressor.gif)
 
-See four seconds of applied gain reduction alongside the transfer curve—follow
-how transients hit the compressor and how it recovers.
+Follow the sound, applied gain reduction and transfer curve in one shared graph,
+with the compression meter still in view.
 
 ### Stereo — check width and mono compatibility
 
@@ -65,6 +65,14 @@ Width, balance, channel swap and polarity controls share a rack with L/R activit
 correlation and a persisted post-Mix Mono Audition switch.
 
 [How these audio-driven showcases were captured](docs/showcase/README.md).
+
+### Motion — set the pace of the pixel material
+
+![Background texture at Motion 0%, 3% and 100%, played at real time](docs/showcase/motion.gif)
+
+Freeze the decorative texture at **0%**, keep its default slow drift at **3%**, or
+push it to roughly **33× that speed at 100%**. Motion changes the material—not
+your audio or the speed of measured signal displays. The comparison plays at 1×.
 
 ### Routing — make the two-source connection explicit
 
@@ -76,9 +84,9 @@ from either view. [Try the wiring walkthrough](docs/Getting-Started.md#spectral-
 
 ## Download & install
 
-Download the [**v1.11.0 Windows x64 ZIP**](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/VocalStack-1.11.0-Windows-x64.zip)
+Download the [**v1.11.1 Windows x64 ZIP**](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-Windows-x64.zip)
 for both formats, their complete notices and source-download information.
-[SHA256 checksums](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/SHA256SUMS.txt)
+[SHA256 checksums](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/SHA256SUMS.txt)
 are supplied with the release. The same plugin bytes are also tracked below.
 
 | Format | Download | Install |
@@ -93,7 +101,7 @@ Keep the [GPLv3 text](Windows-x64/LICENSE.txt), [AGPLv3 text](Windows-x64/COPYIN
 [source notice](Windows-x64/SOURCE.md), [font license](Windows-x64/PixelifySans-OFL.txt)
 and [third-party notices](Windows-x64/ThirdParty) with your copy.
 
-**Build or modify it:** download the [complete corresponding source](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/VocalStack-1.11.0-corresponding-source.zip),
+**Build or modify it:** download the [complete corresponding source](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-corresponding-source.zip),
 including pinned dependencies, patches and build tools. See the
 [build guide](docs/Building.md), [licensing details](docs/Licensing.md) and
 [historical source downloads](docs/Historical-Source.md).
@@ -135,7 +143,7 @@ latency-aligned original input and the entire patch.
 **Experimental status:** automated DSP and CLAP/VST3 checks cover mono/stereo
 layouts and sidechains at 44.1, 48 and 96 kHz. Actual DAW listening/workflow and
 native UI performance remain unverified. See the
-[release validation](docs/Release-1.11.0-Validation.md) for test results, outstanding
+[release validation](docs/Release-1.11.1-Validation.md) for test results, outstanding
 checks and known limitations.
 
 ## Documentation & support

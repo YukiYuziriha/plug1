@@ -579,8 +579,8 @@ private:
                 if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
                 const auto wet = step.fx->creative.process(value.audio.left, value.audio.right, fx.creative, controls.tempoBpm);
-                if (monitoring && (n.type == NodeType::reverb || n.type == NodeType::convolution || n.type == NodeType::saturator)) {
-                    // The real processed tail, not dry input or a parameter model.
+                if (monitoring && (n.type == NodeType::reverb || n.type == NodeType::convolution || n.type == NodeType::saturator || n.type == NodeType::compressor)) {
+                    // Actual processed wet samples, not dry input or a parameter model.
                     // Bypass/zero Mix invalidates measured history, not DSP state.
                     monitorHasWet = controls.monitorWetEnabled && fx.enabled && fx.mix > 0;
                     if (monitorHasWet) monitorWet = {wet[0], wet[1]};

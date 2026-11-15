@@ -4,6 +4,7 @@
 #include "CreativeEffects.h"
 #include "FxVisuals.h"
 #include "ReactiveMaterial.h"
+#include "CompressorPlot.h"
 
 namespace vocalstack {
 
@@ -18,10 +19,13 @@ public:
         setTooltip(kind == CreativeKind::granular
                     ? grainDescription()
                     : "Parameter-derived schematic using coherent effective modulation targets. Unassigned parameters are host base reads; DSP smoothing and signal-dependent behaviour are not simulated. Reverb is not a measured impulse response. Compressor GR is measured by the DSP.");
+        if (kind == CreativeKind::compressor) {
+            setName("Compressor shared transfer and measured history plot");
+            setTooltip("One plot, independent axes: solid Curve uses Input/Output -72..0 dBFS. In (faint) and Wet (strong) show measured stereo RMS before Mix, using the bottom History time scale and left dBFS scale. PCM retains 2.56 s, right-aligned in 4 s; older space is empty. Dashed GR is actual DSP gain reduction before makeup/Mix, peak per 20 ms bin, four seconds, on the right 0..36 dB downward scale. Curve is the parameter-derived static transfer including Mix/makeup, not measured output; attack/release and detector behaviour are not simulated. Off-scale values are clipped; the numeric GR meter is not. Stopped/bypassed/reset telemetry clears.");
+        }
         if (factoryReactive())
             setTooltip("Background: actual stereo min/max and RMS in 20 ms bins, oldest left, newest right, 2.56 s; logarithmic amplitude (-60 to 0 dBFS), not the foreground model axes. Faint amber is measured input; stronger teal is processed wet before slot Mix (including the actual tail), sharing a fixed zero baseline. Motion does not pause audio data. Bypass, reset and stopped processing clear the field. Thin foreground: parameter model only, not measured IR or sample-wise transfer. Convolution uses the generated 48 kHz L IR envelope with illustrative Tail taper; Saturator transfer excludes Tone/Out/Match/Mix and resampling.");
-        if (kind == CreativeKind::compressor)
-            setTooltip("Top: actual DSP gain reduction before makeup and slot Mix, peak per completed 20 ms bin over four seconds; oldest left, newest right. Fixed 0..36 dB attenuation grows downward from 0 at the top; larger values clip visually, not numerically. Missing or stale telemetry is blank. Lower: parameter-derived static transfer, not measured audio; attack/release and detector behaviour are not simulated.");
+
         if (kind == CreativeKind::convolution) {
             for (int s = 0; s < 4; ++s) {
                 const auto ir = FactoryConvolution::makeImpulse(48000, s);
@@ -120,8 +124,7 @@ public:
                 delayPhase = std::fmod(delayPhase + (nowMs - lastAnimationMs) * .001 / delayIntervalSeconds(), 1.0);
             lastAnimationMs = nowMs;
         }
-        const float gr = owner.getCreativeGainReduction(slot);
-        reduction = std::isfinite(gr) ? std::max(0.f, gr) : 0.f;
+
         repaint();
     }
     void paint(juce::Graphics& g) override {
@@ -145,7 +148,7 @@ public:
             case CreativeKind::reverb: break; // Shared reactive path above.
             case CreativeKind::delay: delay(g, plot, footer, c); break;
             case CreativeKind::granular: granular(g, plot, footer, c); break;
-            case CreativeKind::compressor: compressor(g, plot, footer, c); break;
+            case CreativeKind::compressor: break; // Unified plot above.
             case CreativeKind::bitcrusher: crusher(g, plot, footer, c); break;
             case CreativeKind::convolution: break;
             case CreativeKind::saturator: break;
@@ -232,20 +235,21 @@ private:
         text(g, plot.withTrimmedTop(13), "FIELD: HISTORY < NOW | 2.56 s / -60..0 dBFS", c.muted);
     }
     void paintCompressor(juce::Graphics& g, juce::Rectangle<float> bounds, const ThemePalette& c) {
-        // Keep measured attenuation visually separate from the static transfer.
         g.setColour(c.inset); g.fillRect(bounds);
         g.setColour(c.border); g.drawRect(bounds.reduced(.5f), 1.f);
         auto b = bounds.reduced(8, 8);
-        text(g, b.removeFromTop(16), enabled ? "MEASURED COMPRESSION HISTORY" : "BYPASS | no applied compression", c.text);
-        auto lane = b.removeFromTop(std::clamp(b.getHeight() * .36f, 58.f, 105.f));
-        historyMaterial.paint(g, lane, measuredCompressionHistory(), {c.inset, c.border, c.secondary, c.muted});
-        b.removeFromTop(3);
-        text(g, b.removeFromTop(15), "STATIC TRANSFER | effective targets / not audio", c.muted);
-        auto footer = b.removeFromBottom(43);
-        b.removeFromBottom(15);
-        auto plot = b.withTrimmedLeft(23).withTrimmedRight(5).reduced(0, 5);
-        if (!plot.isEmpty()) { grid(g, plot, c.border); compressor(g, plot, footer, c); }
+        auto meter = b.removeFromBottom(17);
+        const auto measured = measuredCompressionHistory();
+        compressorPlot.paint(g, b, telemetry, measured, liveTelemetry && enabled,
+            {value(P::compressorThreshold), value(P::compressorRatio), value(P::compressorKnee),
+             value(P::compressorMakeup), mix * .01f, enabled},
+            {c.inset, c.border, c.muted, c.accent, c.text, c.secondary, c.muted});
+        const float current = measured.available ? measured.currentDb : 0.f;
+        text(g, meter.removeFromLeft(112), measured.available ? "Actual GR " + number(current) + " dB" : "GR unavailable", c.secondary);
+        meter.reduce(0, 5); g.setColour(c.border); g.fillRect(meter);
+        g.setColour(c.secondary); g.fillRect(meter.withWidth(meter.getWidth() * std::clamp(current / 36.f, 0.f, 1.f)));
     }
+    CompressorPlot compressorPlot;
     struct GuideCache {
         juce::Path path;
         juce::Rectangle<float> bounds;
@@ -262,7 +266,7 @@ private:
         }
     };
     mutable GuideCache guideCache;
-    reactiveVisual::HistoryField historyMaterial;
+
     mutable reactiveVisual::GainReductionField compressionField;
     mutable uint64_t compressionSequence = 0, compressionEpoch = 0;
     mutable uint32_t compressionNode = 0;
@@ -290,7 +294,7 @@ private:
     }
     static juce::String pitch(float v) { return (v > 0 ? "+" : "") + number(v) + " st"; }
     static void text(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& s, juce::Colour c) {
-        g.setColour(c); g.setFont(juce::Font(pixelFontOptions(11.f)));
+        g.setColour(c); g.setFont(juce::Font(pixelFontOptions(12.f)));
         g.drawFittedText(s, r.toNearestInt(), juce::Justification::centredLeft, 1, 1.f);
     }
     static void grid(juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) {
@@ -471,41 +475,6 @@ private:
         text(g, footer.removeFromTop(16), "Overlap " + number(model.overlap, 1) + "x / " + pitch(model.pitchSemitones), c.secondary);
         text(g, footer, "Lookback " + number(model.lookbackMs, 0) + " ms / " + (model.reverse ? "Rev" : "Fwd"), c.muted);
     }
-    void compressor(juce::Graphics& g, juce::Rectangle<float> r, juce::Rectangle<float> f, const ThemePalette& c) const {
-        const float threshold = value(P::compressorThreshold), knee = value(P::compressorKnee);
-        const float slope = 1 - 1 / value(P::compressorRatio), makeup = value(P::compressorMakeup);
-        const auto yFor = [&](float db) { return r.getBottom() - std::clamp((db + 60) / 84, 0.f, 1.f) * r.getHeight(); };
-        g.setColour(c.muted.withAlpha(.35f)); g.drawLine(r.getX(), yFor(-60), r.getRight(), yFor(24), .8f);
-        g.setColour(c.secondary.withAlpha(.5f));
-        g.drawVerticalLine(int(r.getX() + (threshold + 60) / 84 * r.getWidth()), r.getY(), r.getBottom());
-        auto& line = guideCache.path;
-        if (guideCache.update(r, values, enabled, mix)) {
-        for (int i = 0; i <= 256; ++i) {
-            const float in = -60 + 84 * float(i) / 256, over = in - threshold;
-            const float gr = knee > 0 && over > -knee * .5f && over < knee * .5f
-                ? slope * (over + knee * .5f) * (over + knee * .5f) / (2 * knee) : slope * std::max(0.f, over);
-            const float wet = enabled ? in - gr + makeup : in;
-            const float out = in + 20 * std::log10((1 - mix * .01f) + mix * .01f * std::pow(10.f, (wet - in) / 20));
-            const float x = r.getX() + r.getWidth() * float(i) / 256;
-            if (i == 0) line.startNewSubPath(x, yFor(out)); else line.lineTo(x, yFor(out));
-        }
-        }
-        curve(g, line, r, c.accent);
-        text(g, {r.getX() - 24, r.getY(), 24, 12}, "+24", c.muted);
-        text(g, {r.getX() - 24, r.getBottom() - 12, 24, 12}, "-60", c.muted);
-        axis(g, r, "Input -60 dB", "+24 dB", c);
-        text(g, f.removeFromTop(14), "Threshold " + number(threshold) + " dB / " + number(value(P::compressorRatio)) + ":1 / Knee " + number(knee) + " dB", c.text);
-        auto bar = f.removeFromTop(14);
-        const auto measured = measuredCompressionHistory();
-        // The existing atomic meter remains actual DSP telemetry even while a
-        // producer without history support is being integrated.
-        const bool meterLive = liveTelemetry && enabled;
-        const float currentGr = measured.available ? measured.currentDb : meterLive ? reduction : 0.f;
-        text(g, bar.removeFromLeft(110), meterLive ? "Actual GR " + number(currentGr) + " dB" : "GR unavailable", c.secondary);
-        bar.reduce(0, 4); g.setColour(c.border); g.fillRect(bar);
-        g.setColour(c.secondary); g.fillRect(bar.withWidth(bar.getWidth() * std::clamp(currentGr / 36, 0.f, 1.f)));
-        text(g, f, "Output -60..+24 dB (off-scale clipped); GR bar 0-36", c.muted);
-    }
     void crusher(juce::Graphics& g, juce::Rectangle<float> r, juce::Rectangle<float> f, const ThemePalette& c) const {
         const float bits = value(P::crusherBits), step = std::pow(2.f, 1 - bits);
         const float drive = std::pow(10.f, value(P::crusherDrive) / 20);
@@ -539,7 +508,7 @@ private:
     CreativeKind kind;
     std::array<float, creativeParameterCount> values = CreativeSettings{}.values;
     double tempo = 120, delayPhase = 0, lastAnimationMs = -1;
-    float reduction = 0, mix = 100;
+    float mix = 100;
     bool enabled = true, neon = false, ready = false;
 };
 

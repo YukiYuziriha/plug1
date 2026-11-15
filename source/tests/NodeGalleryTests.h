@@ -44,7 +44,7 @@ inline const char* model(const Entry& e) {
         case NodeType::spectralMorph: return "Measured MAIN / DONOR / result spectra; real Freeze hold/release";
         case NodeType::reverb: case NodeType::convolution: case NodeType::saturator:
             return "Measured input / wet history + parameter-derived foreground";
-        case NodeType::compressor: return "Actual DSP peak GR / 20 ms / 4 seconds / 0..36 dB, plus static transfer model";
+        case NodeType::compressor: return "ONE plot: measured In/Wet RMS + dashed actual GR; solid static transfer; independent axes";
         case NodeType::delay: return "Parameter-timed phase illustration; not measured echoes";
         case NodeType::granular: return "Intentionally stable parameter envelope; NOT live grains/audio";
         case NodeType::bitcrusher: return "Static parameter-derived quantization schematic";
@@ -175,6 +175,8 @@ inline void run(const juce::String& only, int theme = 1, bool coordinated = fals
                 if(coordinated && frame==90 && (e.type==NodeType::gate || e.type==NodeType::compressor)) {
                     ui::require(hasFx && fx.hasGainReduction && fx.gainReductionHistoryUsed > 100, "Approval capture lacks actual four-second GR producer history");
                     if(e.type==NodeType::gate) ui::require(fx.utilityHistory.used > 100, "Approval Gate capture lacks measured threshold/levels");
+                                        if(e.type==NodeType::compressor) ui::require(fx.hasWet && fx.historyUsed==128 && fx.history.back().inputRms>0 && fx.history.back().wetRms>0,
+                                            "Compressor shared plot lacks actual input/wet energy");
                 }
                 if(coordinated && frame==60 && e.type==NodeType::stereo) {
                     ui::require(hasFx && std::abs(fx.output[0].back()-fx.output[1].back()) < 1.e-5f, "Approval Stereo capture is not actual final-output mono");
@@ -197,7 +199,15 @@ inline void run(const juce::String& only, int theme = 1, bool coordinated = fals
                 ui::require(!file.existsAsFile() || file.deleteFile(),"Cannot replace gallery PNG");
                 juce::FileOutputStream stream(file); ui::require(stream.openedOk() && juce::PNGImageFormat().writeImageToStream(labelled,stream),"Gallery PNG");
                 csv+=juce::String(frame)+","+juce::String(std::sqrt(inputEnergy/3840),8)+","+juce::String(std::sqrt(outputEnergy/3840),8)+","+juce::String(juce::int64(hasFx ? fx.sequence : 0))+","+juce::String(hasFx ? fx.wetRms : 0,8)+","+juce::String(juce::int64(hasMorph ? morph.spectrum.revision : 0))+","+juce::String(int(hasMorph && morph.spectrum.frozen))+","+juce::String(int(difference))+"\n";
-                if(frame==45) measuredFieldUiTests::save(*editor,stem+"-context.png");
+                if(frame==45) {
+                                    measuredFieldUiTests::save(*editor,stem+"-context.png");
+                                    if(e.type==NodeType::compressor) {
+                                        auto* visual=ui::find<CreativeEffectVisual>(rack ? static_cast<juce::Component&>(*rackPanel) : static_cast<juce::Component&>(*routing),
+                                            [](auto& v){ return v.isShowing(); });
+                                        ui::require(visual && visual->hasMeasuredActivity(),"Compressor production shared plot missing live telemetry");
+                                        measuredFieldUiTests::save(*visual,stem+"-plot.png");
+                                    }
+                                }
             }
             if(e.type==NodeType::spectralMorph) ui::require(held && released && changed>0,"Morph hold/release/activity");
             if(e.type==NodeType::reverb || e.type==NodeType::convolution) ui::require(tail && changed>0,"Actual wet tail missing");
