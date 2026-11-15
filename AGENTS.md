@@ -57,7 +57,7 @@
 - Tooling/docs-only changes require relevant lightweight validation, not plugin
   rebuilds, version bumps, packaging, or installation. Commit and push them too.
 - After changes affecting plugin binaries, always rebuild the affected binaries, run relevant tests, and
-  commit and push the completed work to the existing private GitHub repository.
+  commit and push the completed work to the existing GitHub repository.
   Do not leave source changes on GitHub with stale packaged binaries.
 - Update the version and documentation for user-visible releases. Refresh the
   tracked CLAP and VST3 files in `Windows-x64` from the successful Release build.

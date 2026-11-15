@@ -9,7 +9,7 @@ and Routing are two views of the same patch—not separate processing modes.
 
 **v1.11.0** · [Download & install](#download--install) ·
 [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase) ·
-[Build from source](docs/Building.md) · [GPL v3](LICENSE)
+[Build from source](docs/Building.md) · [GPLv3 + AGPLv3 licensing](docs/Licensing.md)
 
 ![Vocal Stack v1.11.0 in the Neon theme: Stack overview with the Spectral Morph rack open](docs/showcase/stack-1.11.0.png)
 
@@ -80,8 +80,10 @@ that a host track is connected. [Follow the wiring walkthrough](docs/Getting-Sta
 
 ## Download & install
 
-The **v1.11.0 Windows x64 files are tracked in this repository**. No separate
-release ZIP or installer is required or assumed.
+Download the [**v1.11.0 Windows x64 ZIP**](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/VocalStack-1.11.0-Windows-x64.zip)
+for both formats, their complete notices and source-download information.
+[SHA256 checksums](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/SHA256SUMS.txt)
+are supplied with the release. The same plugin bytes are also tracked below.
 
 | Format | Download | Install |
 | --- | --- | --- |
@@ -91,8 +93,21 @@ release ZIP or installer is required or assumed.
 For VST3, download the repository with GitHub's **Code → Download ZIP** or clone
 it, then take the bundle from `Windows-x64/VST3/`. The bundle link above browses
 the folder; downloading only its inner binary is not a complete installation.
-Keep the [license](Windows-x64/LICENSE.txt), [font license](Windows-x64/PixelifySans-OFL.txt)
+Keep the [GPLv3 text](Windows-x64/LICENSE.txt), [AGPLv3 text](Windows-x64/COPYING.AGPLv3),
+[source notice](Windows-x64/SOURCE.md), [font license](Windows-x64/PixelifySans-OFL.txt)
 and [third-party notices](Windows-x64/ThirdParty) with your copy.
+
+**Corresponding source:** these binary bytes use
+[commit `12534e87440ca33a41f12bde53956319bd06ebab`](https://github.com/YukiYuziriha/plug1/tree/12534e87440ca33a41f12bde53956319bd06ebab).
+Download the [**complete corresponding-source ZIP**](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/VocalStack-1.11.0-corresponding-source.zip),
+including the full pinned dependency sources, patches, notices and build tools.
+[Build instructions](docs/Building.md) and [exact dependency pins](docs/Licensing.md)
+are included. For binaries from older commits, also download the
+[**source-history ZIP**](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/VocalStack-source-history.zip);
+[restoration instructions and the per-commit matrix](docs/Historical-Source.md)
+explain how it combines with the dependency sources in the current source ZIP.
+These release URLs are the publication targets for tag `v1.11.0`; the maintainer
+uploads the prepared assets before making the release/repository public.
 
 Close hosts that have the plugin loaded before replacing it. Add the chosen
 folder to your host's scan locations if needed, rescan, and insert **Vocal Stack**
@@ -155,11 +170,16 @@ DSP/module checks from the remaining native desktop-input/occlusion blocker.
 
 ## License & credits
 
-The repository includes the **GNU General Public License, version 3** in
-[LICENSE](LICENSE). Third-party code and assets retain their own terms: see
-[ThirdParty](ThirdParty) for JUCE, CLAP/CLAP JUCE Extensions, the VST3 SDK,
-Signalsmith Stretch/Linear, the GPL-covered [Vital filter subset](ThirdParty/Vital/README.md),
-and Pixelify Sans under the [SIL Open Font License 1.1](ThirdParty/PixelifySans-OFL.txt).
-JUCE's notice describes its AGPLv3/commercial licensing separately; do not assume
-one repository license replaces dependency obligations. Convolution uses original
-synthetic Church, Hall, Room and Plate IRs, not third-party sampled spaces.
+Vocal Stack selects **JUCE's open-source AGPLv3 route**. The CLAP/VST3 plugin is a
+**combined GPLv3/AGPLv3 work** under section 13 of both licenses, not GPLv3-only.
+Project-owned source keeps the existing [GPLv3 license](LICENSE); JUCE modules use
+[AGPLv3](COPYING.AGPLv3). There is no claim of a commercial JUCE entitlement and no
+blanket relicensing of third-party code. See [Licensing and corresponding source](docs/Licensing.md)
+for the scope, distribution obligations and publication checklist.
+
+[ThirdParty](ThirdParty) retains notices for JUCE, CLAP/CLAP JUCE Extensions, the
+VST3 SDK, Signalsmith Stretch/Linear, the GPL-covered
+[Vital filter subset](ThirdParty/Vital/README.md), and Pixelify Sans under the
+[SIL Open Font License 1.1](ThirdParty/PixelifySans-OFL.txt). Embedded dependency
+notices also remain applicable. Convolution uses original synthetic Church,
+Hall, Room and Plate IRs, not third-party sampled spaces.

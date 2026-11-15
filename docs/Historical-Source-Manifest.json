@@ -1,0 +1,978 @@
+{
+  "commit_count": 44,
+  "commits": [
+    {
+      "cmake_blob": "17a2b71ed971d3ae2e131af8ef483815c5e9e360",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "eb332e561f0d9af22d88d1a270e5775f2d7b1452",
+          "sha256": "d9578ae13f3c977d3344dea2ad873d9a2391e2204116c1938a74c25ade94d721"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "077bd8d09c815e72c7d23b5abf81bf501382a78c",
+          "sha256": "0ccbad0de7598b6a251713883ed41d4425004bcfbb3c1b01eb69b8d9e2c2ac35"
+        }
+      },
+      "commit": "0bcf66938a1d3d73ba681c7cf45fc2ec1672378d",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "84617da33bf516c40ec8e793c702e3bf841a5643",
+      "version": "1.0.2"
+    },
+    {
+      "cmake_blob": "297246a856804c8670d441a56a1c7a4804061d89",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "160dec595e4939bdef58d626b8b3ab371ccf60f7",
+          "sha256": "e0f6d75504ee57e298b9ec63feeaf5982b0d7cb3127e0317b6e97c0b55768bdf"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "802ef5a680583fe01f3f9fca1541f2a97fa27031",
+          "sha256": "dd0fec5b4e4298020efc614256ba39af8b454f7b10d6afee8dac533dd440c963"
+        }
+      },
+      "commit": "cbd1e628399444645df6c108aa05b2dfa03ee8d1",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "2eaa8e69742d48c8a9ca3d939b60d50dd3da5d32",
+      "version": "1.1.0"
+    },
+    {
+      "cmake_blob": "7c4b1a09f140ec284a5a0b97d6fde83ab52e344b",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "54d2a970997ebda7c3f3032dd9a40fa40e34c309",
+          "sha256": "6e526ff458d17a7cb1dd2a088d8f2408a21bd4a416ccde496be9b7816149abca"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "1fcb743dde7cb488b778b2d5fd18167729e0c8aa",
+          "sha256": "a368bfbbc5402f84fbe50ef501d0fa8f58a007d145766c6ba44fbe349fb50ae1"
+        }
+      },
+      "commit": "60c459ed7a038ee2bea8de1ed6fcabe0f0396262",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "28422e895bbdcc5239c7fdcf290c328818fccf5b",
+      "version": "1.1.1"
+    },
+    {
+      "cmake_blob": "a36dfa4a8561162d2804af80958d90442f7be94f",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "0101e51c7d806c6acd709602b3ee58343129839b",
+          "sha256": "977efea464a7f66747ec7ced317d4fa7068ec9ed0d6b9bfce82f2c1e306c2f83"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "4d90edfd9868c8e1f2704a3b266952993076a917",
+          "sha256": "77f2e21a85aa2b8bf6029d8449c3b923f33955091cc517e8a29831c54b0c7d38"
+        }
+      },
+      "commit": "3113d758aed45dbc32fa6fe7ce4c9e2ff27c5b3f",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "47b7840ac3821d1b2a25cc67664e949b44dfac98",
+      "version": "1.1.2"
+    },
+    {
+      "cmake_blob": "aa273e1aac8c2dfebb2d8200e76eea29fe66bca7",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "2412c09b65383ff3fb98583a9810d6d6e4dd9a69",
+          "sha256": "cb036bf51392c60db77fcd3958377bc191cceaacd256edc64b0e2ef3d0f7f9aa"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "841bc616067f54c6d73e8f63b1e8fe6418ce8cb2",
+          "sha256": "c1aae7e18d30e21e2d8a6793626ca987b4ce5f30eeba8fec7029ac93ecf92445"
+        }
+      },
+      "commit": "ee39f020a2de95377a4b05b1e58e8f342153ccde",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "79fa42c9ba91383858cb19956a615cd9ae295244",
+      "version": "1.2.0"
+    },
+    {
+      "cmake_blob": "aa273e1aac8c2dfebb2d8200e76eea29fe66bca7",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "2412c09b65383ff3fb98583a9810d6d6e4dd9a69",
+          "sha256": "cb036bf51392c60db77fcd3958377bc191cceaacd256edc64b0e2ef3d0f7f9aa"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "841bc616067f54c6d73e8f63b1e8fe6418ce8cb2",
+          "sha256": "c1aae7e18d30e21e2d8a6793626ca987b4ce5f30eeba8fec7029ac93ecf92445"
+        }
+      },
+      "commit": "57140bc4ccbec084e478e994a5d55c4ebbaa1b06",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "79fa42c9ba91383858cb19956a615cd9ae295244",
+      "version": "1.2.0"
+    },
+    {
+      "cmake_blob": "aa273e1aac8c2dfebb2d8200e76eea29fe66bca7",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "2412c09b65383ff3fb98583a9810d6d6e4dd9a69",
+          "sha256": "cb036bf51392c60db77fcd3958377bc191cceaacd256edc64b0e2ef3d0f7f9aa"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "841bc616067f54c6d73e8f63b1e8fe6418ce8cb2",
+          "sha256": "c1aae7e18d30e21e2d8a6793626ca987b4ce5f30eeba8fec7029ac93ecf92445"
+        }
+      },
+      "commit": "38c102f8cfb68efd1066c6676c171e890eb10f0e",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "79fa42c9ba91383858cb19956a615cd9ae295244",
+      "version": "1.2.0"
+    },
+    {
+      "cmake_blob": "aa273e1aac8c2dfebb2d8200e76eea29fe66bca7",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "2412c09b65383ff3fb98583a9810d6d6e4dd9a69",
+          "sha256": "cb036bf51392c60db77fcd3958377bc191cceaacd256edc64b0e2ef3d0f7f9aa"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "841bc616067f54c6d73e8f63b1e8fe6418ce8cb2",
+          "sha256": "c1aae7e18d30e21e2d8a6793626ca987b4ce5f30eeba8fec7029ac93ecf92445"
+        }
+      },
+      "commit": "f414c0ca60f183efb32550e77b17c03e554657d5",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "79fa42c9ba91383858cb19956a615cd9ae295244",
+      "version": "1.2.0"
+    },
+    {
+      "cmake_blob": "9d2668df5fe1267c83f1abb58f837dafceef533e",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "ed08c18d6a9332a7207b9f0c4af9e4d9076a100d",
+          "sha256": "99bd27f50fe1cb16a5501f73c367afa0567b3e6c9e462ffbd39d47186312fa8f"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "78f1a3842e662c24d76a5f20b4aee221a4dfb433",
+          "sha256": "c4a5087f6ded02823d948b88aff79c98240e162d38eefd148503cf6641e187d3"
+        }
+      },
+      "commit": "bd84991900a16d58e192a94e4cfd79d2a96e32eb",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "f80204ae0f84be7e0cbaf74b1eb8044d06ec0fd5",
+      "version": "1.3.0"
+    },
+    {
+      "cmake_blob": "8828c7436f825685dfc034e19f8817a0740b5e71",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "3795321ed82e3f4e93dc5d97c10ac3073ce62951",
+          "sha256": "14b3f2a9eeb585a48b090525468dfce00ccfc530281746b8d2d34834dc2f6f4e"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "411831186299bf55991bd0ba27e001d6a1c4bf24",
+          "sha256": "c037e1dcb334087a1c0287f2cecaf4ba799bf253d14213b47f1376ee29e3f02b"
+        }
+      },
+      "commit": "3f2bec4e92e384696950707a2637d5faf224d304",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "4af90f00026ca7558bedfe7ca061ce4c5ecd5196",
+      "version": "1.4.0"
+    },
+    {
+      "cmake_blob": "760a325ad0038c00af3834a3c7a52e9499dec6c6",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "288a20da07f5acb3b7ff5de9c776e66a52eabfa7",
+          "sha256": "38790fa3695c3eb2547a21e35d882076bb055c6b1dd875733d9ca67b8f0a7403"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "542878f2b85110cede3e44a9443fdf13092c7cd9",
+          "sha256": "272e25b23de9fdab94af58364719cd5cd6e2554d8b3b6c7b369163eb89fb3ba8"
+        }
+      },
+      "commit": "088c9947216fd918f43805b42ac18d8845b2e5f8",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "582624c64d12a420af4209a30a2749bc6fbb000b",
+      "version": "1.4.1"
+    },
+    {
+      "cmake_blob": "f157c63165ecb6524b01f55ff953f15e9f209d48",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "b58ce17850c58c6cd982f757290d438563749b3f",
+          "sha256": "3f32eca43103766c784aa0569b3529cfea7e6c079fe241ba435486a1af0a7776"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "a072b4a6cb9260d2cd677afbb4facf412b815876",
+          "sha256": "726cf9e94068cd47f9f5281413eff42eae17643429dd491acb50cf176a3e3723"
+        }
+      },
+      "commit": "c81f949a8cb8e117525bee5282b317cc79f0c641",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "52e1d30bccd77b2655bd98aa9b9abb9c0a25f1f6",
+      "version": "1.5.0"
+    },
+    {
+      "cmake_blob": "db405e9ed20271b2b5697d03433a049b6b7aa9d9",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "7ac2ce523a05acb212ea1089b120475ccf768fc8",
+          "sha256": "bb89c61f4b8f8860f1cb03727894c0993eac9a8612196aa90fb1560d475c924d"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "7bf9f48e6586bbecdf0933833d016d45936b2d4a",
+          "sha256": "3c62109949fc349fccf2883655fc77ce8ba30ea1ad8e5e6f171f0696ed19378d"
+        }
+      },
+      "commit": "388f4b7db300135444a58259f6c48727707b64be",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "3dec222eead216157730e0f954398ac51832ad9e",
+      "version": "1.5.1"
+    },
+    {
+      "cmake_blob": "774f88f872b02c1b4d24e881bce522ad5732e384",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "dadd717366700062abfccdf186bd27f6dc877ad2",
+          "sha256": "b88e936d33b02d05e61e456099f07d0f2c618d75b658169e402eb1bf29d344d6"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "e30904c91a4bf1bd1ca2e29bf856679e01128dd2",
+          "sha256": "20b20c1f07835459a886d0472b9402621b894942b9db598ab44a26ee46f65110"
+        }
+      },
+      "commit": "29dcd347eb565e0f75c61c06a4335bd10537e8ac",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "94610e2ca9c79b2712419754bb65df74154664c6",
+      "version": "1.5.2"
+    },
+    {
+      "cmake_blob": "90a3b41f6b004dbdbd4776a0a365ea0d1d96449f",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "2aefc7bb66f90d3de4d35b7ae7d742630f861c1b",
+          "sha256": "0d064d0666e8a178a215b4311daaa24705460a5bbb29c4556e38f77bf53e05b7"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "8b00233225818d4674f1cd5361cb950a4c9647cb",
+          "sha256": "b66bbd125c52b2df304c5526df8d9863038dca8d6918fe10dc431422f6d0614a"
+        }
+      },
+      "commit": "ddc8e271a34324b57f0281c4743017b09b57ba79",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "cbaf223b6f67912bf18594cb6afe0e67678a1ecc",
+      "version": "1.6.0"
+    },
+    {
+      "cmake_blob": "90a3b41f6b004dbdbd4776a0a365ea0d1d96449f",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "2aefc7bb66f90d3de4d35b7ae7d742630f861c1b",
+          "sha256": "0d064d0666e8a178a215b4311daaa24705460a5bbb29c4556e38f77bf53e05b7"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "8b00233225818d4674f1cd5361cb950a4c9647cb",
+          "sha256": "b66bbd125c52b2df304c5526df8d9863038dca8d6918fe10dc431422f6d0614a"
+        }
+      },
+      "commit": "1100e008f2607f214fd4c35f966015bb9a3cfd34",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "cbaf223b6f67912bf18594cb6afe0e67678a1ecc",
+      "version": "1.6.0"
+    },
+    {
+      "cmake_blob": "012bc10688101c43fa28791fe68862d3be4fac84",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "2206a33c582f7099b1af9b7fc37c6232d2253714",
+          "sha256": "09b4c1e20de351d61893f019a151aa83812b72f07b1ea65d224331687df4ce33"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "b173c0d5a1bb6300f708049d5b3adc844362f9be",
+          "sha256": "676369009632cdef95a0acd1c36e34b46af21e3ee282b0045f0b9070534a1c04"
+        }
+      },
+      "commit": "b3b230ad05fc480c9a3b07f997f7495c565254c0",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "9a00ec0b1ed82e5410ab9306a7b8fc05dc54ca03",
+      "version": "1.7.0"
+    },
+    {
+      "cmake_blob": "915812833065cb86e339892b6457e19aff09a9cc",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "40ca403784f62c01a733cbe46c74992cc50c09be",
+          "sha256": "1cff1a94475a2622e0282903d51a12fbdcdd86b04a95818637519e131d6d6999"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "4d129c80a0647562e9acaa0b13ac9f0142cd74bb",
+          "sha256": "2741d956a724f49188a3d49dfe579a3d635869feee4448efb5a901806ea05229"
+        }
+      },
+      "commit": "0218c3e2cd4d4422d69a5de76fccf50669ba81e1",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "d2db9e3cbc6e6602fd665370d5241d60360233fc",
+      "version": "1.7.1"
+    },
+    {
+      "cmake_blob": "915812833065cb86e339892b6457e19aff09a9cc",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "40ca403784f62c01a733cbe46c74992cc50c09be",
+          "sha256": "1cff1a94475a2622e0282903d51a12fbdcdd86b04a95818637519e131d6d6999"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "4d129c80a0647562e9acaa0b13ac9f0142cd74bb",
+          "sha256": "2741d956a724f49188a3d49dfe579a3d635869feee4448efb5a901806ea05229"
+        }
+      },
+      "commit": "3e3d2194cdd90f74da76cd321e1cf95b6b3334b9",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "d2db9e3cbc6e6602fd665370d5241d60360233fc",
+      "version": "1.7.1"
+    },
+    {
+      "cmake_blob": "b2b289a90b66768899ce4fc17cc3311fb767f5d0",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "5c69d7361342ff8daa2ce80b019d8e21bd53e9a8",
+          "sha256": "36ccc42de6862436b4cf7c3e6046ad333ddf42631675f0587f046556d59d1920"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "da316c1d5a325ca81ce9df2a0c784d85de2d09dc",
+          "sha256": "af2476b91aeb6eed775162968f6ca0db020e2ea4a8bc850808b833c17d47adb5"
+        }
+      },
+      "commit": "3d26d9ff8e27b37a258cdc36709c11902b06e535",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "3af1436d8551ab4220c59d5f03c72bd178943ceb",
+      "version": "1.8.0"
+    },
+    {
+      "cmake_blob": "b2b289a90b66768899ce4fc17cc3311fb767f5d0",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "5c69d7361342ff8daa2ce80b019d8e21bd53e9a8",
+          "sha256": "36ccc42de6862436b4cf7c3e6046ad333ddf42631675f0587f046556d59d1920"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "da316c1d5a325ca81ce9df2a0c784d85de2d09dc",
+          "sha256": "af2476b91aeb6eed775162968f6ca0db020e2ea4a8bc850808b833c17d47adb5"
+        }
+      },
+      "commit": "6833ac60718bc3cf30d626edfd47f6e373707cc0",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "3af1436d8551ab4220c59d5f03c72bd178943ceb",
+      "version": "1.8.0"
+    },
+    {
+      "cmake_blob": "bab703d03435ae9245e71df1c612162e75954026",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "fb0d46d3846831b5c2b4cb0ba571a3a672700f99",
+          "sha256": "f84f10ddb689ffe30322a04894875514ab77b4996ab2e27de0107730ca4aba1a"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "462aa0a2e80c463edc508a29fc4f83c5644fab4b",
+          "sha256": "37d9f1e13eda36b1ff1fa24a26a09993c4e420f3d42964b231fa1c54c25d08ac"
+        }
+      },
+      "commit": "531045b16035d64c2085f509f6fc77ea110943e0",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "fd96146d71e86a5a7cbcb0229ba64c563d3658d6",
+      "version": "1.9.0"
+    },
+    {
+      "cmake_blob": "bab703d03435ae9245e71df1c612162e75954026",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "fb0d46d3846831b5c2b4cb0ba571a3a672700f99",
+          "sha256": "f84f10ddb689ffe30322a04894875514ab77b4996ab2e27de0107730ca4aba1a"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "462aa0a2e80c463edc508a29fc4f83c5644fab4b",
+          "sha256": "37d9f1e13eda36b1ff1fa24a26a09993c4e420f3d42964b231fa1c54c25d08ac"
+        }
+      },
+      "commit": "83a0db9b572fccee5a39cccf014e370b41ba6002",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "fd96146d71e86a5a7cbcb0229ba64c563d3658d6",
+      "version": "1.9.0"
+    },
+    {
+      "cmake_blob": "32df5af4b915c2663612a0a61a8b40a701f68eed",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "df491548c62544ff0fdd8db7f4d27ebf414a1766",
+          "sha256": "b4f2d6d9387aefae4ee5338e3da41b2d33ca4c1c980ee177114841e18daaa1ce"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "fdf1476196054d970873d510a5f7eda07f3c36c9",
+          "sha256": "3aebefa834be8f9d9fa919239ff35d17ab628cd543e45036c5b4589ad66a91a4"
+        }
+      },
+      "commit": "fa445435e516fdcc8c750f84f4aaa8038de99986",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "757311385319e28f6e3c4d5b7ee55be01e57023a",
+      "version": "1.9.1"
+    },
+    {
+      "cmake_blob": "32df5af4b915c2663612a0a61a8b40a701f68eed",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "df491548c62544ff0fdd8db7f4d27ebf414a1766",
+          "sha256": "b4f2d6d9387aefae4ee5338e3da41b2d33ca4c1c980ee177114841e18daaa1ce"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "fdf1476196054d970873d510a5f7eda07f3c36c9",
+          "sha256": "3aebefa834be8f9d9fa919239ff35d17ab628cd543e45036c5b4589ad66a91a4"
+        }
+      },
+      "commit": "df82de4d4e1dab1a7fbba0368c683b344a146ebe",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "757311385319e28f6e3c4d5b7ee55be01e57023a",
+      "version": "1.9.1"
+    },
+    {
+      "cmake_blob": "2644198e0065171b2659d50acd7fdd69030a586f",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "bbcb4bcdfd85f1a3196477d586f4dcb37dbff7af",
+          "sha256": "3b17ab1289d2e9815ba200ca91d8ab418884f7d37ee26cf5620bd6bb25860aae"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "8f4b4877f021456a51fe9ec75f7bc6a65287c93a",
+          "sha256": "943dde6ca0547753c24e5105eaa28af099049bea16eb8bec32ed98ee92342a50"
+        }
+      },
+      "commit": "c1ee5c7b356577dab0f248590d9f01964491abb8",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "371d50b7f7ec42d8222c0a852b602b99efde7929",
+      "version": "1.9.2"
+    },
+    {
+      "cmake_blob": "2644198e0065171b2659d50acd7fdd69030a586f",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "bbcb4bcdfd85f1a3196477d586f4dcb37dbff7af",
+          "sha256": "3b17ab1289d2e9815ba200ca91d8ab418884f7d37ee26cf5620bd6bb25860aae"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "8f4b4877f021456a51fe9ec75f7bc6a65287c93a",
+          "sha256": "943dde6ca0547753c24e5105eaa28af099049bea16eb8bec32ed98ee92342a50"
+        }
+      },
+      "commit": "5833e8e24e48e27746397e5d9ea9b86ee437a2ea",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "371d50b7f7ec42d8222c0a852b602b99efde7929",
+      "version": "1.9.2"
+    },
+    {
+      "cmake_blob": "a220056cbfcdf9c91473131867525fa88a40b1d1",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "1a7ae8f3deb752197088c31c4561ed24a0d794db",
+          "sha256": "463ee0d3ee36c03df085ef24ecd47f1ec76baa6dfb862dcca00b1329644b5d83"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "0d0d4aa4acc4555a37d05075bf7781d4fa9059b0",
+          "sha256": "29f52f8d632dd39f53cf14d51dd070c65f264abd221e1ae0b6627dd08b1f474c"
+        }
+      },
+      "commit": "5468939eae4592ec9a772a8212344963fd43b433",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "28f7c7e9bb50d7abcc4f5631df38ff667c4f9e8b",
+      "version": "1.9.3"
+    },
+    {
+      "cmake_blob": "a220056cbfcdf9c91473131867525fa88a40b1d1",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "1a7ae8f3deb752197088c31c4561ed24a0d794db",
+          "sha256": "463ee0d3ee36c03df085ef24ecd47f1ec76baa6dfb862dcca00b1329644b5d83"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "0d0d4aa4acc4555a37d05075bf7781d4fa9059b0",
+          "sha256": "29f52f8d632dd39f53cf14d51dd070c65f264abd221e1ae0b6627dd08b1f474c"
+        }
+      },
+      "commit": "617a5ebeecedea24ba17337eb9ae12e8480a3f3e",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "28f7c7e9bb50d7abcc4f5631df38ff667c4f9e8b",
+      "version": "1.9.3"
+    },
+    {
+      "cmake_blob": "e6e08e056260aba30be48b02ecf7b084226b5cda",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "d347acba28645ef6e0f8f16761ace5847a2bcbad",
+          "sha256": "fb2bd048ca4426e4cbb879f1b5d60aed21d42bce43723eed889eba6292a79c6f"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "c13f95e830a240c1ed50bfa098c6a14c33a3e820",
+          "sha256": "1f45b74a82fa368a6a83032434660e4baa86d2e8078e2b98a608ac7ae422205c"
+        }
+      },
+      "commit": "1a1742dcf38e47a6bd915f479497a58eb4009ce2",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "f7f4248de56c92b1ee2f482346fb3f5a35f53c38",
+      "version": "1.9.4"
+    },
+    {
+      "cmake_blob": "82729bbbc5bcaf7fb6613f3366d88336636d762b",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "c129aa843483f82ddec679bde3129f27af9ff8d6",
+          "sha256": "4397e0302fce34e55443668e1d550b62a0013cf1b777f23fb0a556e065a98dd3"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "ac0721fded22442f5c628ad4c6dc1d2f5be1e1a7",
+          "sha256": "664aa27f36647549a2e9b0440d3b162d1b14d711359a53b10874297f369899a5"
+        }
+      },
+      "commit": "e9f2b48565c371d614a16cdaef20a629e0e32e2e",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "541bb4268cdb13703ed95fa318744a9914f65b1d",
+      "version": "1.9.5"
+    },
+    {
+      "cmake_blob": "82729bbbc5bcaf7fb6613f3366d88336636d762b",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "c129aa843483f82ddec679bde3129f27af9ff8d6",
+          "sha256": "4397e0302fce34e55443668e1d550b62a0013cf1b777f23fb0a556e065a98dd3"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "ac0721fded22442f5c628ad4c6dc1d2f5be1e1a7",
+          "sha256": "664aa27f36647549a2e9b0440d3b162d1b14d711359a53b10874297f369899a5"
+        }
+      },
+      "commit": "714ba486f2bb22eca123e13f9de979ed64b6b537",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "541bb4268cdb13703ed95fa318744a9914f65b1d",
+      "version": "1.9.5"
+    },
+    {
+      "cmake_blob": "82729bbbc5bcaf7fb6613f3366d88336636d762b",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "c129aa843483f82ddec679bde3129f27af9ff8d6",
+          "sha256": "4397e0302fce34e55443668e1d550b62a0013cf1b777f23fb0a556e065a98dd3"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "ac0721fded22442f5c628ad4c6dc1d2f5be1e1a7",
+          "sha256": "664aa27f36647549a2e9b0440d3b162d1b14d711359a53b10874297f369899a5"
+        }
+      },
+      "commit": "4eae0704bc873d51a0832be78a3194451a13eed9",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "541bb4268cdb13703ed95fa318744a9914f65b1d",
+      "version": "1.9.5"
+    },
+    {
+      "cmake_blob": "d737c71015a508fdd70ace2eb1d8ce2cd9a2a879",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "5552591f8fb3c87b5dc258fca959d595e7eb9887",
+          "sha256": "d4b9f87ebba2857ff5e01e60be17512760d1103bad1e20b4f7d0dc6dc3e3a3f7"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "9796d5bbbff9965962c1c9844d3a677225be0a25",
+          "sha256": "1d11b2e29e795a3a32e620e1b894122eda562ec9a4e6447a21e60aab0d9d5a9c"
+        }
+      },
+      "commit": "cd54c8506599090fcf82e0094fc373634d85526c",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "620542472644a76da501e6aaa81c66d698732ee5",
+      "version": "1.9.6"
+    },
+    {
+      "cmake_blob": "d737c71015a508fdd70ace2eb1d8ce2cd9a2a879",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "5552591f8fb3c87b5dc258fca959d595e7eb9887",
+          "sha256": "d4b9f87ebba2857ff5e01e60be17512760d1103bad1e20b4f7d0dc6dc3e3a3f7"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "9796d5bbbff9965962c1c9844d3a677225be0a25",
+          "sha256": "1d11b2e29e795a3a32e620e1b894122eda562ec9a4e6447a21e60aab0d9d5a9c"
+        }
+      },
+      "commit": "b6dd9470f66fe946dcebdef569cb4cf79a7d7dbc",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "620542472644a76da501e6aaa81c66d698732ee5",
+      "version": "1.9.6"
+    },
+    {
+      "cmake_blob": "5407ac2eb6ff30295d407f8ce7634476d81a89d1",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "a99325fec5857111722abea4e5bafa3c5e272914",
+          "sha256": "601ce3a0358c75b16396bba8bd743494cccbbfa19d45156fc5506b206bd79f02"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "c4b83275050da2f478af896ed869d4049037f2f2",
+          "sha256": "aae4cc9bc42dbe0a2156847b75b2798ed622bd3a33feaada7528173b9181afcb"
+        }
+      },
+      "commit": "c0bca1155e2a99e1532dc41a9a6a43c195d555d3",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "a5d2eb914f0363dc52fc9302ee9811ff8ad94fc6",
+      "version": "1.9.7"
+    },
+    {
+      "cmake_blob": "5f2dd4eebbe4d2b4fafab77433796b0ff9a73f93",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "bd554a515df029df8390f93cfd2abdfdc7cee8ff",
+          "sha256": "7046d99a066a9e26f12141234d15345ea1a4d016e227ddc45296df90589bd527"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "0590f8ae81d745f058b4e67af7eec7cca77a1d35",
+          "sha256": "58c4dbc20e3c5ddf629388e66e70df16bb18657030e7d89bd14840a384f1aae0"
+        }
+      },
+      "commit": "d06289e56cf37b4b693ae1a8e24f7f6a3932de52",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "119173d921cf4087b72801d654064f522a483abf",
+      "version": "1.9.8"
+    },
+    {
+      "cmake_blob": "5f2dd4eebbe4d2b4fafab77433796b0ff9a73f93",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "bd554a515df029df8390f93cfd2abdfdc7cee8ff",
+          "sha256": "7046d99a066a9e26f12141234d15345ea1a4d016e227ddc45296df90589bd527"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "0590f8ae81d745f058b4e67af7eec7cca77a1d35",
+          "sha256": "58c4dbc20e3c5ddf629388e66e70df16bb18657030e7d89bd14840a384f1aae0"
+        }
+      },
+      "commit": "9c37b02932c0fc1ff878f2ac2a86cd4b1fe7423b",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "119173d921cf4087b72801d654064f522a483abf",
+      "version": "1.9.8"
+    },
+    {
+      "cmake_blob": "c1e7f8d6b708d2c979570a458ed743dcda713699",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "65f3f34a3af5535e64a2445274e5b80b15f84e5d",
+          "sha256": "ff59f73d196d67bae2bcd8666651309fcdfb1ff8b804ca49cf34606f3e620a16"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "2fdf7b760f73987069dd22f638d74d0a8bae549a",
+          "sha256": "3df2e3874b8f0940d1544616cc74f121adf796937748dfc9859089afaf8fecaa"
+        }
+      },
+      "commit": "43bfc79638f89bd912715622c7d81c2bfb330f24",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "cd4a9c1f003e07c2a9d568fdf2ca9cdc90da1edb",
+      "version": "1.9.9"
+    },
+    {
+      "cmake_blob": "273bea777260c390e8710de370aab83a64328501",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "206975936711b3e40a3bbc0d1684a3f4d9d880f0",
+          "sha256": "8b27faab4d921f122701972dd4a01045d7fde0bf8c67a57863f67a73316897c2"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "44cd2ea2affcdd1ec384d3db83275c95761435b0",
+          "sha256": "f35f03599b9f4c4b5407657ab98d165a2fa8f631ec4b85952f4df589255cfc2a"
+        }
+      },
+      "commit": "7ae6c6865f6bdad874ba455b4e8c73cf033134d7",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "da620ed389ab69cec800afb7c2a4c5aac48b256c",
+      "version": "1.9.10"
+    },
+    {
+      "cmake_blob": "3b7eeccc0acbbdaa76e5d9aaab0029e151b24c3b",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "61ed3d53458bb7ddbc4c18315e3ac26d256198cd",
+          "sha256": "41da7cfa95b68b2b6d3ed1289b797999056c84637882f9e85b71ed00f871658a"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "a6ed82b2f957f6a4210207b50be5de2de712e8f5",
+          "sha256": "fd71879da9d21215c201885a26b6a77309eee69be29ea1e775f327904657fea1"
+        }
+      },
+      "commit": "df4ba55c7d9c1d4bb8d3a5ffbe24942ec5dd531b",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "6954afbe27876337171100bc218cc9c6b94429af",
+      "version": "1.10.0"
+    },
+    {
+      "cmake_blob": "04b95022c019ba62c45a394b4529ec606671ed8c",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "61ed3d53458bb7ddbc4c18315e3ac26d256198cd",
+          "sha256": "41da7cfa95b68b2b6d3ed1289b797999056c84637882f9e85b71ed00f871658a"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "a6ed82b2f957f6a4210207b50be5de2de712e8f5",
+          "sha256": "fd71879da9d21215c201885a26b6a77309eee69be29ea1e775f327904657fea1"
+        }
+      },
+      "commit": "3217b2aad52c0808c76f1f527e9294ab435cede3",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "fa2a5387d3a10482ccde7f7c308e4bdc7200e76e",
+      "version": "1.11.0"
+    },
+    {
+      "cmake_blob": "6d89a01b8bb1d53b88ace0a922b770f06a6ec55d",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "782bfe7a61ed7c3c525699895cbb7527aa1d24cd",
+          "sha256": "54c417087ab17ce615856542e2ed5dba824bec1329dc7cbd813b2054ef6f95a9"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "568b1119e880043c5bb02fc2845442e9f749aa48",
+          "sha256": "2a031830ad574fd997f2f176f73ef15441ecad219ff37f246cdc1cdf23383147"
+        }
+      },
+      "commit": "12534e87440ca33a41f12bde53956319bd06ebab",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "66491aa09106c40f6c4160cd34f399906c2c02ed",
+      "version": "1.11.0"
+    },
+    {
+      "cmake_blob": "6d89a01b8bb1d53b88ace0a922b770f06a6ec55d",
+      "co_delivered_binaries": {
+        "Windows-x64/CLAP/Vocal Stack.clap": {
+          "git_blob": "782bfe7a61ed7c3c525699895cbb7527aa1d24cd",
+          "sha256": "54c417087ab17ce615856542e2ed5dba824bec1329dc7cbd813b2054ef6f95a9"
+        },
+        "Windows-x64/VST3/Vocal Stack.vst3/Contents/x86_64-win/Vocal Stack.vst3": {
+          "git_blob": "568b1119e880043c5bb02fc2845442e9f749aa48",
+          "sha256": "2a031830ad574fd997f2f176f73ef15441ecad219ff37f246cdc1cdf23383147"
+        }
+      },
+      "commit": "35ab94c13c920e759e8efa82f7a9c8a80fc955c5",
+      "dependencies": {
+        "JUCE": "URL https://codeload.github.com/juce-framework/JUCE/tar.gz/refs/tags/8.0.12 URL_HASH SHA256=dec1a8baee5aaec4502b717a421b850e257ab7e9c2efd03766185ec1957cf102",
+        "clap_juce": "GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git GIT_TAG 6bde108329ff9fc24404b79b8b397261a75cf6a8 PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIRECTORY=<SOURCE_DIR> -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake",
+        "signalsmith-linear": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git GIT_TAG 7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+        "signalsmith-stretch": "GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git GIT_TAG 88061fd4eda56a2353c5d65c74aa3f4ccf76f9da GIT_SUBMODULES \"\""
+      },
+      "source_tree": "66491aa09106c40f6c4160cd34f399906c2c02ed",
+      "version": "1.11.0"
+    }
+  ],
+  "dependency_result": "Identical FetchContent declarations in every audited commit; use the external directory from the v1.11.0 corresponding-source ZIP",
+  "history_tip": "35ab94c13c920e759e8efa82f7a9c8a80fc955c5",
+  "provenance": "Binary hashes identify bytes co-delivered with each commit's source; no historical rebuild or exact producing-commit claim",
+  "scope": "All commits reachable from local refs at packaging time",
+  "unique_binary_blobs": 56
+}

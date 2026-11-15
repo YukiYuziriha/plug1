@@ -96,10 +96,40 @@ The DSP also contains an attributed GPL-covered scalar
 [Vital filter integration](../ThirdParty/Vital/README.md). Pixelify Sans is embedded
 from `source/assets` under its [OFL license](../ThirdParty/PixelifySans-OFL.txt).
 
-Read the repository [GPL v3 text](../LICENSE) and the retained
-[third-party notices](../ThirdParty), including JUCE's separate AGPLv3/commercial
-terms, before redistributing builds. This guide does not substitute for those
-license obligations.
+This distribution selects **JUCE's open-source AGPLv3 route**. The combined
+plugin uses the GPLv3/AGPLv3 section 13 combination permission, retaining GPLv3
+for project/Vital code and AGPLv3 for JUCE modules. Read [GPLv3](../LICENSE),
+[AGPLv3](../COPYING.AGPLv3), [Licensing and corresponding source](Licensing.md)
+and all [third-party notices](../ThirdParty) before redistributing. No commercial
+JUCE entitlement is asserted.
+
+## Build from the complete corresponding-source ZIP
+
+Extract the ZIP, enter `VocalStack-source`, and use the same prerequisites and
+half-CPU wrapper as above. Python is needed only to create/verify the source
+package, not to build the ordinary targets. The ZIP contains pristine dependency
+sources in `external`; no dependency fetch is needed. Apply the initial CLAP
+patch explicitly because a FetchContent source override bypasses `PATCH_COMMAND`.
+The remaining tail/sidechain patches are applied by the normal configure step:
+
+```powershell
+$deps = (Resolve-Path external).Path
+$portsPatch = (Resolve-Path source/cmake/clap-ports.patch).Path
+git -C external/clap_juce init --quiet
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 cmake "-DSOURCE_DIRECTORY=$deps/clap_juce" "-DPATCH_FILE=$portsPatch" -P source/cmake/PatchClap.cmake
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 cmake -S source -B source/build-offline -G "Visual Studio 17 2022" -A x64 -DFETCHCONTENT_FULLY_DISCONNECTED=ON "-DFETCHCONTENT_SOURCE_DIR_JUCE=$deps/JUCE" "-DFETCHCONTENT_SOURCE_DIR_CLAP_JUCE=$deps/clap_juce" "-DFETCHCONTENT_SOURCE_DIR_SIGNALSMITH-LINEAR=$deps/signalsmith-linear" "-DFETCHCONTENT_SOURCE_DIR_SIGNALSMITH-STRETCH=$deps/signalsmith-stretch"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 cmake --build source/build-offline --config Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& './tools/Invoke-HalfCpu.ps1' -Executable ctest -CommandArguments @('--test-dir', 'source/build-offline', '-C', 'Release', '--output-on-failure')"
+```
+
+The paths are resolved from the extracted package, not machine-specific locations.
+The local `git init` isolates patch application from any enclosing Git checkout;
+it does not download dependencies or change their source files.
+Keep `VOCALSTACK_TEST_BASELINE` OFF in an extracted ZIP: it deliberately has no
+Git history. See `SOURCE-MANIFEST.json` for the binary-producing commit, packaging
+overlays, dependency pins and hashes. Offline configure/build has not been run
+as part of this documentation-only packaging update; do not treat these
+instructions as an observed rebuild result.
 
 The [archived architecture reference](Manual-and-History.md#architecture) explains
 the DSP/processor/UI boundaries. Keep downloaded dependencies, generated build
