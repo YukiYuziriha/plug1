@@ -91,6 +91,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
                 tone = std::make_unique<ToneEffectPanel>(panel.owner, size_t(slot), n.type); addAndMakeVisible(*tone);
             } else if (n.type == NodeType::output) {
                 addKnob("outputGain", "Output trim", "dB");
+                knobs.back()->slider.getProperties().set("vocalstackCellRotary", true);
             } else if (n.type == NodeType::mix) {
                 const auto id = n.mainControls ? juce::String("double") : localMixParameterId(n.id);
                 if (id.isNotEmpty()) addKnob(id, "Dry / Wet", "%");
@@ -130,7 +131,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             if (utility) utility->setBounds(body);
             const int width = body.getWidth() / juce::jmax(1, int(knobs.size()));
             for (size_t i = 0; i < knobs.size(); ++i) {
-                if (model.type == NodeType::output) knobs[i]->setBounds(body.getX(), body.getY(), body.getWidth(), 60);
+                if (model.type == NodeType::output) knobs[i]->setBounds(body.getX(), body.getY(), juce::jmin(110, body.getWidth()), body.getHeight());
                 else if (model.type == NodeType::chorale || model.type == NodeType::mix) knobs[i]->setBounds(body.getX(), body.getY() + int(i) * 46, body.getWidth(), 44);
                 else knobs[i]->setBounds(body.getX() + int(i) * width, body.getY(), width, body.getHeight());
             }
@@ -903,7 +904,8 @@ private:
             return {500, juce::jmin(470, 84 + visual + rows * 48 + 32)};
         }
         if (isEffect(n.type) && n.type != NodeType::chorale) return {400, 430};
-        return n.type == NodeType::chorale ? juce::Point<int>(280, 146) : juce::Point<int>(190, 114);
+        if (n.type == NodeType::output) return {190, 138};
+                return n.type == NodeType::chorale ? juce::Point<int>(280, 146) : juce::Point<int>(190, 114);
     }
     juce::Rectangle<float> expansionButton(const RoutingNode& n) const {
         const auto b = nodeBounds(n);
@@ -2046,6 +2048,7 @@ private:
                         }
             else if (n->type == NodeType::output) {
                             mixControl = std::make_unique<ParameterKnob>(owner, "outputGain", "Output trim", "dB");
+                                                        mixControl->slider.getProperties().set("vocalstackInspectorRotary", true);
                             inspector.addAndMakeVisible(*mixControl);
                             info += "\nFinal output trim; meters remain in the main editor. Exactly one Output is required.";
                         }
@@ -2116,7 +2119,7 @@ private:
             const auto* selected = node(selectedNode);
             const bool dryWet = selected && selected->type == NodeType::mix && !selected->mainControls;
             const bool output = selected && selected->type == NodeType::output;
-            mixControl->setBounds(0, 40, dryWet || output || (selected && selected->type == NodeType::mix) ? inspector.getWidth() : 140, output ? 60 : selected && selected->type == NodeType::mix ? 44 : 110);
+            mixControl->setBounds(0, 40, output ? juce::jmin(110, inspector.getWidth()) : dryWet || (selected && selected->type == NodeType::mix) ? inspector.getWidth() : 140, output ? 138 : selected && selected->type == NodeType::mix ? 44 : 110);
         }
         const int infoY = fields.empty() ? (nodeValue.getParentComponent() == &inspector || mixControl ? 160 : selectedLink >= 0 ? 76 : 40) : y + 12;
         inspectorInfo.setBounds(0, infoY, inspector.getWidth(), juce::jmax(20, inspector.getHeight() - infoY));

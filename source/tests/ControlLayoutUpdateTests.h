@@ -2,13 +2,15 @@
 
 #include "PluginEditor.h"
 #include "SpectralMorphVisual.h"
+#include "GuiTestDisplay.h"
 #include <cmath>
 #include <memory>
 #include <stdexcept>
 #include <vector>
 
 // Include at translation-unit scope. Invoke on the JUCE message thread after
-// ScopedJuceInitialiser_GUI; no native window, audio callback or test-runner globals.
+// ScopedJuceInitialiser_GUI. Routing card geometry uses a native fixture on the
+// selected secondary display because offscreen cards are intentionally virtualized.
 namespace vocalstack::controlLayoutUpdateTests {
 inline void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -119,8 +121,50 @@ inline void editorControls() {
     auto* lead = dynamic_cast<juce::Slider*>(find(*editor, "double"));
     require(lead->textFromValueFunction(50) == "50% Stack", "Stack lost Lead/Stack-specific language");
 }
+inline void routingOutputGeometry() {
+    guiTestDisplay::enumerate();
+    for (int theme = 0; theme < 3; ++theme) {
+        auto owner = std::make_unique<Processor>();
+        owner->setSkin(theme);
+        juce::String error;
+        require(owner->setRoutingGraph(Graph{{{1, NodeType::lead}, {13, NodeType::output}}, {{1, 13, 0, 0}}}, error), "Output fixture graph rejected");
+        auto layout = owner->getRoutingLayout();
+        layout.setProperty("selectedNode", 13, nullptr);
+        layout.removeProperty("selectedVoiceSlot", nullptr);
+        layout.setProperty("inspectorVisible", true, nullptr);
+        layout.setProperty("zoom", 1.0f, nullptr);
+        layout.removeAllChildren(nullptr);
+        juce::ValueTree node("NODE");
+        node.setProperty("id", 13, nullptr);
+        node.setProperty("x", 100, nullptr);
+        node.setProperty("y", 100, nullptr);
+        node.setProperty("expanded", true, nullptr);
+        layout.addChild(node, -1, nullptr);
+        owner->setRoutingLayout(layout);
+        RoutingPanel routing(*owner);
+        routing.setSize(1200, 800);
+        guiTestDisplay::attach(routing);
+        int count = 0;
+        const auto inspect = [&](auto&& self, juce::Component& component) -> void {
+            if (auto* slider = dynamic_cast<juce::Slider*>(&component);
+                slider && slider->getComponentID() == "outputGain") {
+                ++count;
+                const auto lanes = slider->getLookAndFeel().getSliderLayout(*slider);
+                require(slider->getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag,
+                        "Routing Output must be rotary");
+                require(lanes.sliderBounds.getWidth() >= 80 && lanes.sliderBounds.getHeight() >= 80,
+                        "Routing Output squeezed into an old slider-sized layout");
+                require(!lanes.sliderBounds.intersects(lanes.textBoxBounds), "Output value overlaps dial");
+            }
+            for (auto* child : component.getChildren()) self(self, *child);
+        };
+        inspect(inspect, routing);
+        require(count == 2, "Must check Output in both expanded card and inspector");
+    }
+}
 inline void run() {
     crossfadePresentation();
+    routingOutputGeometry();
     outputAndRingGeometry();
     morphResponsiveLayout();
     editorControls();
