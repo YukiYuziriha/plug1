@@ -132,11 +132,11 @@ public:
                                  | juce::ModifierKeys::commandModifier));
     }
     void setTextBoxStyle(juce::Slider::TextEntryBoxPosition position, bool readOnly, int width, int height) {
-        juce::Slider::setTextBoxStyle(position, readOnly || bool(getProperties()["vocalstackTexturedBar"]), width, height);
+        juce::Slider::setTextBoxStyle(position, readOnly || (bool(getProperties()["vocalstackTexturedBar"]) && !bool(getProperties()["vocalstackSeparateBarValue"])), width, height);
         restoreIdleFocusPolicy();
     }
     void setTextBoxIsEditable(bool editable) {
-        juce::Slider::setTextBoxIsEditable(editable && !bool(getProperties()["vocalstackTexturedBar"]));
+        juce::Slider::setTextBoxIsEditable(editable && (!bool(getProperties()["vocalstackTexturedBar"]) || bool(getProperties()["vocalstackSeparateBarValue"])));
         restoreIdleFocusPolicy();
     }
     void lookAndFeelChanged() override {
@@ -171,7 +171,7 @@ public:
         for (const auto& a : state.assignments)
             if (a.modulatorId == displayedSource && a.targetParameterId == id && a.enabled) { depth = a.depth * sourceAmount; break; }
         const bool assigning = owner && owner->modulationAssignmentId() != 0;
-        const bool editable = !assigning && !bool(getProperties()["vocalstackTexturedBar"]);
+        const bool editable = !assigning && (!bool(getProperties()["vocalstackTexturedBar"]) || bool(getProperties()["vocalstackSeparateBarValue"]));
         if (isTextBoxEditable() != editable) {
             // Only entering Assign cancels deliberate base-value entry. Selection
             // and ordinary feedback ticks must not disturb the transient editor.
@@ -337,9 +337,10 @@ public:
         }
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
             auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
-            label->setFont(juce::Font(pixelFontOptions(controlFontSize)));
+            label->setFont(juce::Font(pixelFontOptions(float(slider.getProperties().getWithDefault("vocalstackValueFontSize", controlFontSize)))));
             if (bool(slider.getProperties()["vocalstackInspectorRotary"])) label->setMinimumHorizontalScale(1.f);
-            if (bool(slider.getProperties()["vocalstackTexturedBar"])) label->setInterceptsMouseClicks(false, false);
+            if (bool(slider.getProperties()["vocalstackTexturedBar"]) && !bool(slider.getProperties()["vocalstackSeparateBarValue"]))
+                label->setInterceptsMouseClicks(false, false);
             return label;
         }
         void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h,

@@ -1,32 +1,42 @@
-# Vocal Stack — 1.11.0 source preview
+# Vocal Stack — 1.11.0
 
-**Coordinated source revision in progress; rebuild/validation pending the UI-agent
-handoff. Pending visual approval, not installed or packaged.**
+**Approved, Release-built, packaged and installed.** Both formats passed packaged
+and installed module smoke checks, with matching build/package/installed SHA256
+hashes and PE version 1.11.0. See [release validation and installation paths](docs/Release-1.11.0-Validation.md).
+Core regression suites pass **40/40**; the full editor run is
+**80/81**, with the unchanged native click/desktop-occlusion precondition still
+blocked. Separate rack and granular UI suites pass. No clean full GUI or DAW
+listening result is claimed.
 Adds a first-class optional mono/stereo SIDECHAIN source, independent MAIN/DONOR
 Spectral Morph with Magnitude/Envelope modes and actual donor Freeze, and shared
 fine connected measured fields for Reverb, Convolution and Saturator over the
 unchanged coarse background material. Morph now has larger dial faces and a
 slightly taller Stack FX allocation; saved/default editor sizes are unchanged. Original
-host indices 0–2251 remain fixed; 90 controls append for **2342 parameters**.
+host indices **0–2341** remain fixed. Fifteen persisted final-output Stereo Mono
+Audition switches append at 2342–2356 for **2357 parameters**; the released utility
+stride is unchanged. Gate and Compressor now show actual four-second measured
+history; Gain hides default 100% Wet but preserves/reveals legacy blends.
 
 **Prepared graph latency:** no-Morph graphs return to **1344 samples** at 44.1/48
 kHz and **2688** at 96 kHz; graphs declaring Morph add its actual **4096 samples**
 (5440/6784 total). Latency-changing edits save a clearly labeled **RESTART PENDING**
 topology and retain the current audio graph/host report until host deactivate/
 reactivate; transport stop/reset is not enough. FFT changes retain fixed latency;
-unsupported serial Morph paths are explicitly rejected. New transition tests and
-native Routing cost instrumentation are written but not yet run.
+unsupported serial Morph paths are explicitly rejected. Processor and native CLAP/VST3 wrapper transition tests pass. The native Routing
+cost probe remains occlusion-blocked; the separately labeled component-cost
+probe verifies clipping/cache work but is not a native FPS measurement.
 See [usage, validation, limitations and all-theme GIFs](docs/Preview-1.11.0.md).
-The historical full editor run was **77/78**, blocked only by the existing
-native desktop-occlusion click precondition; this is not a clean full GUI pass
-or a DAW listening claim.
+See [39 actual-PCM/control review GIFs in all three themes](source/build/approval-1.11.0-coordinated/index.md).
+These are component snapshots with native fixtures placed on the enumerated
+second display, not OS framebuffer recordings. Earlier 77/78 results remain
+historical; latest native click/cost evidence identifies `Chrome_RenderWidgetHostHWND`
+(earlier attempts hit `SHELLDLL_DefView`).
 
-Pending 1.10.1 work and its [historical preview](docs/Preview-1.10.1.md) are preserved.
-Tracked packages and installed plugins remain **1.10.0** (`df4ba55`); their original
-SHA256 hashes and PE versions were reverified read-only. No package replacement,
-installation, commit or push occurred.
+The approved pending work, including the earlier 1.10.1 changes, is included in
+this 1.11.0 delivery; its [historical preview](docs/Preview-1.10.1.md) is preserved.
+Airwindows remains research only, with no imported algorithms or dependencies.
 
-## Installed 1.10.0
+## Historical 1.10.0
 
 **Approved, built, packaged and installed.** Adds a separate
 Convolution FX with original synthetic Church, Hall, Room and Plate IRs, wet
@@ -40,12 +50,12 @@ square/clustered-material UI preview is retained.
 Includes the approved coordinated Motion/material/reactive presentation, repeated
 Dry/Wet nodes, denser Routing inspector controls, 14/22 px scrollbars and chunky
 square Routing nodes with double-weight connections. Circular knobs and shared
-Stack layout constants are preserved. Installed 1.10.0 does not include SIDECHAIN
-or Spectral Morph; those are part of the uninstalled 1.11.0 source preview above.
+Stack layout constants are preserved. That historical 1.10.0 release did not include SIDECHAIN
+or Spectral Morph; both are now included in the installed 1.11.0 release above.
 
 See [1.10.0 release validation and installation hashes](docs/Release-1.10.0-Validation.md)
 and the [historical preview/constraints](docs/Preview-1.10.0.md).
-Both tracked Windows formats and per-user installations are **1.10.0**, with
+At that delivery, both tracked Windows formats and per-user installations were **1.10.0**, with
 matching build/package/installed SHA256 hashes. All 38 suites passed across split
 runs; parallel grain UI concurrency failures remain documented, not hidden.
 

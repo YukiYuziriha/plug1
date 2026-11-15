@@ -35,6 +35,11 @@ void busMatrix() {
         juce::String error;
         check(owner->setRoutingGraph(graph, error), "processor rejected external source graph");
         const int latency = owner->getLatencySamples();
+        auto pendingMorph = graph;
+        pendingMorph.nodes.push_back({100, NodeType::spectralMorph});
+        pendingMorph.links = {{14, 100, 0}, {100, 13, 0}};
+        check(owner->setRoutingGraph(pendingMorph, error) && owner->routingRestartPending(), "external matrix pending Morph rejected");
+        check(owner->getLatencySamples() == latency, "pending graph altered active host compensation");
         const int length = latency + 1500;
         constexpr std::array<int, 7> blocks{1, 137, 3, 511, 17, 63, 257};
         float maximumError = 0;
@@ -61,6 +66,9 @@ void busMatrix() {
             position += count;
         }
         check(maximumError < 2.e-5f, "host buffer base channels, stereo identity or absence mismatch");
+        // This was real non-bypassed source audio: the pending Morph must not
+        // install or silence/re-delay it before host compensation can change.
+        check(owner->setRoutingGraph(graph, error) && !owner->routingRestartPending(), "pending Morph cancellation failed");
         // Bus availability is not preset state. The source and wires are.
         juce::MemoryBlock state;
         owner->getStateInformation(state);
@@ -78,6 +86,71 @@ void busMatrix() {
         owner->processBlock(silence, midi);
         for (int c = 0; c < outputChannels; ++c) check(silence.getSample(c, 0) == 0, "reprepare leaked auxiliary history");
     }
+}
+
+void monoAuditionAndGateBridge() {
+    auto owner = std::make_unique<Processor>();
+    check(stereoMonoParameterStart == 2342 && parameterIds.size() == 2357, "Mono Audition must append after every released index");
+    for (size_t slot = 1; slot < 16; ++slot) {
+        auto* p = dynamic_cast<juce::RangedAudioParameter*>(owner->getParameters()[int(2342 + slot - 1)]);
+        check(p && p->paramID == stereoMonoParameterId(slot) && p->getDefaultValue() == 0, "Mono Audition index/ID/default mismatch");
+    }
+    auto layout = owner->getBusesLayout(); layout.inputBuses.set(1, juce::AudioChannelSet::stereo());
+    check(owner->setBusesLayout(layout), "Mono Audition donor fixture");
+    Graph graph{{{14, NodeType::sidechain}, {100, NodeType::stereo}, {13, NodeType::output}}, {{14, 100, 0}, {100, 13, 0}}};
+    graph.nodes[1].mix = .37f;
+    graph.nodes[1].utility[UtilityParameter::stereoWidth] = 200;
+    graph.nodes[1].monoAudition = true;
+    juce::String error; check(owner->setRoutingGraph(graph, error), "Mono Audition graph rejected");
+    owner->prepareToPlay(48000, 137); owner->retainFxMonitor(1);
+    const auto feed = [&] {
+        for (int block = 0; block < 500; ++block) {
+            juce::AudioBuffer<float> audio(4, 137); audio.clear();
+            for (int i = 0; i < 137; ++i) { audio.setSample(2, i, .6f); audio.setSample(3, i, -.2f); }
+            juce::MidiBuffer midi;
+            audioThread = true; owner->processBlock(audio, midi); audioThread = false;
+        }
+    };
+    feed(); FxMonitorFrame frame; check(owner->readFxMonitor(1, frame), "Mono Audition output telemetry missing");
+    for (size_t i = 0; i < frame.sampleCount; ++i) {
+        check(std::abs(frame.output[0][i] - .2f) < 2.e-5f && std::abs(frame.output[1][i] - .2f) < 2.e-5f, "Mono Audition did not fold final post-Mix signal");
+    }
+    owner->parameters.getParameter("fx1On")->setValueNotifyingHost(0);
+    { juce::AudioBuffer<float> audio(4, 1); audio.clear(); audio.setSample(2, 0, .6f); audio.setSample(3, 0, -.2f);
+      juce::MidiBuffer midi; audioThread = true; owner->processBlock(audio, midi); audioThread = false;
+      check(std::abs(audio.getSample(0, 0) - .2f) < .01f && std::abs(audio.getSample(1, 0) - .2f) < .01f,
+            "Stereo slot bypass jumped around the smoothed Mono Audition release"); }
+    owner->parameters.getParameter("fx1On")->setValueNotifyingHost(1); feed();
+    juce::MemoryBlock state; owner->getStateInformation(state);
+    auto restored = std::make_unique<Processor>(); restored->setStateInformation(state.getData(), int(state.getSize()));
+    check(restored->parameters.getRawParameterValue(stereoMonoParameterId(1))->load() == 1 && restored->getRoutingGraph().nodes[1].monoAudition, "Mono Audition did not persist in host and graph state");
+    owner->parameters.getParameter(stereoMonoParameterId(1))->setValueNotifyingHost(0); feed();
+    check(owner->readFxMonitor(1, frame) && std::abs(frame.output[0].back() - frame.output[1].back()) > .5f, "Mono release failed to restore unchanged stereo controls");
+    check(std::abs(owner->parameters.getRawParameterValue("fx1Mix")->load() - 37) < .001f, "Mono changed legacy Wet");
+    auto legacy = juce::parseXML(restored->settingsText());
+    auto tree = juce::ValueTree::fromXml(*legacy);
+    for (int i = tree.getNumChildren(); --i >= 0;) if (tree.getChild(i).getProperty("id").toString() == stereoMonoParameterId(1)) tree.removeChild(i, nullptr);
+    auto legacyGraph = tree.getChildWithName("RoutingGraph");
+    for (auto node : legacyGraph) node.removeProperty("monoAudition", nullptr);
+    check(restored->pasteSettings(tree.toXmlString()), "Legacy Mono-default recall failed");
+    check(restored->parameters.getRawParameterValue(stereoMonoParameterId(1))->load() == 0, "Missing legacy Mono value did not default off");
+    owner->releaseFxMonitor(1); owner->releaseResources();
+    graph.nodes[1] = {100, NodeType::gate};
+    graph.nodes[1].utility[UtilityParameter::gateThreshold] = 0;
+    check(owner->setRoutingGraph(graph, error), "Gate bridge graph");
+    owner->prepareToPlay(48000, 137); owner->retainFxMonitor(1); feed();
+    check(owner->readFxMonitor(1, frame) && frame.hasGainReduction && frame.utilityHistory.used > 0, "Gate real dynamics/levels did not reach coherent snapshot");
+    check(frame.gainReductionDb > 1 && frame.utilityHistory.bins.back().gainReductionDb > 1, "Gate snapshot contains no actual GR");
+    check(std::abs(frame.utilityHistory.bins.back().thresholdDb) < .001f, "Gate recorded threshold differs from smoothed DSP threshold");
+    owner->parameters.getParameter("fx1Mix")->setValueNotifyingHost(0);
+    { juce::AudioBuffer<float> audio(4, 1); audio.clear(); audio.setSample(2, 0, .6f); audio.setSample(3, 0, -.2f);
+      juce::MidiBuffer midi; audioThread = true; owner->processBlock(audio, midi); audioThread = false; }
+    check(owner->getCreativeGainReduction(1) == 0, "Gate Mix zero retained old scalar GR during the blend ramp");
+    feed();
+    check(owner->readFxMonitor(1, frame) && frame.gainReductionDb == 0 && frame.utilityHistory.bins.back().gainReductionDb == 0,
+          "Gate Mix zero snapshot did not publish zero applied GR");
+    owner->parameters.getParameter("fx1On")->setValueNotifyingHost(0); feed();
+    check(owner->readFxMonitor(1, frame) && !frame.hasGainReduction && frame.utilityHistory.bins.back().gainReductionDb == 0, "Gate bypass retained measured GR history");
 }
 
 void activationLatencyPolicy() {
@@ -98,6 +171,12 @@ void activationLatencyPolicy() {
         juce::String error;
         check(owner->setRoutingGraph(morph.graph, error) && error.isEmpty(), "live Morph draft rejected");
         check(owner->routingRestartPending(), "latency change was not labeled pending");
+        auto rejected = morph.graph; rejected.nodes.push_back({101, NodeType::spectralMorph});
+        for (auto& link : rejected.links) if (link.source == 100 && link.destination == 13) link.source = 101;
+        rejected.links.push_back({100, 101, 0});
+        check(!owner->setRoutingGraph(rejected, error) && error.isNotEmpty() && owner->routingRestartPending(),
+              "rejected serial Morph destroyed the explicit pending activation state");
+        check(owner->getRoutingGraph().nodes.size() == morph.graph.nodes.size(), "rejected pending edit changed saved topology");
         check(owner->getLatencySamples() == base, "latency changed before host reprepare");
         const auto checkBypass = [&](int expectedLatency) {
             auto* bypass = owner->parameters.getParameter("bypass");
@@ -142,7 +221,7 @@ void activationLatencyPolicy() {
 
 void spectralContract() {
     auto owner=std::make_unique<Processor>();
-    check(spectralMorphParameterStart==2252 && owner->getParameters().size()==2342, "append-only Morph parameter count");
+    check(spectralMorphParameterStart==2252 && owner->getParameters().size()==2357, "append-only Morph parameter count");
     for(size_t i=0;i<parameterIds.size();++i) {
         auto* p=dynamic_cast<juce::RangedAudioParameter*>(owner->getParameters()[int(i)]);
         check(p && p->paramID==parameterIds[i], "host index differs from explicit parameter map");
@@ -202,6 +281,6 @@ void spectralContract() {
 }
 int main() {
     juce::ScopedJuceInitialiser_GUI juce;
-    try { busMatrix(); activationLatencyPolicy(); spectralContract(); check(!allocations && !destructions, "processor callback allocated/reclaimed"); std::cout << "Sidechain JUCE processor bus/state tests passed\n"; return 0; }
+    try { busMatrix(); monoAuditionAndGateBridge(); activationLatencyPolicy(); spectralContract(); check(!allocations && !destructions, "processor callback allocated/reclaimed"); std::cout << "Sidechain JUCE processor bus/state tests passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

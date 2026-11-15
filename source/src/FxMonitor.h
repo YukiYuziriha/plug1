@@ -8,17 +8,23 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include "UtilityTelemetry.h"
 
 namespace vocalstack {
 
 struct FxMonitorFrame {
     static constexpr size_t sampleCount = 2048;
-    static constexpr size_t historyCount = 200; // Four seconds at 20 ms/bin.
+    static constexpr size_t historyCount = 128;
+        static constexpr size_t gainReductionHistoryCount = 200;
+        std::array<float, gainReductionHistoryCount> gainReductionHistory{};
+        size_t gainReductionHistoryUsed = 0, gainReductionHistoryBinSamples = 960;
+        bool hasGainReduction = false;
+        UtilityHistorySnapshot utilityHistory{};
     // 20 ms stereo-union extrema and stereo power, before the slot Mix.
     struct HistoryBin {
         float inputMin = 0, inputMax = 0, wetMin = 0, wetMax = 0;
         float inputRms = 0, wetRms = 0;
-        float gainReductionDb = 0; // Maximum actual pre-makeup attenuation in this bin.
+
     };
     std::array<HistoryBin, historyCount> history{};
     size_t historyUsed = 0;
@@ -48,7 +54,7 @@ class FxMonitor {
 public:
     static constexpr size_t slotCount = 16;
     void setGainReduction(size_t slot, float db) noexcept {
-        if (slot < slotCount) reductions[slot].store(std::isfinite(db) ? std::clamp(db, 0.f, 160.f) : 0.f, std::memory_order_relaxed);
+        if (slot < slotCount) reductions[slot].store(std::isfinite(db) ? std::clamp(db, 0.f, 240.f) : 0.f, std::memory_order_relaxed);
     }
     float gainReduction(size_t slot) const noexcept {
         return slot < slotCount ? reductions[slot].load(std::memory_order_relaxed) : 0.f;
@@ -143,12 +149,14 @@ public:
                  float outL, float outR, int bandCount,
                  const std::array<std::array<float, 2>, 3>& bands,
                                   bool hasWet = false, float wetL = 0, float wetR = 0,
-                                  int nodeKind = -1) noexcept {
+                                  int nodeKind = -1, bool hasGainReduction = false,
+                                  UtilityDynamicsSnapshot utilityDynamics = {}, bool hasUtilityDynamics = false) noexcept {
         if (slot >= slotCount) return;
         auto& s = (*slots)[slot];
         if (!s.enabled) return;
         if (s.staging.nodeId != nodeId || s.staging.bandCount != bandCount || s.staging.hasWet != hasWet
-                    || s.staging.nodeKind != nodeKind) {
+                    || s.staging.nodeKind != nodeKind || s.staging.hasGainReduction != hasGainReduction
+                    || s.hasUtilityDynamics != hasUtilityDynamics) {
             s.latest.store(0, std::memory_order_release);
             ++s.epoch;
             s.used = s.position = s.elapsed = 0;
@@ -158,10 +166,22 @@ public:
         }
         s.staging.hasWet = hasWet;
         s.staging.nodeKind = nodeKind;
-        s.staging.gainReductionDb = gainReduction(slot);
+        s.staging.hasGainReduction = hasGainReduction;
+        s.staging.gainReductionDb = hasGainReduction ? gainReduction(slot) : 0;
+        s.hasUtilityDynamics = hasUtilityDynamics;
+        if (hasGainReduction) {
+            s.reductionPeak = std::max(s.reductionPeak, s.staging.gainReductionDb);
+            if (++s.reductionSamples == historyInterval) {
+                s.reductionHistory[s.reductionPosition] = s.reductionPeak;
+                s.reductionPosition = (s.reductionPosition + 1) % FxMonitorFrame::gainReductionHistoryCount;
+                s.reductionUsed = std::min(s.reductionUsed + 1, FxMonitorFrame::gainReductionHistoryCount);
+                s.reductionSamples = 0; s.reductionPeak = 0;
+            }
+        }
+        if (hasUtilityDynamics) s.utilityHistory.push(inL, inR, outL, outR, utilityDynamics);
         if (hasWet) {
             auto& bin = s.partial;
-            bin.gainReductionDb = std::max(bin.gainReductionDb, s.staging.gainReductionDb);
+
             bin.inputMin = std::min({bin.inputMin, inL, inR});
             bin.inputMax = std::max({bin.inputMax, inL, inR});
             bin.wetMin = std::min({bin.wetMin, wetL, wetR});
@@ -209,12 +229,19 @@ private:
         std::array<std::array<double, FxMonitorFrame::sampleCount>, 3> powers{};
         uint64_t generation = 0, sequence = 0, epoch = 0;
         size_t used = 0, position = 0, elapsed = 0;
-        bool enabled = false;
+        bool enabled = false, hasUtilityDynamics = false;
+        UtilityHistoryAccumulator utilityHistory;
+        std::array<float, FxMonitorFrame::gainReductionHistoryCount> reductionHistory{};
+        size_t reductionPosition = 0, reductionUsed = 0, reductionSamples = 0;
+        float reductionPeak = 0;
         FxMonitorFrame::HistoryBin partial{};
         size_t partialSamples = 0, historyPosition = 0;
         double inputPower = 0, wetPower = 0;
     };
-    static void clearHistory(Slot& s) noexcept {
+    void clearHistory(Slot& s) noexcept {
+        s.utilityHistory.reset(rate);
+        s.reductionHistory = {}; s.reductionPosition = s.reductionUsed = s.reductionSamples = 0;
+        s.reductionPeak = 0;
         s.staging.history = {}; s.staging.historyUsed = 0; s.staging.historySamples = 0;
         s.partial = {}; s.partialSamples = s.historyPosition = 0;
         s.inputPower = s.wetPower = 0;
@@ -260,6 +287,14 @@ private:
             frame.bandCount = s.staging.bandCount;
             frame.nodeKind = s.staging.nodeKind;
             frame.gainReductionDb = s.staging.gainReductionDb;
+            frame.hasGainReduction = s.staging.hasGainReduction;
+            frame.gainReductionHistory = {};
+            frame.gainReductionHistoryUsed = s.reductionUsed;
+            frame.gainReductionHistoryBinSamples = historyInterval;
+            for (size_t j = 0; j < s.reductionUsed; ++j)
+                frame.gainReductionHistory[FxMonitorFrame::gainReductionHistoryCount - s.reductionUsed + j] =
+                    s.reductionHistory[(s.reductionPosition + FxMonitorFrame::gainReductionHistoryCount - s.reductionUsed + j) % FxMonitorFrame::gainReductionHistoryCount];
+            frame.utilityHistory = s.hasUtilityDynamics ? s.utilityHistory.snapshot() : UtilityHistorySnapshot{};
             frame.sampleRate = rate;
             frame.sequence = ++s.sequence;
             frame.epoch = s.epoch;

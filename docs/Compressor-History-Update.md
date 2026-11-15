@@ -1,4 +1,18 @@
-# Compressor / Gate measured history handoff
+# Compressor / Gate measured history — integrated delivery
+
+**Delivered in the approved installed 1.11.0 release.** See
+[final package/install validation](Release-1.11.0-Validation.md). Owner-only
+handoff instructions below are preserved as historical integration context.
+
+**Coordinator integration completed:** all exact producer fields below are now
+present. Per-sample actual DSP GR feeds a dedicated 200-bin peak ring, independent
+of the unchanged 128-bin PCM history and `hasWet`. Publication uses the same
+exclusive snapshot ownership; bypass/generation/kind/reset/rate invalidation
+clears stale history. `actualDspSnapshotBridge()` and the registered Compressor
+History group pass, including actual routed compressor attenuation checks.
+Gate's separate measured RMS/threshold/mean-GR payload is also integrated.
+See [current validation and all-theme review GIFs](Preview-1.11.0.md). The original
+owner-only handoff below is historical; no full native desktop/FPS pass is claimed.
 
 ## Required telemetry integration — FxMonitor owner
 

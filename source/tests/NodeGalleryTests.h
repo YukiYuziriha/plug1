@@ -44,7 +44,7 @@ inline const char* model(const Entry& e) {
         case NodeType::spectralMorph: return "Measured MAIN / DONOR / result spectra; real Freeze hold/release";
         case NodeType::reverb: case NodeType::convolution: case NodeType::saturator:
             return "Measured input / wet history + parameter-derived foreground";
-        case NodeType::compressor: return "Static transfer model + measured DSP gain reduction";
+        case NodeType::compressor: return "Actual DSP peak GR / 20 ms / 4 seconds / 0..36 dB, plus static transfer model";
         case NodeType::delay: return "Parameter-timed phase illustration; not measured echoes";
         case NodeType::granular: return "Intentionally stable parameter envelope; NOT live grains/audio";
         case NodeType::bitcrusher: return "Static parameter-derived quantization schematic";
@@ -53,8 +53,9 @@ inline const char* model(const Entry& e) {
         case NodeType::crossover: return "Parameter crossover curves + measured input FFT / band levels";
         case NodeType::xpFilter: case NodeType::synthFilter:
             return "Parameter response + measured PRE / POST FFT; Synth curve is approximate";
-        case NodeType::gain: case NodeType::stereo: case NodeType::gate:
-            return "Measured PRE / POST meters; static parameter controls";
+        case NodeType::gate: return "Actual input/output RMS, smoothed threshold and wet GR, 20 ms / 4 seconds";
+        case NodeType::stereo: return "Actual final L/R RMS and correlation; persisted post-Mix Mono Audition";
+        case NodeType::gain: return "Measured PRE / POST meters; default full Wet with compatible legacy blend";
         default: return "Production controls/information only; no invented audio visualization";
     }
 }
@@ -89,13 +90,13 @@ inline void choices(juce::Component& root,juce::Array<juce::var>& result) {
     }
     for(auto* child:root.getChildren()) if(child->isVisible()) choices(*child,result);
 }
-inline void run(const juce::String& only) {
+inline void run(const juce::String& only, int theme = 1, bool coordinated = false) {
     guiTestDisplay::enumerate();
     for(const auto& e:entries) {
         if(only.isNotEmpty() && only!=e.slug) continue;
         for(bool rack:{false,true}) {
             if(rack && !mainBusFx::eligible(e.type)) continue;
-            auto owner=std::make_unique<Processor>(); owner->setSkin(1); owner->setMotionPercent(0);
+            auto owner=std::make_unique<Processor>(); owner->setSkin(theme); owner->setMotionPercent(0);
             auto buses=owner->getBusesLayout(); buses.inputBuses.set(1,juce::AudioChannelSet::stereo());
             ui::require(owner->setBusesLayout(buses),"Gallery auxiliary bus");
             juce::String error; ui::require(owner->setRoutingGraph(graph(e),error),"Gallery graph: "+error);
@@ -105,6 +106,7 @@ inline void run(const juce::String& only) {
             if(e.id==100) { ui::write(*owner,"fx1On",1); ui::write(*owner,"fx1Mix",100); }
             if(e.type==NodeType::spectralMorph) ui::write(*owner,"fx1MorphAmount",80);
             if(e.type==NodeType::compressor) ui::write(*owner,"fx1compressor_threshold",-30);
+            if(coordinated && e.type==NodeType::gate) ui::write(*owner,utilityParameterId(1,size_t(UtilityParameter::gateThreshold)),-24);
             if(e.type==NodeType::reverb) { ui::write(*owner,"fx1reverb_decay",3); ui::write(*owner,"fx1reverb_duck",0); }
             if(e.type==NodeType::saturator) ui::write(*owner,"fx1saturator_drive",12);
             auto layout=owner->getRoutingLayout(); layout.setProperty("selectedNode",int(e.id),nullptr);
@@ -124,12 +126,18 @@ inline void run(const juce::String& only) {
                 // Main Chorale is initially the first/only tab; independent FX use the same production action.
                 if(!e.main) ui::action(*editor,label);
             }
-            const juce::String stem=juce::String(e.slug)+(rack ? "-rack" : "-inspector");
+            const juce::String stem=juce::String(e.slug)+(rack ? "-rack" : "-inspector") + (coordinated ? "-" + updateUiTests::themeName(theme) : juce::String());
             juce::AudioBuffer<float> audio(4,256); juce::MidiBuffer midi;
             juce::String csv="frame,input_rms,output_rms,fx_sequence,wet_rms,morph_revision,frozen,pixel_changed\n";
             juce::Image previous; int position=0,changed=0; bool held=false,released=false,tail=false;
             SpectralMorphSnapshot frozen;
             for(int frame=0;frame<100;++frame) {
+                if(coordinated) {
+                    if(e.type==NodeType::stereo && (frame==30 || frame==75)) ui::write(*owner,stereoMonoParameterId(1),frame==30 ? 1.f : 0.f);
+                    if(e.type==NodeType::gain && (frame==30 || frame==75)) ui::write(*owner,"fx1Mix",frame==30 ? 37.f : 100.f);
+                    if(e.type==NodeType::output) ui::write(*owner,"outputGain",-24.f + 36.f * float(frame) / 99.f);
+                    if(e.type==NodeType::mix) ui::write(*owner,e.main ? juce::String("double") : localMixParameterId(e.id),float(frame) * 100.f / 99.f);
+                }
                 if(e.type==NodeType::spectralMorph && frame==30) ui::write(*owner,"fx1MorphFreeze",1);
                 if(e.type==NodeType::spectralMorph && frame==75) ui::write(*owner,"fx1MorphFreeze",0);
                 double inputEnergy=0,outputEnergy=0;
@@ -138,7 +146,7 @@ inline void run(const juce::String& only) {
                     for(int i=0;i<n;++i,++position) {
                         const double t=position/48000.;
                         const bool tailEffect=e.type==NodeType::reverb || e.type==NodeType::convolution;
-                        const double envelope=tailEffect ? (t<.7 ? .42*std::sin(std::numbers::pi*t/.7) : 0.)
+                        const double envelope=(coordinated && (e.type==NodeType::gate || e.type==NodeType::compressor)) ? (frame % 30 < 18 ? .4 : .004) : tailEffect ? (t<.7 ? .42*std::sin(std::numbers::pi*t/.7) : 0.)
                             : t>3.2 ? 0. : (.12+.22*std::pow(std::sin(t*5),2));
                         const double base=t<1.6 ? 173. : 311.;
                         float a=float(envelope*(std::sin(t*2*std::numbers::pi*base)+.23*std::sin(t*2*std::numbers::pi*1700)));
@@ -164,6 +172,13 @@ inline void run(const juce::String& only) {
                     ui::require(held && morph.spectrum.frozen && difference<1.e-5f,"Real donor Freeze changed while held");
                 }
                 if(hasMorph && frame==90) released=!morph.spectrum.frozen;
+                if(coordinated && frame==90 && (e.type==NodeType::gate || e.type==NodeType::compressor)) {
+                    ui::require(hasFx && fx.hasGainReduction && fx.gainReductionHistoryUsed > 100, "Approval capture lacks actual four-second GR producer history");
+                    if(e.type==NodeType::gate) ui::require(fx.utilityHistory.used > 100, "Approval Gate capture lacks measured threshold/levels");
+                }
+                if(coordinated && frame==60 && e.type==NodeType::stereo) {
+                    ui::require(hasFx && std::abs(fx.output[0].back()-fx.output[1].back()) < 1.e-5f, "Approval Stereo capture is not actual final-output mono");
+                }
                 if(hasFx && frame>25 && fx.hasWet && fx.history.back().inputRms==0 && fx.wetRms>1.e-5f) tail=true;
                 juce::Image image;
                 if(rack) image=rackPanel->createComponentSnapshot(rackPanel->getLocalBounds());
@@ -188,7 +203,8 @@ inline void run(const juce::String& only) {
             if(e.type==NodeType::reverb || e.type==NodeType::convolution) ui::require(tail && changed>0,"Actual wet tail missing");
             juce::File::getCurrentWorkingDirectory().getChildFile(stem+"-measurements.csv").replaceWithText(csv);
             auto* metadata=new juce::DynamicObject; juce::var data(metadata);
-            metadata->setProperty("slug",e.slug); metadata->setProperty("name",e.name);
+            metadata->setProperty("theme",updateUiTests::themeName(theme)); metadata->setProperty("coordinated_update",coordinated);
+                        metadata->setProperty("slug",e.slug); metadata->setProperty("name",e.name);
             metadata->setProperty("node_type",int(e.type)); metadata->setProperty("node_id",int(e.id));
             metadata->setProperty("view",rack ? "rack" : "inspector"); metadata->setProperty("model",model(e));
             metadata->setProperty("rack_supported",mainBusFx::eligible(e.type));

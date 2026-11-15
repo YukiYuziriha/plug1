@@ -1,10 +1,15 @@
 # 1.11.0 — SIDECHAIN, Spectral Morph and shared reactive material
 
-**Current coordinated revision: source edits in progress, not yet rebuilt or
-validated; waiting for all UI-agent handoffs before compilation.** Earlier
-Release-build/test/render results below are historical, not validation of these
-new edits. Pending visual approval; not installed or packaged. No commit or push. The pending 1.10.1 work is preserved;
-`Preview-1.10.1.md` remains its historical record, not validation of this revision.
+**Current coordinated revision: approved, Release-built, packaged and installed
+as 1.11.0.** Both packaged and installed CLAP/VST3 module smoke checks pass;
+build/package/installed SHA256 hashes and PE versions match. See
+[final delivery validation](Release-1.11.0-Validation.md).
+Core regressions pass **40/40**; current full editor result **80/81** retains the
+native desktop-occlusion click precondition failure. Separate rack and granular
+UI suites and the focused handoff suites pass. Approval authorizes delivery with
+that limitation, not a claim of native input/FPS or DAW listening success.
+The earlier 1.10.1 work is included; `Preview-1.10.1.md` remains its historical
+record. Earlier preview-only status statements below are historical.
 
 ## Using the new effect
 
@@ -34,8 +39,7 @@ main audio. Host availability is runtime metadata, not preset audio.
 Graphs without Morph prepare **zero additional routing latency**. Graphs declaring
 Morph prepare its actual fixed **4096-sample** routing latency, including dormant,
 bypassed and disconnected Morph nodes so their activation/wiring cannot change
-the contract. These source expectations are covered by new tests but await the
-coordinated build/run:
+the contract. The processor and actual CLAP/VST3 wrapper activation tests verify these totals:
 
 | Sample rate | No Morph total | With Morph total |
 | --- | ---: | ---: |
@@ -108,15 +112,22 @@ serial rack.
   audio/spectra**; recall can therefore show Capture Waiting until input exists.
 - No automatic donor level matching. Envelope division/gain and exceptional
   values are bounded; ±120 dBFS arithmetic containment is not a musical limiter.
-- **2342 parameters:** every released index **0–2251** remains fixed. Six fields
-  per independent slot append at **2252–2341** with explicit mappings; existing
-  common On/Mix are reused. No released per-slot stride or effect mode changes.
+- **2357 parameters:** every existing index **0–2341** remains fixed. Morph's six
+  fields per independent slot stay at **2252–2341**. Fifteen separate persisted
+  booleans `fx1stereo_mono_audition` through `fx15stereo_mono_audition` append at
+  **2342–2356**, default false and host-automation-only, not LFO targets. No
+  released utility/creative stride or mode changes. Mono Audition folds the final
+  post-Mix Stereo slot output as `(L+R)/2` using the existing smoothed 10 ms hook;
+  Width/Balance/Swap/Polarity/Mix remain untouched. Slot bypass releases audition
+  smoothly alongside the existing Mix fade; global/host bypass still selects the
+  latency-aligned original input. Binary, text,
+  graph-state and missing-legacy-value recall are covered.
 
 ## Measured presentation
 
 Reverb, Convolution and Saturator share the reactive material, now separating
 its unchanged **48 × 24 decorative background** from fine measured geometry.
-All **200** signed extrema/RMS history windows (four seconds at 20 ms/bin) are retained around one fixed zero
+All **128** existing signed extrema/RMS history windows are retained around one fixed zero
 baseline. Connected stepped waveform paths target 1.5 px horizontally and 1 px
 vertical rims at scale 1, bounded to 1024 display columns. Interpolated display
 geometry is not additional audio samples; covered measured extrema are unioned
@@ -138,7 +149,7 @@ analysis expires after 250 ms. Graph/reset epoch checks reject old captures afte
 removal, reuse, graph edits or reset before publication can be mistaken for the
 current instance.
 
-## Coordinated performance/telemetry changes — validation pending
+## Coordinated performance/telemetry changes
 
 - Routing synchronizes node cards once per polling path rather than twice. Its
   timer repaints the canvas for material-frame advances or actual graph/port
@@ -149,13 +160,26 @@ current instance.
   No trace/history/material resolution was reduced.
 - FX monitor subscriptions intersect every ancestor viewport, not merely
   `isShowing()`. GUI FFT Hann coefficients are precomputed; simultaneous spectrum
-  views share one analysis per processor/slot/sequence/epoch/identity/rate.
+  views share one analysis per processor/slot/sequence/epoch/identity/rate;
+  restarting a stalled stream clears shared FFT peaks instead of resurrecting them.
+- Procedural rasters also share a bounded **128-entry message-thread cache**
+  keyed by exact material, dimensions, palette, contrast and animation frame.
+  Tiles are immutable so another surface/phase cannot corrupt a retained image.
+  Original material fingerprints and deterministic-phase tests are retained.
 - Compressor and Gate retain the existing bounded atomic GR interface, with
   finite nonnegative containment. Coherent snapshots now also carry node kind,
   current pre-makeup attenuation and four-second 20 ms peak-GR history. These
   values come from the DSP, not a curve/threshold model. Display range remains a
   UI concern; telemetry does not clamp actual attenuation to a 36 dB display.
-- `vocalstack_editor_tests --benchmark-routing` is an optional bounded native
+  The original 128-bin PCM history is unchanged. A separate 200-bin peak-GR
+  history is valid independently of PCM `hasWet`, including Compressor Mix 0.
+  Gate additionally publishes actual input/final-slot-output RMS, actual smoothed
+  threshold and mean wet-GR per 20 ms bin through `UtilityHistoryAccumulator`.
+  Gate Mix 0/bypass reports zero applied GR, not stale attenuation, including
+    while the slot blend is still releasing. Completed
+  histories are reordered/copied only during the existing exclusive snapshot
+  publication, never read live by the GUI.
+- `VocalStackEditorTests --benchmark-routing` is an optional bounded native
   cost probe: 15 FX, actual PCM, collapsed/expanded-exposed/expanded-offscreen,
   Motion 0/3/100. It enumerates displays, places the window on the non-primary
   display when available, and rejects an occluded native window. Output reports
@@ -164,11 +188,122 @@ current instance.
   estimate, or a realtime audio scheduling benchmark. Run only through
   `tools/Invoke-HalfCpu.ps1`, after the explicit UI-agent handoff.
 
-No new build, regression result, cost measurement or screenshot is claimed yet.
-The sole coordinator must wait for all UI agents, then perform the affected
-Release build, full regressions, CLAP/VST3 activation/latency matrix, native GUI
-checks and all-theme actual-PCM captures. Keep the preview approval gate: no
-installation, tracked-package replacement, commit or push.
+### Coordinated validation and preview artifacts
+
+After the explicit all-three-UI-agents completion handoff, the sole coordinator
+ran configure/compiler/test/render/encode children through dedicated 64-bit
+PowerShell and `tools/Invoke-HalfCpu.ps1`: **6/12 logical processors, 0x3F**.
+`COPY_PLUGIN_AFTER_BUILD` remains false. Source version stays **1.11.0**.
+These preview checks preceded the subsequently approved delivery; the final
+incremental check reported no work to do before packaging and installation.
+
+| Check | Observed result | Log under `source/build/` |
+| --- | --- | --- |
+| Release CLAP/VST3 and all affected test targets | Built successfully | `coordinated-build-delivery.log`; test-only VST3 queue extension: `coordinated-vst3-automation-build-2.log` |
+| Full non-editor DSP/processor/state/host regressions | **40/40 passed**, 201.77 s | `coordinated-core-delivery.log` |
+| Focused Control Layout, Compressor History, Utility Visual, monitor, processor and module hosts | **7/7 passed**, 36.44 s | `coordinated-focused-delivery.log` |
+| Additional native VST3 FFT parameter queues and saved-state/PCM oracle | **1/1 passed**, 38.34 s, all 108 matrix cases | `coordinated-vst3-automation-2.log` |
+| Full editor | **80/81 groups passed**, 161.24 s | `coordinated-editor-delivery.log` |
+| Separate Main Bus FX and granular UI, serialized | **2/2 passed**, 17.73 s | `coordinated-native-delivery.log` |
+| Actual-PCM/control capture/encode | **39/39 GIFs verified**, 100 frames / 4 s / 25 presentation fps; largest **339773 bytes** | `coordinated-capture-a-final.log`, `coordinated-capture-b-final.log`, `coordinated-encode-final.log` |
+
+The remaining full-editor failure is the unchanged strict native click
+precondition, not skipped or replaced by direct component input: the intended
+window was visible/enabled at `(3760,473)-(5040,1273)`, but the hit at the intended
+card belonged to **`Chrome_RenderWidgetHostHWND`** and `peerContains=0`. The latest
+native cost probe is independently blocked by the same class
+(`coordinated-native-cost-delivery.log`). Earlier attempts during this integration
+hit `SHELLDLL_DefView`; both conditions are recorded rather than weakened or
+reported as a clean desktop/native-input pass. No unrelated
+window or host was moved/killed, and no native-exposed FPS/DAW transport/listening
+success is claimed. Main Bus FX's separate component hit-tested wheel regressions
+passed **98 cases per theme**; these are not proof that the external desktop
+occlusion disappeared.
+
+The standalone processor matrix additionally compares **non-bypassed actual
+external-source audio** against its exact original latency while a Morph draft
+is pending, then cancels it before state/availability checks. Activation tests
+cover no-Morph → dormant Morph → enable → removal, reset versus preparation,
+state recall and irregular blocks. The existing allocation/destruction guards
+also cover the new Mono/Gate processor path. Actual CLAP/VST3 module hosts check
+baseline and Morph totals, active-state deferral, deactivation/reactivation,
+mono/stereo main/auxiliary layouts and FFT automation. The VST3 extension connects
+the actual component and controller through `IConnectionPoint`, discovers the
+real FFT parameter ID, submits normalized 0 / 0.5 / 1 parameter queues at offset
+17, and checks saved component values 0 / 1 / 2, finite/unchanged steady-state PCM
+and the unchanged latency. Its first unconnected-controller metadata attempt
+failed; proper component/controller pairing fixed the test fixture without a
+production DSP change. No stronger sample-accurate FFT-switch timing claim is
+made. This verifies the stated fixed-activation policy, **not arbitrary live DAW PDC switching**.
+
+### Cost measurement — not FPS
+
+`VocalStackEditorTests --benchmark-routing-components` forces 60 complete editor
+component snapshots per case, processing real PCM between them. It retains a
+native peer on the enumerated second monitor but does **not** require/exploit a
+false claim of native desktop exposure. Nine cases cover Motion 0/3/100 and
+collapsed / expanded inside the viewport / expanded outside it. The initial
+60-second attempt timed out; the subsequent bounded 180-second run completed.
+
+One before/after run of this same harness around the immutable shared-raster
+cache change observed:
+
+| Expanded inside viewport | Before forced component ms / 60 | After ms / 60 | Approx. ms per forced snapshot, before → after |
+| --- | ---: | ---: | ---: |
+| Motion 0 | 1607.34 | 1587.48 | 26.8 → 26.5 |
+| Motion 3 | 3066.61 | 1774.95 | 51.1 → 29.6 |
+| Motion 100 | 4902.47 | 2949.93 | 81.7 → 49.2 |
+
+Logs: `coordinated-component-cost.log` and
+`coordinated-component-cost-shared.log`. The after-run Motion-100 expanded case
+recorded 119205 shared tile hits; expanded-off-viewport cases drew **zero node
+chrome and zero cables**. Card synchronizations equaled routing timer ticks,
+not twice their count. Warm Motion-0 cases generated **zero material rasters**.
+These are single-run component-work measurements with timer/native-message
+catch-up, not controlled statistical benchmarks, delivered FPS or realtime audio
+scheduling. Expanded Motion 100 **remains costly**; no universal FPS target or
+performance at every DAW/window/scale is claimed.
+
+### Current review clips
+
+[All 39 clips, paired surfaces and three-theme index](../source/build/approval-1.11.0-coordinated/index.md)
+with [verified manifest](../source/build/approval-1.11.0-coordinated/manifest.json).
+The directory is a local ignored build artifact, not a packaged delivery.
+
+- Gate, Compressor, Stereo, Gain and Morph: **right inspector and Stack rack**,
+  each in Device / Neon / Spectral.
+- Output, Dry/Wet and main Mix: inspector, each in all three themes.
+- Stereo switches persisted Mono Audition on at frame 30, off at 75 and asserts
+  actual final L/R equality. Gain recalls/automates 37% Wet to reveal **Wet
+  (legacy)**, then returns to hidden default 100%. Output sweeps **-24..+12 dB**;
+  Dry/Wet and main Mix sweep unsigned **0..100**. Morph captures/holds/releases
+  actual donor spectra, with the wide Stack spectrum at left.
+- Captures assert actual DSP GR/history and Gate measured levels/threshold. The
+  history is real audio-rate production telemetry, not PCM-ratio inference or
+  GUI-generated fake history. Frame CSVs and native-window placement logs are
+  alongside the PNGs.
+- All captures are **production-component snapshots**, not OS framebuffer
+  recordings. Windows were placed on the actual non-primary display, work area
+  `(3440,357,1920,1032)`, DPI 96 / scale 1; the primary was `(0,0,3440,1392)`,
+  DPI 96 / scale 1. Deterministic material fingerprint tests protect pixel parity
+  of the later shared-raster cache.
+
+Additional integration guards verify that non-default **effective LFO Wet** reveals
+Gain's compatibility row even at a 100% host base, without changing the base or
+allocating a second modulation snapshot. A one-sample Stereo slot-bypass check
+catches skipping the smoothed Mono release. A rejected serial-Morph edit preserves
+the existing pending draft, its old running latency and the visible RESTART
+PENDING warning. Those branches are covered by the final regression tests, not
+claimed as successful physical mouse/DAW interaction.
+
+Before delivery approval, read-only SHA256 rechecks of both tracked packages
+and both per-user installed binaries matched the original 1.10.0 hashes in
+`Release-1.10.0-Validation.md`:
+CLAP `41DA7CFA95B68B2B6D3ED1289B797999056C84637882F9E85B71ED00F871658A`,
+VST3 `FD71879DA9D21215C201885A26B6A77309EEE69BE29EA1E775F327904657FEA1`.
+Those historical preservation checks are superseded by the approved 1.11.0
+package refresh and installation recorded in `Release-1.11.0-Validation.md`.
+Airwindows work remains research only.
 
 ## Initial integration validation (historical)
 
@@ -285,7 +420,7 @@ windows were unoccluded on the physical desktop. Broader legacy `editor-*.png` t
 offscreen and carry no physical monitor claim. No user host/unrelated window was
 moved. Capture/encoding installs no dependency; it uses existing ffmpeg/ffprobe.
 
-## Binary preservation
+## Historical pre-approval binary preservation
 
 Read-only SHA256 and PE checks confirmed both packages and both per-user installed
 binaries still report **1.10.0.0** and match the original delivery hashes:
@@ -299,14 +434,15 @@ Only ignored `source/build/VocalStack_artefacts/Release/` binaries report 1.11.0
 `binary-hashes.json` records all six paths/versions/hashes. No `Windows-x64` file,
 installed plugin, package, commit or remote branch was replaced or updated.
 
-## Readability revision — final preview, still 1.11.0
+## Historical readability revision — preview, still 1.11.0
 
 **Built and rendered; pending review. No install, package refresh, dependency
 installation, commit or push.** All prior pending SIDECHAIN/Morph/shared-reactive
 work remains. This revision changes presentation and its tests only; it does not
 change stereo FFT work, DSP, host parameters, callback allocation policy or the
-large fixed latency policy described above. That latency remains an important
-monitoring cost, not something addressed by this UI request.
+then-current always-reserved latency policy. The later coordinated revision
+supersedes that policy with the prepared-graph contract documented above; the
+4096-sample cost applies only to graphs declaring Morph.
 
 ### Geometry before / after
 

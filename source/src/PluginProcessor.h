@@ -206,8 +206,18 @@ inline juce::String spectralMorphParameterId(size_t slot, size_t field) {
     return slot > 0 && slot < 16 && field < spectralMorphParameterCount
         ? juce::String(spectralMorphIdStorage[(slot - 1) * spectralMorphParameterCount + field]) : juce::String();
 }
+inline constexpr size_t stereoMonoParameterStart = spectralMorphParameterStart + 15 * spectralMorphParameterCount;
+static_assert(stereoMonoParameterStart == 2342);
+inline const auto stereoMonoIdStorage = [] {
+    std::array<std::string, 15> ids;
+    for (size_t slot = 1; slot < 16; ++slot) ids[slot - 1] = "fx" + std::to_string(slot) + "stereo_mono_audition";
+    return ids;
+}();
+inline juce::String stereoMonoParameterId(size_t slot) {
+    return slot > 0 && slot < 16 ? juce::String(stereoMonoIdStorage[slot - 1]) : juce::String();
+}
 inline const auto parameterIds = [] {
-    std::array<const char*, spectralMorphParameterStart + 15 * spectralMorphParameterCount> ids{};
+    std::array<const char*, stereoMonoParameterStart + 15> ids{};
         static_assert(utilityParameterStart + 15 * utilityParameterCount == newCreativeParameterStart);
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
@@ -230,6 +240,7 @@ inline const auto parameterIds = [] {
     for (size_t i = 0; i < utilityParameterIdStorage.size(); ++i)
         ids[utilityParameterStart + i] = utilityParameterIdStorage[i].c_str();
     for (size_t i = 0; i < spectralMorphIdStorage.size(); ++i) ids[spectralMorphParameterStart + i] = spectralMorphIdStorage[i].c_str();
+    for (size_t i = 0; i < stereoMonoIdStorage.size(); ++i) ids[stereoMonoParameterStart + i] = stereoMonoIdStorage[i].c_str();
     return ids;
 }();
 static_assert(parameterIds.size() <= ModulationBackend::maxTargets);

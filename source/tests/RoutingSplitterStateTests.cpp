@@ -66,7 +66,7 @@ std::vector<float> parameterValues(Processor& owner) {
 void processorRecall() {
     auto owner = std::make_unique<Processor>();
     const auto before = parameterValues(*owner);
-    check(before.size() == 2342, "splitter changed the host parameter count");
+    check(before.size() == 2357, "splitter changed the host parameter count");
     juce::String error;
     check(owner->setRoutingGraph(graph(), error), "processor rejected splitter graph");
     check(parameterValues(*owner) == before, "splitter graph edit changed host parameters");
@@ -141,7 +141,7 @@ void dryWetRecall() {
     check(owner->setRoutingGraph(g, error), "Dry/Wet recall fixture rejected");
     const auto verify = [&](Processor& target) {
         sameTopology(target.getRoutingGraph(), g);
-        check(target.getParameters().size() == 2342, "Dry/Wet changed host parameter count");
+        check(target.getParameters().size() == 2357, "Dry/Wet changed host parameter count");
         for (size_t i = 0; i < parameterIds.size(); ++i)
             check(target.getParameters()[int(i)] == target.parameters.getParameter(parameterIds[i]), "Dry/Wet changed existing host indices");
         for (auto pair : {std::pair<uint32_t, float>{200u, 73.f}, {201u, 19.f}, {247u, 41.f}}) {

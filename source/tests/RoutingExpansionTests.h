@@ -306,6 +306,17 @@ void reopen() {
 
 void binding(Fixture& f, const juce::String& id) {
     auto& slider = ui::slider(f.canvas(), id); // Never find an inspector duplicate.
+    if (!slider.isShowing() && id.endsWith("Mix")) {
+        // Gain deliberately hides default 100% Wet, but legacy/automated values
+        // must reveal the same live attachment before gesture coverage.
+        setParameter(f.owner, id, 75);
+        for (int tick = 0; tick < 4 && !slider.isShowing(); ++tick) routingPolish::pumpTimers();
+    }
+    if (!slider.isShowing()) {
+        std::cout << "Expanded binding hidden: " << id << " host=" << parameterValue(f.owner, id) << " slider=" << slider.getValue() << '\n';
+        for (auto* c = static_cast<juce::Component*>(&slider); c; c = c->getParentComponent())
+            std::cout << "  ancestor " << c->getName() << " id=" << c->getComponentID() << " visible=" << c->isVisible() << " showing=" << c->isShowing() << '\n';
+    }
     expect(slider.isShowing() && slider.isEnabled(), "Expanded binding control is hidden or disabled: " + id);
     // Effect bodies intentionally scroll at native control size. Bring the
     // actual control into view before testing it, not an offscreen attachment.

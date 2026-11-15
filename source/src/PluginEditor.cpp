@@ -128,6 +128,7 @@ Editor::Editor(Processor& processor)
             knob.setDoubleClickReturnValue(true, i == 4 || i == 5 ? 0.0
                 : parameter->convertFrom0to1(parameter->getDefaultValue()));
         if (i == 1 || i == 5) {
+            knob.getProperties().set("vocalstackValueFontSize", 14.f);
             knob.setLookAndFeel(i == 1 ? &leadMixStyle : &outputStyle);
             knob.getProperties().set("vocalstackTexturedBar", true);
             knob.getProperties().set("vocalstackSeparateBarValue", true);

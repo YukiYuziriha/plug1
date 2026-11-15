@@ -33,6 +33,20 @@ inline bool identical(const juce::Image& a, const juce::Image& b) {
     return true;
 }
 
+inline void sharedRasterCache() {
+    FluidBackground first, second;
+    const auto base = juce::Colour(0xff172831), accent = juce::Colour(0xff527aac);
+    FluidBackground::resetWorkCounters();
+    const auto a = render(first, 317, 203, base, accent, 12345.6);
+    const auto b = render(second, 317, 203, base, accent, 12345.6);
+    const auto counts = FluidBackground::workCounters();
+    require(identical(a, b) && counts.rasterizations == 1 && counts.sharedHits == 1, "Identical surfaces did not share an exact raster");
+    const auto changed = render(second, 317, 203, base, accent, 12380.6);
+    require(!identical(a, changed), "Shared cache omitted animation frame");
+    require(identical(a, render(first, 317, 203, base, accent, 12345.6)), "Another surface mutated an immutable cached phase");
+    require(!identical(a, render(second, 317, 203, juce::Colour(0xff594c42), accent, 12345.6)), "Shared cache omitted base palette");
+}
+
 inline void deterministicTimeAndMotion() {
     const auto palette = themePalette(Theme::spectral);
     FluidBackground cached, independent;
@@ -335,6 +349,7 @@ inline void ordinaryMaterialFingerprints() {
     }
 }
 inline void run() {
+    sharedRasterCache();
     ordinaryMaterialFingerprints();
     coherentClusters();
     backgroundAttenuation();

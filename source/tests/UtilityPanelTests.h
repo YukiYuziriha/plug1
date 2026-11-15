@@ -116,24 +116,25 @@ struct UtilityPanelTests {
                 const int controlWidth = wide ? inner - inner * 44 / 100 - 6 : inner;
                 const int controlX = wide ? panel.visual.getRight() + 6 : 8;
                 require(!wide || (panel.visual.getWidth() < inner / 2
-                                 && panel.rows.front()->getY() == panel.visual.getY()),
+                                 && ([&] { for (const auto& row : panel.rows) if (row->isVisible()) return row->getY() == panel.visual.getY() + (kind == UtilityKind::stereo ? 34 : 0); return false; })()),
                         "Wide Utility inspector still uses a full-width vertical column");
                 require(panel.content.getWidth() <= panel.viewport.getViewArea().getWidth(),
                         "Utility inspector requires horizontal scrolling");
                 for (size_t i = 0; i < panel.rows.size(); ++i) {
                     const auto& row = panel.rows[i];
+                    if (!row->isVisible()) continue; // Default Gain has no legacy Wet row.
                     require(panel.content.getLocalBounds().contains(row->getBounds()), "Utility parameter clipped");
                     require(row->getX() >= controlX, "Wide Utility control escaped its right-hand group");
                     panel.revealParameter(row->id);
                     require(panel.viewport.getViewArea().contains(row->getBounds()),
                             "Utility parameter is not fully scroll reachable");
-                    if (i != 0 && row->getY() > panel.rows[i - 1]->getY())
+                    if (i != 0 && panel.rows[i - 1]->isVisible() && row->getY() > panel.rows[i - 1]->getY())
                         require(row->getY() == panel.rows[i - 1]->getBottom() + 2,
                                 "Utility control rows must retain a 2px vertical gap");
                     require(!row->getBounds().intersects(panel.visual.getBounds())
                             && !row->getBounds().intersects(panel.overview.getBounds()), "Utility control overlaps its visual");
                     for (size_t j = 0; j < i; ++j)
-                        require(!row->getBounds().intersects(panel.rows[j]->getBounds()), "Utility parameters overlap");
+                        if (panel.rows[j]->isVisible()) require(!row->getBounds().intersects(panel.rows[j]->getBounds()), "Utility parameters overlap");
                     if (row->toggle.isVisible()) {
                         require(row->getWidth() == 64 && row->getHeight() == 28, "Utility switch is not compact");
                     } else if (row->combo.isVisible()) {

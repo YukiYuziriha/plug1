@@ -387,6 +387,21 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
             expect(body->getViewArea().intersects(bounds), "every full-panel parameter is reachable by vertical scrolling");
         };
         const auto slot = size_t(routingFxSlot(node.id));
+        if (node.type == NodeType::gain) {
+            auto* mix = find(*card, fxParameterId(slot, "Mix"));
+            expect(mix && !mix->isShowing(), "default full-Wet Gain hides its compatibility blend");
+            set(owner, fxParameterId(slot, "Mix"), 73); pump(); pump();
+            expect(mix->isShowing(), "legacy Gain Wet automation reveals its original attachment");
+        }
+        if (node.type == NodeType::stereo) {
+            const auto id = stereoMonoParameterId(slot);
+            checkParameter(id);
+            auto* mono = dynamic_cast<juce::Button*>(find(*card, id));
+            expect(mono && mono->isEnabled(), "Stereo rack Mono Audition is persisted and enabled");
+            mono->setToggleState(true, juce::sendNotificationSync);
+            expect(owner.parameters.getRawParameterValue(id)->load() == 1, "rack Mono Audition writes its host parameter");
+            mono->setToggleState(false, juce::sendNotificationSync);
+        }
         checkParameter(fxParameterId(slot, "Mix"));
         auto* captionSlider = dynamic_cast<juce::Slider*>(find(*card, fxParameterId(slot, "Mix")));
         expect(captionSlider != nullptr, "rack Mix has a slider");

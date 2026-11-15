@@ -148,12 +148,14 @@ struct SharedFxSpectrum {
     FxSpectrum input, output;
     uint64_t sequence = 0, epoch = 0, analyses = 0;
     uint32_t nodeId = 0;
-    double rate = 0;
-    void update(const FxMonitorFrame& frame) {
+    double rate = 0, lastAnalysisMs = -1;
+    void update(const FxMonitorFrame& frame, double nowMs = juce::Time::getMillisecondCounterHiRes()) {
         if (sequence == frame.sequence && epoch == frame.epoch && nodeId == frame.nodeId && rate == frame.sampleRate) return;
-        if (epoch != frame.epoch || nodeId != frame.nodeId || rate != frame.sampleRate) { input.clear(); output.clear(); }
+        if (epoch != frame.epoch || nodeId != frame.nodeId || rate != frame.sampleRate
+            || (lastAnalysisMs >= 0 && nowMs - lastAnalysisMs > 200)) { input.clear(); output.clear(); }
         input.update(frame.input); output.update(frame.output);
         sequence = frame.sequence; epoch = frame.epoch; nodeId = frame.nodeId; rate = frame.sampleRate;
+        lastAnalysisMs = nowMs;
         ++analyses;
     }
     static std::shared_ptr<SharedFxSpectrum> acquire(Processor& processor, size_t slot) {
@@ -181,6 +183,8 @@ public:
     }
     ~FxMonitorView() override { stopTimer(); if (retained) monitorOwner.releaseFxMonitor(monitorSlot); }
     void visibilityChanged() override { syncSubscription(); }
+    void resized() override { syncSubscription(); }
+    void moved() override { syncSubscription(); }
     void parentHierarchyChanged() override { syncSubscription(); }
     bool hasLiveFrame() const { return valid && opacity > 0; }
     bool isStreamStalled() const { return valid && opacity < 1; }
@@ -248,7 +252,7 @@ private:
             if (!valid || next.epoch != frame.epoch || next.nodeId != frame.nodeId || next.sampleRate != frame.sampleRate) { input.clear(); output.clear(); }
             frame = next; valid = true; opacity = 1; lastFrameMs = now;
             if (sharedSpectrum) {
-                sharedSpectrum->update(frame);
+                sharedSpectrum->update(frame, now);
                 input.copyLevelsFrom(sharedSpectrum->input);
                 output.copyLevelsFrom(sharedSpectrum->output);
             }

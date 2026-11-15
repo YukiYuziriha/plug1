@@ -6,11 +6,15 @@
 #include <pluginterfaces/vst/ivstcomponent.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivsthostapplication.h>
+#include <pluginterfaces/vst/ivsteditcontroller.h>
+#include <pluginterfaces/vst/ivstparameterchanges.h>
+#include <pluginterfaces/vst/ivstmessage.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -36,6 +40,68 @@ struct Host final : IHostApplication {
     }
     tresult PLUGIN_API createInstance(TUID, TUID, void** out) override { *out=nullptr; return kNoInterface; }
 };
+struct ParameterQueue final : IParamValueQueue {
+    ParamID id = 0; ParamValue value = 0; int32 offset = 17; uint32 refs = 1;
+    tresult PLUGIN_API queryInterface(const TUID iid, void** out) override {
+        *out = nullptr;
+        if (equal(iid, IParamValueQueue_iid) || equal(iid, FUnknown_iid)) { *out = static_cast<IParamValueQueue*>(this); addRef(); return kResultOk; }
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return ++refs; }
+    uint32 PLUGIN_API release() override { return --refs; }
+    ParamID PLUGIN_API getParameterId() override { return id; }
+    int32 PLUGIN_API getPointCount() override { return 1; }
+    tresult PLUGIN_API getPoint(int32 index, int32& sampleOffset, ParamValue& parameterValue) override {
+        if (index != 0) return kInvalidArgument;
+        sampleOffset = offset; parameterValue = value; return kResultOk;
+    }
+    tresult PLUGIN_API addPoint(int32 sampleOffset, ParamValue parameterValue, int32& index) override {
+        offset = sampleOffset; value = parameterValue; index = 0; return kResultOk;
+    }
+};
+struct ParameterChanges final : IParameterChanges {
+    ParameterQueue queue; uint32 refs = 1;
+    tresult PLUGIN_API queryInterface(const TUID iid, void** out) override {
+        *out = nullptr;
+        if (equal(iid, IParameterChanges_iid) || equal(iid, FUnknown_iid)) { *out = static_cast<IParameterChanges*>(this); addRef(); return kResultOk; }
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return ++refs; }
+    uint32 PLUGIN_API release() override { return --refs; }
+    int32 PLUGIN_API getParameterCount() override { return 1; }
+    IParamValueQueue* PLUGIN_API getParameterData(int32 index) override { return index == 0 ? &queue : nullptr; }
+    IParamValueQueue* PLUGIN_API addParameterData(const ParamID& id, int32& index) override { queue.id = id; index = 0; return &queue; }
+};
+ParamID fftParameterId(IPluginFactory& factory, IComponent& component, Host& host) {
+    TUID controllerClass{};
+    check(component.getControllerClassId(controllerClass) == kResultOk, "VST3 controller class unavailable");
+    IEditController* controller = nullptr;
+    check(factory.createInstance(controllerClass, IEditController_iid, reinterpret_cast<void**>(&controller)) == kResultOk && controller,
+          "VST3 automation controller creation failed");
+    check(controller->initialize(&host) == kResultOk, "VST3 automation controller initialization failed");
+    IConnectionPoint* audioConnection = nullptr; IConnectionPoint* controlConnection = nullptr;
+    check(component.queryInterface(IConnectionPoint_iid, reinterpret_cast<void**>(&audioConnection)) == kResultOk && audioConnection,
+          "VST3 component connection point unavailable");
+    check(controller->queryInterface(IConnectionPoint_iid, reinterpret_cast<void**>(&controlConnection)) == kResultOk && controlConnection,
+          "VST3 controller connection point unavailable");
+    check(audioConnection->connect(controlConnection) == kResultOk && controlConnection->connect(audioConnection) == kResultOk,
+          "VST3 component/controller connection failed");
+    bool found = false; ParamID id = 0;
+    const auto parameterCount = controller->getParameterCount();
+    for (int32 index = 0; index < controller->getParameterCount(); ++index) {
+        ParameterInfo info{};
+        if (controller->getParameterInfo(index, info) != kResultOk) continue;
+        std::string title;
+        for (const auto character : info.title) { if (!character) break; title.push_back(char(character)); }
+        if (title == "FX 1 Spectral FFT Size") { id = info.id; found = true; break; }
+    }
+    controlConnection->disconnect(audioConnection); audioConnection->disconnect(controlConnection);
+    controlConnection->release(); audioConnection->release();
+    controller->terminate(); controller->release();
+    if (!found) std::cerr << "VST3 controller parameter count=" << parameterCount << '\n';
+    check(found, "VST3 FFT automation parameter metadata missing");
+    return id;
+}
 struct Stream final : IBStream {
     std::vector<char> bytes; int64 cursor=0; uint32 refs=1;
     tresult PLUGIN_API queryInterface(const TUID iid, void** out) override {
@@ -137,6 +203,33 @@ void render(IPluginFactory& factory, const TUID cid, double rate, int mainChanne
         }
         position+=count;
     }
+    // Real VST3 input queues, not a preset-only or direct Processor simulation.
+    // State inspection proves the wrapper consumed each event; no sample-accurate
+    // FFT-switch timing claim is made beyond latency stability and finite audio.
+    ParameterChanges changes; changes.queue.id = fftParameterId(factory, *component, host);
+    data.inputParameterChanges = &changes; data.numSamples = 137;
+    for (int fft = 0; fft < 3; ++fft) {
+        changes.queue.value = fft * .5;
+        check(processor->process(data) == kResultOk, "VST3 FFT parameter-queue processing failed");
+        check(processor->getLatencySamples() == latency, "VST3 FFT automation changed fixed compensation");
+        for (int c = 0; c < outputChannels; ++c) for (int i = 0; i < data.numSamples; ++i) {
+            const float actual = out[size_t(c)][size_t(i)];
+            check(std::isfinite(actual), "VST3 FFT automation produced nonfinite audio");
+            const float left = auxChannels == 0 ? 0.f : .04f;
+            const float right = auxChannels == 0 ? 0.f : (auxChannels == 1 ? .04f : .07f) * (mainChannels == 2 ? -1.f : 1.f);
+            const float expected = variant ? 0.f : outputChannels == 1 ? .5f * (left + right) : c == 0 ? left : right;
+            check(std::abs(actual - expected) < (variant ? 2.e-5f : 2.e-3f), "VST3 FFT automation disturbed aligned steady-state output");
+        }
+        Stream observed; check(component->getState(&observed) == kResultOk, "VST3 FFT state inspection failed");
+        const std::string xml(observed.bytes.begin(), observed.bytes.end());
+        const auto parameter = xml.find("id=\"fx1MorphFFT\"");
+        check(parameter != std::string::npos, "VST3 FFT missing from saved component state");
+        const auto start = xml.rfind('<', parameter), end = xml.find('>', parameter);
+        const auto value = xml.find("value=\"", start);
+        check(value != std::string::npos && value < end && std::strtod(xml.c_str() + value + 7, nullptr) == fft,
+              "VST3 wrapper did not apply the actual FFT automation queue");
+    }
+    data.inputParameterChanges = nullptr;
     processor->setProcessing(false); component->setActive(false);
     Stream saved; check(component->getState(&saved)==kResultOk && saved.bytes.size()>8,"VST3 state save failed");
     saved.cursor=0; check(component->setState(&saved)==kResultOk,"VST3 state recall failed");

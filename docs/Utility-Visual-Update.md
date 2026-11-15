@@ -1,4 +1,24 @@
-# Utility visual update — coordinator integration handoff
+# Utility visual update — integrated delivery
+
+**Delivered in the approved installed 1.11.0 release.** See
+[final package/install validation](Release-1.11.0-Validation.md). Owner-only
+handoff instructions below are preserved as historical integration context.
+
+**Coordinator integration completed:** `FxMonitorFrame::utilityHistory` now
+publishes the audio-owned accumulator under the existing exclusive buffer
+ownership. Gate receives actual smoothed threshold/wet GR and final post-Mix
+output, with zero applied GR on bypass/Mix zero. Fifteen persisted Mono Audition
+booleans append at indices 2342–2356; all 0–2341 IDs/indices and utility strides
+remain unchanged. Routing inspector, expanded card and Stack Stereo paths bind
+them, and the smoothed fold runs once after Mix, before telemetry.
+Gain's shared crossfade formatter is integrated; default Wet is hidden, while
+recalled/base-automated **or effectively modulated** non-unity Wet is revealed.
+The visibility check reuses the visual's coherent target snapshot, not another
+full modulation read, and waits for active gestures to finish.
+New helper, actual processor/LFO, Mono/state and GUI bindings tests pass; current
+full editor is 80/81 because its native click precondition remains desktop-blocked.
+See [consolidated validation and actual three-theme captures](Preview-1.11.0.md).
+The source owner's original handoff/status below remains historical.
 
 Read `AGENTS.md`, working-tree status, `Preview-1.11.0.md` readability notes and
 `Node-Visual-Audit-1.11.0.md`. Existing shared changes are preserved. This work

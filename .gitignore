@@ -1,6 +1,9 @@
 /source/build/
 /.cache/
 
+# Machine-local coordinated review capture/encode helper.
+/source/tests/capture-coordinated-update.py
+
 # Generated review renders; historical tracked release images remain tracked.
 /approval-1910-*.png
 /controls-utility-*.png

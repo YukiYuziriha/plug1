@@ -316,6 +316,9 @@ State::ParameterLayout Processor::makeParameters() {
                     int(spectralMorphParameters[p].initial)));
             } else appendDescriptor(id, name, spectralMorphParameters[p]);
         }
+    for (size_t slot = 1; slot < 16; ++slot)
+        layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{stereoMonoParameterId(slot), 1},
+            "FX " + juce::String(int(slot)) + " Mono Audition", false));
     return layout;
 }
 
@@ -359,6 +362,7 @@ Settings Processor::settingsFromValues(const std::array<float, parameterIds.size
         std::array<float, spectralMorphParameterCount> spectralValues{};
         for (size_t p = 0; p < spectralValues.size(); ++p) spectralValues[p] = value(spectralMorphParameterIndex(slot, p));
         result.fxSettings[slot].spectralMorph = spectralMorphFromValues(spectralValues);
+        result.fxSettings[slot].monoAudition = value(stereoMonoParameterStart + slot - 1) >= .5f;
         result.fxSettings[slot].waveshaper.raw = value(waveExtraParameterStart + (slot - 1) * 2) >= 0.5f;
         result.fxSettings[slot].waveshaper.shapeAmount = value(waveExtraParameterStart + (slot - 1) * 2 + 1) * 0.01f;
         // Raw overrides quality in Waveshaper; keep the requested quality saved.
@@ -755,12 +759,18 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                     if (isCreativeEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
                         initial = node.creative.values[field];
             }
-            if (i >= spectralMorphParameterStart) {
+            if (i >= spectralMorphParameterStart && i < stereoMonoParameterStart) {
                 const size_t slot = 1 + (i - spectralMorphParameterStart) / spectralMorphParameterCount;
                 const size_t field = (i - spectralMorphParameterStart) % spectralMorphParameterCount;
                 initial = spectralMorphParameters[field].initial;
                 for (const auto& node : active.nodes) if (node.type == NodeType::spectralMorph && routingFxSlot(node.id) == int(slot))
                     initial = spectralMorphValues(node.spectralMorph)[field];
+            }
+            if (i >= stereoMonoParameterStart) {
+                initial = 0;
+                for (const auto& node : draft.nodes)
+                    if (node.type == NodeType::stereo && processorRouting::fxSlot(node.id) == int(i - stereoMonoParameterStart + 1))
+                        initial = node.monoAudition ? 1.f : 0.f;
             }
             if (graphTree.isValid() && i >= utilityParameterStart && i < newCreativeParameterStart) {
                 const size_t slot = 1 + (i - utilityParameterStart) / utilityParameterCount;
@@ -894,6 +904,10 @@ Graph Processor::qualitySnapshot(Graph graph) const {
     // Graph views/state show requested host/base quality, never a live modulated
     // value. Keep Raw's dormant quality visible and persistent as well.
     for (auto& node : graph.nodes) {
+        if (node.type == NodeType::stereo) {
+            const int slot = routingFxSlot(node.id);
+            if (slot > 0) node.monoAudition = values[stereoMonoParameterStart + size_t(slot - 1)]->load(std::memory_order_relaxed) >= .5f;
+        }
         if (node.type == NodeType::mix && !node.mainControls && node.id >= 200 && node.id < 248)
             node.mix = values[localMixParameterStart + node.id - 200]->load(std::memory_order_relaxed) * .01f;
         if (node.type == NodeType::spectralMorph) {
@@ -1045,6 +1059,8 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
                         if (old == previous.nodes.end() || node.creative.values[p] != old->creative.values[p])
                             setParameterValue(parameterIds[creativeParameterIndex(slot, p)], node.creative.values[p]);
                 }
+                if (slot > 0 && node.type == NodeType::stereo && (old == previous.nodes.end() || node.monoAudition != old->monoAudition))
+                    setParameterValue(parameterIds[stereoMonoParameterStart + slot - 1], node.monoAudition ? 1.f : 0.f);
                 if (slot > 0 && isUtilityEffect(node.type)) {
                     for (size_t p = 0; p < utilityParameterCount; ++p)
                         if (old == previous.nodes.end() || node.utility.values[p] != old->utility.values[p])
@@ -1210,6 +1226,7 @@ bool Processor::setModulationState(const ModulationState& state, juce::String& e
         for (size_t i = 0; i < plan.modulatorCount; ++i) if (plan.modulators[i].id == a.modulatorId) source = i;
         for (size_t i = 0; i < parameterIds.size(); ++i) if (a.targetParameterId == parameterIds[i]) target = i;
         if (source == plan.modulatorCount || target == parameterIds.size()) return fail("Unknown modulation source or parameter ID");
+        if (target >= stereoMonoParameterStart) return fail("Mono Audition is host automation only, not a continuous modulation target");
         if (target >= spectralMorphParameterStart) {
             const auto field = (target - spectralMorphParameterStart) % spectralMorphParameterCount;
             if (spectralMorphParameters[field].discrete) return fail("Spectral Mode, FFT and Freeze are host automation only, not continuous modulation targets");
@@ -1308,6 +1325,7 @@ ModulationSnapshot Processor::getModulationSnapshot() const {
         if (!sourcesConsistent) continue;
         for (size_t i = 0; i < values.size(); ++i) {
             if (i == 8 || i == 10 || (i >= 86 && i < 94)) continue;
+            if (i >= stereoMonoParameterStart) continue;
             if (i >= spectralMorphParameterStart && spectralMorphParameters[(i - spectralMorphParameterStart) % spectralMorphParameterCount].discrete) continue;
             const bool assigned = snapshotTargeted[i].load();
             const float raw = assigned ? snapshotBase[i].load() : values[i]->load(std::memory_order_relaxed);
@@ -1319,6 +1337,7 @@ ModulationSnapshot Processor::getModulationSnapshot() const {
         // a stable frame; a UI read need not fit those operations between ticks.
         for (size_t i = 0; i < values.size(); ++i) {
             if (i == 8 || i == 10 || (i >= 86 && i < 94)) continue;
+            if (i >= stereoMonoParameterStart) continue;
             if (i >= spectralMorphParameterStart && spectralMorphParameters[(i - spectralMorphParameterStart) % spectralMorphParameterCount].discrete) continue;
             const float base = rangedParameters[i]->convertTo0to1(baseRaw[i]);
             const float effective = rangedParameters[i]->convertTo0to1(effectiveRaw[i]);

@@ -314,6 +314,8 @@ inline void utilityInspectors() {
         }
         constexpr std::array<int, 5> counts{1, 5, 6, 4, 5};
         ui::require(controls == counts[kind], "Utility inspector coverage count changed");
+        write(*owner, "fx1Mix", 75);
+        waitFor([&] { juce::Timer::callPendingTimersSynchronously(); return ui::slider(*panel, "fx1Mix").getParentComponent()->isVisible(); }, "Legacy Gain Wet did not reveal on host automation");
         panel->revealParameter("fx1Mix");
         auto& mix = ui::slider(*panel, "fx1Mix");
         ui::require(mix.getSliderStyle() == juce::Slider::LinearHorizontal, "Utility Mix must be linear");
@@ -529,6 +531,8 @@ inline void creativeVisuals() {
             ui::require(visual.getTooltip().containsIgnoreCase("actual stereo min/max")
                             && visual.getTooltip().containsIgnoreCase("foreground model axes")
                             && visual.getTooltip().containsIgnoreCase("not measured IR"), "Reverb must distinguish measured background from model guide");
+        else if (kinds[k] == CreativeKind::compressor)
+            ui::require(visual.getTooltip().containsIgnoreCase("actual DSP gain reduction") && visual.getTooltip().containsIgnoreCase("parameter-derived static transfer"), "Compressor must distinguish measured GR from transfer model");
         else
             ui::require(visual.getTooltip().containsIgnoreCase("not a measured impulse response"), "Model must not claim a measured impulse response");
         ui::passive(visual); owner->releaseResources();

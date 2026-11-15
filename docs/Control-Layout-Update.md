@@ -1,4 +1,17 @@
-# Control layout update — source handoff
+# Control layout update — integrated delivery
+
+**Delivered in the approved installed 1.11.0 release.** See
+[final package/install validation](Release-1.11.0-Validation.md). Owner-only
+handoff instructions below are preserved as historical integration context.
+
+**Coordinator integration completed:** Routing's own mix renderer now uses the
+shared midpoint style and unsigned Dry/Wet formatter; Output receives a full-width
+60 px separate-value bar. Separate-value bars retain deliberate editable/clickable
+numeric labels and passive focus/wheel behavior. Stack compact values retain the
+14 px readout. Wide Morph and inward rings passed the registered focused group.
+See [current consolidated results and 39 review GIFs](Preview-1.11.0.md).
+The historical owner-only status below is preserved; the current full editor
+result is 80/81 with the strict native desktop-hit precondition still blocked.
 
 ## Scope and status
 

@@ -87,9 +87,13 @@ public:
             card->remove.setTooltip(segment.editable() ? "Remove this routing node (Undo in Routing)" : juce::String(segment.unavailable));
             card->handle.setTooltip(card->canReorder ? "Select FX; drag horizontally to reorder (Undo in Routing)" : "Select FX / " + juce::String(reason));
         }
-        status.setText(lastError.isNotEmpty() ? lastError : reason.empty()
-            ? "MAIN BUS FX  /  same nodes as Routing  /  before Output trim"
+        status.setText(lastError.isNotEmpty()
+                    ? (owner.routingRestartPending() ? "RESTART PENDING / Saved topology is not running. " : juce::String()) + lastError
+                    : owner.routingRestartPending()
+            ? "RESTART PENDING / Saved topology is not running. Host deactivate/reactivate required; transport stop is not enough."
+            : reason.empty() ? "MAIN BUS FX  /  same nodes as Routing  /  before Output trim"
             : juce::String(reason), juce::dontSendNotification);
+        status.setTooltip(status.getText());
     }
     void resized() override {
         auto area = getLocalBounds().reduced(6);
@@ -218,7 +222,11 @@ private:
                         fullPanel = std::move(spectral);
                     }
                     else if (isCreativeEffect(model.type)) fullPanel = std::make_unique<CreativeEffectPanel>(rack.owner, size_t(slot), creativeKind(model.type));
-                    else if (isUtilityEffect(model.type)) fullPanel = std::make_unique<UtilityEffectPanel>(rack.owner, size_t(slot), utilityKind(model.type));
+                    else if (isUtilityEffect(model.type)) {
+                        auto panel = std::make_unique<UtilityEffectPanel>(rack.owner, size_t(slot), utilityKind(model.type));
+                        if (model.type == NodeType::stereo) panel->bindMonoAuditionParameter(stereoMonoParameterId(size_t(slot)));
+                        fullPanel = std::move(panel);
+                    }
                     else {
                         fullPanel = std::make_unique<ToneEffectPanel>(rack.owner, size_t(slot), model.type);
                         bodyViewport.setComponentID("mainBusFxBodyViewport");

@@ -93,6 +93,7 @@ inline juce::ValueTree encode(const Graph& graph, const char* type) {
         node.setProperty("mainControls", n.mainControls, nullptr);
         node.setProperty("referencePower", n.referencePower, nullptr);
         node.setProperty("latencySamples", n.latencySamples, nullptr);
+        node.setProperty("monoAudition", n.monoAudition, nullptr);
         node.setProperty("bandCount", n.bandCount, nullptr);
         node.setProperty("crossoverLow", n.crossoverLow, nullptr);
         node.setProperty("crossoverHigh", n.crossoverHigh, nullptr);
@@ -206,6 +207,7 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
                 const float value = bounded(float(utility.getProperty(d.id, d.initial)), d.min, d.max, d.initial);
                 n.utility.values[p] = d.discrete ? std::round(value) : value;
             }
+            n.monoAudition = bool(child.getProperty("monoAudition", false));
             const auto spectral = child.getChildWithName("SpectralMorph");
             std::array<float, spectralMorphParameterCount> spectralValues{};
             for (size_t p = 0; p < spectralValues.size(); ++p) {

@@ -19,6 +19,13 @@ inline void monitorCacheAndClipping() {
     ui::require(first->analyses == 2, "New monitor publication skipped FFT analysis");
     ++frame.epoch; first->update(frame);
     ui::require(first->analyses == 3, "Monitor epoch did not invalidate FFT cache");
+    toneui::SharedFxSpectrum stale;
+    for (size_t i = 0; i < frame.sampleCount; ++i)
+        frame.input[0][i] = frame.input[1][i] = float(std::sin(6.283185307179586 * 64 * double(i) / frame.sampleCount));
+    stale.update(frame, 1);
+    frame.input = {}; frame.output = {}; ++frame.sequence;
+    stale.update(frame, 1001);
+    for (float db : stale.input.levelsDbFS()) ui::near(db, -96, "Stalled shared FFT resurrected old peaks");
     juce::Component root, clipped, view;
     root.setSize(320, 240); root.addAndMakeVisible(clipped); clipped.setBounds(20, 20, 100, 100);
     clipped.addAndMakeVisible(view); view.setBounds(0, 0, 80, 80);
@@ -48,7 +55,7 @@ inline void motionState() {
     juce::MemoryBlock state; owner->getStateInformation(state);
     auto copy = std::make_unique<Processor>(); copy->setStateInformation(state.getData(), int(state.getSize()));
     ui::near(float(copy->getMotionPercent()), 17.25f, "Binary Motion recall");
-    ui::require(copy->getParameters().size() == 2342, "Motion must not append a host parameter");
+    ui::require(copy->getParameters().size() == 2357, "Motion must not append a host parameter");
     auto legacy = juce::parseXML(owner->settingsText()); legacy->removeAttribute("motionPercent");
     ui::require(copy->pasteSettings(legacy->toString()), "Legacy state restore");
     ui::near(float(copy->getMotionPercent()), 3, "Missing Motion legacy default");

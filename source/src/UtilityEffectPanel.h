@@ -102,6 +102,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                     if (gain && (text.containsIgnoreCase("inf") || text.contains(juce::String::fromUTF8("\xe2\x88\x9e")))) return -120.0;
                     return text.getDoubleValue() * (suffix == "Hz" && text.containsIgnoreCase("k") ? 1000.0 : 1.0);
                 };
+                if (field == utilityParameterCount) configureCrossfadeDisplay(slider);
                 slider.beginEdit = [this] { panel.begin(id); };
                 slider.endEdit = [this] { panel.end(); };
                 slider.onValueChange = [this] { panel.changed(); };
@@ -207,6 +208,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             return panel.kind != UtilityKind::synthFilter
                 || (!synthCurve.bins.empty() && synthCurve.request == curveRequest());
         }
+        float effectiveMixForDisplay() const noexcept { return ready ? mix : 100.f; }
         void refresh() {
             const auto next = monitorOwner.getModulationSnapshot();
             if (next.consistent) {
@@ -789,12 +791,14 @@ private:
     }
     void timerCallback() override {
         for (auto& row : rows) row->refresh();
+        visual.refresh();
         if (kind == UtilityKind::gain && mixRow && !editing) {
+            // Reuse the visual's coherent target read; do not allocate another
+            // complete modulation snapshot just to reveal the compatibility row.
             const bool showLegacyWet = mixRow->slider.getValue() < 99.9999
-                || toneui::visualParameter(owner, mixRow->id) < 99.9999f;
+                || visual.effectiveMixForDisplay() < 99.9999f;
             if (mixRow->isVisible() != showLegacyWet) { mixRow->setVisible(showLegacyWet); resized(); }
         }
-        visual.refresh();
     }
     Processor& owner;
     size_t slot;

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <vector>
+#include <array>
 #include <algorithm>
 
 namespace vocalstack {
@@ -47,7 +48,7 @@ inline constexpr double proceduralAnimationSpeed = 1.2;
 class FluidBackground {
 public:
     enum class Material { background, control, fatBar };
-    struct WorkCounters { uint64_t paints = 0, cacheHits = 0, rasterizations = 0, pixelsGenerated = 0, clipCulls = 0; };
+    struct WorkCounters { uint64_t paints = 0, cacheHits = 0, sharedHits = 0, rasterizations = 0, pixelsGenerated = 0, clipCulls = 0; };
     static WorkCounters workCounters() { return counters(); }
     static void resetWorkCounters() { counters() = {}; }
     static constexpr float backgroundVariation = .8f;
@@ -67,12 +68,14 @@ public:
         const double frame = std::floor((std::isfinite(seconds) ? juce::jlimit(0.0, 1.0e9, seconds) : 0.0) * 10.0);
         if (image.isNull() || image.getWidth() != width || image.getHeight() != height
             || frame != cachedFrame || base != cachedBase || accent != cachedAccent || contrast != cachedContrast) {
-            if (image.isNull() || image.getWidth() != width || image.getHeight() != height)
-                image = juce::Image(juce::Image::RGB, width, height, false);
             cachedFrame = frame;
             cachedBase = base;
             cachedAccent = accent;
             cachedContrast = contrast;
+            if (!loadShared(width, height)) {
+            // Shared tiles are immutable: never mutate an image retained by a
+            // different surface or an earlier deterministic animation phase.
+            image = juce::Image(juce::Image::RGB, width, height, false);
             ++counters().rasterizations;
             counters().pixelsGenerated += uint64_t(width) * uint64_t(height);
             const double phase = frame * 0.0025 * proceduralAnimationSpeed;
@@ -114,6 +117,8 @@ public:
                         colour = base.interpolatedWith(colour, backgroundVariation);
                     pixels.setPixelColour(x, y, colour);
                 }
+            saveShared();
+            }
         }
         else ++counters().cacheHits;
         juce::Graphics::ScopedSaveState state(g);
@@ -123,6 +128,33 @@ public:
 
 private:
     static WorkCounters& counters() { static thread_local WorkCounters value; return value; }
+    struct SharedTile {
+        juce::Image image;
+        Material material = Material::background;
+        juce::Colour base, accent;
+        double frame = -1;
+        float contrast = 0;
+        uint64_t age = 0;
+    };
+    struct SharedTiles { std::array<SharedTile, 128> tiles; uint64_t clock = 0; };
+    static SharedTiles& sharedTiles() { static thread_local SharedTiles value; return value; }
+    bool loadShared(int width, int height) {
+        auto& cache = sharedTiles();
+        for (auto& tile : cache.tiles)
+            if (tile.age && tile.material == material && tile.frame == cachedFrame && tile.base == cachedBase
+                && tile.accent == cachedAccent && tile.contrast == cachedContrast
+                && tile.image.getWidth() == width && tile.image.getHeight() == height) {
+                image = tile.image; tile.age = ++cache.clock; ++counters().sharedHits;
+                return true;
+            }
+        return false;
+    }
+    void saveShared() {
+        auto& cache = sharedTiles();
+        auto* oldest = &cache.tiles.front();
+        for (auto& tile : cache.tiles) if (tile.age < oldest->age) oldest = &tile;
+        *oldest = {image, material, cachedBase, cachedAccent, cachedFrame, cachedContrast, ++cache.clock};
+    }
     static double lattice(int x, int y, int z) noexcept {
         std::uint32_t h = std::uint32_t(x) * 374761393u + std::uint32_t(y) * 668265263u
                         + std::uint32_t(z) * 2246822519u + 1013904223u;

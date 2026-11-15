@@ -67,6 +67,26 @@ struct UtilityVisualUpdateTests {
         require(settings[UtilityParameter::stereoWidth] == 100, "Audition changed stored width");
         require(utilityParameters[size_t(UtilityParameter::gainDb)].max == 24, "Utility Gain range changed");
     }
+    static void effectiveGainWet() {
+        auto owner = std::make_unique<Processor>();
+        Graph graph{{{1, NodeType::lead}, {100, NodeType::gain}, {13, NodeType::output}}, {{1, 100, 0}, {100, 13, 0}}};
+        juce::String error; require(owner->setRoutingGraph(graph, error), "Modulated Gain fixture graph");
+        ModulationState modulation; Modulator source; source.id = 1; source.phase = .25f; source.rateHz = .1f;
+        modulation.modulators.push_back(source); modulation.assignments.push_back({1, "fx1Mix", -.4f, true});
+        require(owner->setModulationState(modulation, error), "Gain Wet effective assignment");
+        owner->prepareToPlay(48000, 256);
+        UtilityEffectPanel gain(*owner, 1, UtilityKind::gain); gain.setSize(400, 730);
+        juce::AudioBuffer<float> audio(2, 256); juce::MidiBuffer midi;
+        for (int i = 0; i < 16; ++i) { audio.clear(); owner->processBlock(audio, midi); }
+        gain.timerCallback();
+        require(owner->parameters.getRawParameterValue("fx1Mix")->load() == 100, "Effective Gain Wet modified host base");
+        require(gain.mixRow->isVisible(), "Effective non-unity Gain Wet was hidden at a 100% base");
+        require(owner->setModulationState({}, error), "Gain Wet assignment removal");
+        for (int i = 0; i < 16; ++i) { audio.clear(); owner->processBlock(audio, midi); }
+        gain.timerCallback();
+        require(!gain.mixRow->isVisible(), "Unity Gain Wet did not hide after effective modulation ended");
+        owner->releaseResources();
+    }
     // Message-thread fixture; no desktop/capture claim.
     static void controls(Processor& owner) {
         const auto id = fxParameterId(1, "Mix");

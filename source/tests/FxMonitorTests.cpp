@@ -35,16 +35,18 @@ void gainReductionTelemetry() {
     near(monitor.gainReduction(1), 0, "non-finite GR escaped telemetry");
     monitor.setGainReduction(1, -4);
     near(monitor.gainReduction(1), 0, "negative GR escaped telemetry");
+    monitor.setGainReduction(1, 180);
+    near(monitor.gainReduction(1), 180, "GR telemetry was clipped to the display range");
     monitor.setGainReduction(1, 6);
     for (int i = 0; i < 48000 * 5; ++i) {
         monitor.beginSample();
-        monitor.capture(1, 100, .4f, -.4f, .2f, -.2f, 0, {}, true, .2f, -.2f, int(NodeType::compressor));
+        monitor.capture(1, 100, .4f, -.4f, .2f, -.2f, 0, {}, true, .2f, -.2f, int(NodeType::compressor), true);
     }
     check(monitor.read(1, frame), "GR snapshot missing");
     check(frame.nodeId == 100 && frame.nodeKind == int(NodeType::compressor), "GR machine identity missing");
     near(frame.gainReductionDb, 6, "GR snapshot differs from DSP telemetry");
-    check(frame.historyUsed == 200 && frame.historyBinSamples == 960, "GR history is not four seconds of 20 ms bins");
-    for (const auto& bin : frame.history) near(bin.gainReductionDb, 6, "GR history is not actual attenuation");
+    check(frame.gainReductionHistoryUsed == 200 && frame.gainReductionHistoryBinSamples == 960, "GR history is not four seconds of 20 ms bins");
+    for (const auto db : frame.gainReductionHistory) near(db, 6, "GR history is not actual attenuation");
     monitor.reset(48000);
     near(monitor.gainReduction(1), 0, "GR reset retained the old machine");
     check(!monitor.read(1, frame), "GR reset retained stale snapshot");
@@ -65,7 +67,7 @@ void routedCompressorReduction() {
         sources.lead = {sample, -sample}; executor.process(sources, controls);
     }
     FxMonitorFrame frame; check(monitor.read(1, frame), "actual compressor snapshot missing");
-    check(frame.nodeKind == int(NodeType::compressor) && frame.hasWet, "actual compressor history metadata missing");
+    check(frame.nodeKind == int(NodeType::compressor) && frame.hasGainReduction, "actual compressor history metadata missing");
     check(frame.gainReductionDb > 10 && frame.gainReductionDb < 30, "actual compressor GR absent/unbounded");
     double inputPower = 0, outputPower = 0;
     for (size_t i = 0; i < FxMonitorFrame::sampleCount; ++i) {

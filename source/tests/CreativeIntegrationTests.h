@@ -113,7 +113,7 @@ inline double render(Processor& p, double rate, int channels, int samples, bool 
 inline void parameterContract() {
     Processor p;
     require(creativeParameterStart == 1007 && creativeParameterCount == 62, "Creative append contract changed");
-    require(parameterIds.size() == 2342 && p.getParameters().size() == int(parameterIds.size()), "Wrong expanded host parameter count");
+    require(parameterIds.size() == 2357 && p.getParameters().size() == int(parameterIds.size()), "Wrong expanded host parameter count");
     std::set<std::string> unique;
     for (size_t i = 0; i < parameterIds.size(); ++i) {
         require(unique.insert(parameterIds[i]).second, "Duplicate parameter ID");

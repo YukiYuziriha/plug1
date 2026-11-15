@@ -20,6 +20,9 @@
 #include "RackUndoIntegrationTests.h"
 #include "FactoryFxUiTests.h"
 #include "CoordinatedPreviewTests.h"
+#include "ControlLayoutUpdateTests.h"
+#include "CompressorHistoryTests.h"
+#include "UtilityVisualUpdateTests.h"
 #include "InspectorControlLayoutTests.h"
 #include "ScrollbarTests.h"
 #include "MeasuredFieldUiTests.h"
@@ -82,7 +85,7 @@ void advancedParameterContract() {
     Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 2342, "Expected 2087 preserved + 165 new effect parameters");
+    expect(owner.getParameters().size() == 2357, "Expected 2087 preserved + 165 new effect parameters");
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
             const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
@@ -827,7 +830,7 @@ void spectralEditor() { editorSkin(2); }
 
 // Optional bounded native paint-cost probe, not a delivered-FPS measurement.
 // Run separately from regressions so native interaction/capture is never raced.
-void benchmarkRoutingWork() {
+void benchmarkRoutingWork(bool componentPaint = false) {
 #if JUCE_WINDOWS
     using namespace vocalstack;
     guiTestDisplay::enumerate();
@@ -846,7 +849,7 @@ void benchmarkRoutingWork() {
     std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor());
     const auto work = guiTestDisplay::selected().userArea;
     editor->setSize(std::min(1280, work.getWidth()), std::min(800, work.getHeight()));
-    guiTestDisplay::attach(*editor); toneUiTests::action(*editor, "Routing");
+    guiTestDisplay::attach(*editor); editor->toFront(true); toneUiTests::action(*editor, "Routing");
     auto* panel = toneUiTests::find<RoutingPanel>(*editor, [](auto& c) { return c.isShowing(); });
     toneUiTests::require(panel != nullptr, "Benchmark Routing panel missing");
     const auto dispatch = [] {
@@ -856,7 +859,8 @@ void benchmarkRoutingWork() {
     };
     juce::AudioBuffer<float> audio(2, 256); juce::MidiBuffer midi;
     int sample = 0;
-    std::cout << "NATIVE_ROUTING_COST: native paint/timer cost only, not delivered FPS; 15 independent FX, synchronous real PCM\n";
+    std::cout << (componentPaint ? "COMPONENT_ROUTING_COST: forced component-snapshot cost with a placed native peer; NOT native exposed paint/FPS, valid even when desktop is occluded\n"
+                                : "NATIVE_ROUTING_COST: native paint/timer cost only, not delivered FPS; 15 independent FX, synchronous real PCM\n");
     for (double motion : {0., 3., 100.}) for (int state = 0; state < 3; ++state) {
         owner->setMotionPercent(motion);
         toneUiTests::action(*panel, state == 0 ? "Collapse all" : "Expand all");
@@ -871,13 +875,13 @@ void benchmarkRoutingWork() {
         toneUiTests::require(GetWindowRect(native, &nativeBounds) != 0, "Native Routing benchmark window bounds unavailable");
         POINT point{(nativeBounds.left + nativeBounds.right) / 2, (nativeBounds.top + nativeBounds.bottom) / 2};
         const auto hit = WindowFromPoint(point);
-        if (GetAncestor(hit, GA_ROOT) != GetAncestor(native, GA_ROOT)) {
+        if (!componentPaint && GetAncestor(hit, GA_ROOT) != GetAncestor(native, GA_ROOT)) {
             wchar_t className[256]{}; GetClassNameW(hit, className, 256);
             throw std::runtime_error("Native Routing cost probe is occluded by " + juce::String(className).toStdString());
         }
         panel->resetRoutingWorkCounters(); FluidBackground::resetWorkCounters();
         const auto started = juce::Time::getMillisecondCounterHiRes();
-        double dispatchMs = 0;
+        double dispatchMs = 0, componentPaintMs = 0;
         for (int frame = 0; frame < 60; ++frame) {
             for (int block = 0; block < 3; ++block) {
                 for (int i = 0; i < 256; ++i, ++sample) {
@@ -888,16 +892,23 @@ void benchmarkRoutingWork() {
             }
             const auto before = juce::Time::getMillisecondCounterHiRes(); dispatch();
             dispatchMs += juce::Time::getMillisecondCounterHiRes() - before;
+            if (componentPaint) {
+                const auto paintStart = juce::Time::getMillisecondCounterHiRes();
+                const auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
+                toneUiTests::require(snapshot.isValid(), "Routing cost component snapshot missing");
+                componentPaintMs += juce::Time::getMillisecondCounterHiRes() - paintStart;
+            }
             juce::Thread::sleep(16);
         }
         const auto routing = panel->routingWorkCounters(); const auto material = FluidBackground::workCounters();
         std::cout << "routing_cost motion=" << motion << " state=" << (state == 0 ? "collapsed" : state == 1 ? "expanded-exposed" : "expanded-offscreen")
             << " wall_ms=" << juce::Time::getMillisecondCounterHiRes() - started << " dispatch_ms=" << dispatchMs
+            << " forced_component_ms=" << componentPaintMs
             << " canvas_paints=" << routing.canvasPaints << " canvas_ms=" << routing.canvasPaintMs
             << " syncs=" << routing.cardSynchronizations << " timer_ticks=" << routing.timerTicks
             << " nodes_drawn=" << routing.nodesDrawn << " nodes_culled=" << routing.nodesCulled
             << " cables_drawn=" << routing.cablesDrawn << " cables_culled=" << routing.cablesCulled
-            << " material_rasters=" << material.rasterizations << " material_hits=" << material.cacheHits
+            << " material_rasters=" << material.rasterizations << " material_shared_hits=" << material.sharedHits << " material_hits=" << material.cacheHits
             << " material_pixels=" << material.pixelsGenerated << '\n';
     }
     editor.reset(); owner->releaseResources();
@@ -908,9 +919,17 @@ void benchmarkRoutingWork() {
 
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI gui;
+    if (argc == 2 && juce::String(argv[1]) == "--benchmark-routing-components") {
+        try { benchmarkRoutingWork(true); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Component Routing cost probe: " << error.what() << '\n'; return 1; }
+    }
     if (argc == 2 && juce::String(argv[1]) == "--benchmark-routing") {
         try { benchmarkRoutingWork(); return 0; }
         catch (const std::exception& error) { std::cerr << "[FAIL] Native Routing cost probe: " << error.what() << '\n'; return 1; }
+    }
+    if (argc == 4 && juce::String(argv[1]) == "--render-update-gallery") {
+        try { vocalstack::nodeGalleryTests::run(argv[2], juce::String(argv[3]).getIntValue(), true); return 0; }
+        catch (const std::exception& error) { std::cerr << "[FAIL] Coordinated update capture: " << error.what() << '\n'; return 1; }
     }
     if (argc >= 2 && juce::String(argv[1]) == "--render-node-gallery") {
         try { vocalstack::nodeGalleryTests::run(argc > 2 ? juce::String(argv[2]) : juce::String()); return 0; }
@@ -978,7 +997,14 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 78> tests{{
+    const std::array<Test, 81> tests{{
+            {"Control layout update, midpoint sliders, inward rings and wide Morph", vocalstack::controlLayoutUpdateTests::run},
+            {"Compressor measured four-second gain reduction history", vocalstack::compressorHistoryTests::run},
+            {"Utility visual telemetry, Gate history and Mono Audition", [] {
+                vocalstack::UtilityVisualUpdateTests::telemetry(); vocalstack::UtilityVisualUpdateTests::dynamicsAndMono();
+                            vocalstack::UtilityVisualUpdateTests::effectiveGainWet();
+                auto owner = std::make_unique<vocalstack::Processor>(); vocalstack::UtilityVisualUpdateTests::controls(*owner);
+            }},
             {"Scrollbar thickness, nested axes, confinement and dense inspectors", vocalstack::scrollbarTests::run},
             {"Dry/Wet repeated Add, Duplicate, independent controls and history", dryWetUi::run},
         {"Spectral Morph measured internal/external donor and actual Freeze", [] { vocalstack::spectralMorphUiTests::run(); }},

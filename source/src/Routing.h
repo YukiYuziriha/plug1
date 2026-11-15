@@ -73,6 +73,7 @@ struct RoutingNode {
     CreativeSettings creative;
     UtilitySettings utility;
     SpectralMorphSettings spectralMorph;
+    bool monoAudition = false;
 };
 struct RoutingLink {
     std::uint32_t source = 0, destination = 0;
@@ -143,6 +144,7 @@ struct FxSettings {
     CreativeSettings creative;
     UtilitySettings utility;
     SpectralMorphSettings spectralMorph;
+    bool monoAudition = false;
 };
 
 // Stable processor automation identities. Unmapped standalone machines keep
@@ -410,7 +412,8 @@ private:
             const int monitorSlot = fxMonitor && isEffect(n.type) ? routingFxSlot(n.id) : -1;
             const bool monitoring = monitorSlot >= 0 && fxMonitor->capturing(size_t(monitorSlot));
             StereoSample monitorInput{}, monitorWet{};
-            bool monitorHasWet = false;
+            bool monitorHasWet = false, monitorHasGainReduction = false, monitorHasUtilityDynamics = false;
+            UtilityDynamicsSnapshot monitorDynamics{};
             int monitorBands = 0;
             for (int wire = 0; wire < step.inputCount; ++wire)
                 step.wireAudio[wire] = step.delays[wire].process(values[step.inputs[wire]][step.sourcePins[wire]].audio);
@@ -576,7 +579,7 @@ private:
                 if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
                 const auto wet = step.fx->creative.process(value.audio.left, value.audio.right, fx.creative, controls.tempoBpm);
-                if (monitoring && (n.type == NodeType::reverb || n.type == NodeType::convolution || n.type == NodeType::saturator || n.type == NodeType::compressor)) {
+                if (monitoring && (n.type == NodeType::reverb || n.type == NodeType::convolution || n.type == NodeType::saturator)) {
                     // The real processed tail, not dry input or a parameter model.
                     // Bypass/zero Mix invalidates measured history, not DSP state.
                     monitorHasWet = controls.monitorWetEnabled && fx.enabled && fx.mix > 0;
@@ -590,7 +593,8 @@ private:
                 const float m = float(step.smoothedMix);
                 value.audio = {blend(value.audio.left, wet[0], m), blend(value.audio.right, wet[1], m)};
                 if (fxMonitor && monitorSlot >= 0)
-                    fxMonitor->setGainReduction(size_t(monitorSlot), fx.enabled && fx.mix > 0 ? step.fx->creative.gainReductionDb() : 0.f);
+                    fxMonitor->setGainReduction(size_t(monitorSlot), fx.enabled && controls.monitorWetEnabled ? step.fx->creative.gainReductionDb() : 0.f);
+                monitorHasGainReduction = n.type == NodeType::compressor && fx.enabled && controls.monitorWetEnabled;
                 break;
             }
             case NodeType::spectralMorph: {
@@ -611,8 +615,10 @@ private:
                 // Clock the wet machine even while dry so bypass preserves history.
                 const auto wet = step.fx->utility.process(value.audio.left, value.audio.right, fx.utility);
                 if (monitoring && n.type == NodeType::gate) {
-                    monitorHasWet = controls.monitorWetEnabled && fx.enabled && fx.mix > 0;
-                    if (monitorHasWet) monitorWet = {wet[0], wet[1]};
+                    monitorHasUtilityDynamics = true;
+                    monitorDynamics = step.fx->utility.dynamicsSnapshot();
+                    if (!fx.enabled || fx.mix <= 0 || !controls.monitorWetEnabled) monitorDynamics.gainReductionDb = 0;
+                    monitorHasGainReduction = fx.enabled && controls.monitorWetEnabled;
                 }
                 const float target = fx.enabled ? unit(fx.mix, 1.f) : 0.f;
                 if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
@@ -620,8 +626,14 @@ private:
                 if (std::abs(step.smoothedMix - target) < 1.e-7) step.smoothedMix = target;
                 const float m = float(step.smoothedMix);
                 value.audio = {blend(value.audio.left, wet[0], m), blend(value.audio.right, wet[1], m)};
+                if (n.type == NodeType::stereo) {
+                    const auto audition = step.fx->utility.applyMonoAudition({value.audio.left, value.audio.right}, fx.enabled && fx.monoAudition);
+                    // Slot bypass already fades Mix; release audition smoothly
+                    // with it. Full/global bypass selects aligned dry in the engine.
+                    value.audio = {audition[0], audition[1]};
+                }
                 if (fxMonitor && monitorSlot >= 0)
-                    fxMonitor->setGainReduction(size_t(monitorSlot), fx.enabled && m > 0 ? step.fx->utility.gainReductionDb() : 0.f);
+                    fxMonitor->setGainReduction(size_t(monitorSlot), fx.enabled && fx.mix > 0 && controls.monitorWetEnabled ? step.fx->utility.gainReductionDb() : 0.f);
                 break;
             }
             case NodeType::output: value = input(0); break;
@@ -641,7 +653,8 @@ private:
                 fxMonitor->capture(size_t(monitorSlot), n.id,
                     monitorInput.left, monitorInput.right,
                     monitorOutput.left, monitorOutput.right, monitorBands, bands,
-                                        monitorHasWet, monitorWet.left, monitorWet.right, int(n.type));
+                                        monitorHasWet, monitorWet.left, monitorWet.right, int(n.type), monitorHasGainReduction,
+                                                                                monitorDynamics, monitorHasUtilityDynamics);
             }
         }
         auto out = active->outputDelay.process(values[active->output][0].audio);
@@ -748,7 +761,7 @@ private:
         // Slot zero belongs exclusively to legacy Chorale, not new effect types.
         if (controls.fxAutomation && slot > 0) return controls.fxSettings[slot];
         FxSettings fx{n.enabled, n.mix, n.motion};
-        fx.waveshaper = n.waveshaper; fx.eq = n.eq; fx.creative = n.creative; fx.utility = n.utility; fx.spectralMorph = n.spectralMorph;
+        fx.waveshaper = n.waveshaper; fx.eq = n.eq; fx.creative = n.creative; fx.utility = n.utility; fx.spectralMorph = n.spectralMorph; fx.monoAudition = n.monoAudition;
         fx.bandCount = n.bandCount; fx.crossoverLow = n.crossoverLow; fx.crossoverHigh = n.crossoverHigh;
         return fx;
     }

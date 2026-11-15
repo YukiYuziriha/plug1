@@ -100,7 +100,7 @@ inline void actualDspSnapshotBridge() {
         const float measured = fx.gainReductionDb();
         peak = std::max(peak, measured);
         monitor.beginSample(); monitor.setGainReduction(0, measured);
-        monitor.capture(0, 7, input, -input, output[0], output[1], 0, {}, true, output[0], output[1]);
+        monitor.capture(0, 7, input, -input, output[0], output[1], 0, {}, true, output[0], output[1], -1, true);
     }
     FxMonitorFrame snapshot;
     require(monitor.read(0, snapshot), "No actual DSP monitor snapshot");

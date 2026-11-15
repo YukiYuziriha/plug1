@@ -85,6 +85,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
                 panel.bindCardEdits(*creative, slot, false, editing); addAndMakeVisible(*creative);
             } else if (slot > 0 && isUtilityEffect(n.type)) {
                 utility = std::make_unique<UtilityEffectPanel>(panel.owner, size_t(slot), utilityKind(n.type));
+                if (n.type == NodeType::stereo) utility->bindMonoAuditionParameter(stereoMonoParameterId(size_t(slot)));
                 panel.bindCardEdits(*utility, slot, true, editing); addAndMakeVisible(*utility);
             } else if (slot > 0 && isEffect(n.type)) {
                 tone = std::make_unique<ToneEffectPanel>(panel.owner, size_t(slot), n.type); addAndMakeVisible(*tone);
@@ -92,7 +93,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
                 addKnob("outputGain", "Output trim", "dB");
             } else if (n.type == NodeType::mix) {
                 const auto id = n.mainControls ? juce::String("double") : localMixParameterId(n.id);
-                if (id.isNotEmpty()) addKnob(id, n.mainControls ? "Lead / Stack" : "Dry / Wet", "%");
+                if (id.isNotEmpty()) addKnob(id, "Dry / Wet", "%");
                 else {
                     addAndMakeVisible(localMix);
                     localMix.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -129,7 +130,8 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             if (utility) utility->setBounds(body);
             const int width = body.getWidth() / juce::jmax(1, int(knobs.size()));
             for (size_t i = 0; i < knobs.size(); ++i) {
-                if (model.type == NodeType::chorale || (model.type == NodeType::mix && !model.mainControls)) knobs[i]->setBounds(body.getX(), body.getY() + int(i) * 46, body.getWidth(), 44);
+                if (model.type == NodeType::output) knobs[i]->setBounds(body.getX(), body.getY(), body.getWidth(), 60);
+                else if (model.type == NodeType::chorale || model.type == NodeType::mix) knobs[i]->setBounds(body.getX(), body.getY() + int(i) * 46, body.getWidth(), 44);
                 else knobs[i]->setBounds(body.getX() + int(i) * width, body.getY(), width, body.getHeight());
             }
             localMix.setBounds(body);
@@ -164,7 +166,8 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
     private:
         void addKnob(const juce::String& id, const juce::String& label, const char* unit) {
             knobs.push_back(std::make_unique<ParameterKnob>(panel.owner, id, label, unit));
-            if (model.type == NodeType::chorale || (model.type == NodeType::mix && !model.mainControls)) knobs.back()->setLinear(true);
+            if (model.type == NodeType::chorale || model.type == NodeType::mix) knobs.back()->setLinear(true);
+                        if (model.type == NodeType::mix) configureCrossfadeDisplay(knobs.back()->slider);
                         if (model.type == NodeType::mix && !model.mainControls)
                             knobs.back()->slider.setTooltip("Blend Dry and Wet inputs: 0% Dry, 100% Wet; 50% is half of each.");
             addAndMakeVisible(*knobs.back());
@@ -1648,7 +1651,9 @@ private:
     }
 
     void showStatus() {
-        status.setText(error.isNotEmpty() ? "EDIT REJECTED  /  " + error + "  /  Visible cables remain the running routing."
+        status.setText(error.isNotEmpty() ? "EDIT REJECTED  /  " + error
+                        + (owner.routingRestartPending() ? "  /  RESTART PENDING: saved cables are not running. Host deactivate/reactivate required."
+                                                         : "  /  Visible cables remain the running routing.")
             : owner.routingRestartPending()
                 ? "RESTART PENDING  /  Saved cables are not running. Deactivate/reactivate the plugin in the host to apply latency changes (transport stop is not enough)."
                 : "LIVE ROUTING  /  Automatic gain compensation at merges. Unconnected inputs and Output are silent.", juce::dontSendNotification);
@@ -1893,6 +1898,7 @@ private:
         inspectorInfo.setFont(juce::Font(pixelFontOptions(12.0f)));
         nodeValue.onValueChange = nullptr; nodeValue.onDragStart = nullptr; nodeValue.onDragEnd = nullptr;
         nodeValue.setLookAndFeel(&nodeStyle);
+        configureCrossfadeDisplay(nodeValue);
         const auto* n = node(selectedNode);
         if (n && (n->type == NodeType::voice || n->type == NodeType::lead)) {
             const int slot = n->type == NodeType::lead ? -1 : int(n->voiceSlot);
@@ -1965,6 +1971,7 @@ private:
                         fxOn.setTooltip(CreativeEffectPanel::description(creativeKind(n->type)));
                     } else if (slot > 0 && isUtilityEffect(n->type)) {
                         utilityPanel = std::make_unique<UtilityEffectPanel>(owner, size_t(slot), utilityKind(n->type));
+                        if (n->type == NodeType::stereo) utilityPanel->bindMonoAuditionParameter(stereoMonoParameterId(size_t(slot)));
                         utilityPanel->onBeginEdit = [this, slot](const juce::String& id) {
                             if (!inspectorDragging) remember();
                             auto& saved = undoStates.back(); saved.parameterEdit = true;
@@ -2001,7 +2008,9 @@ private:
                 nodeValue.setScrollWheelEnabled(false);
                 if (n->type == NodeType::mix && n->mainControls) {
                     inspector.removeChildComponent(&nodeValue);
-                    mixControl = std::make_unique<ParameterKnob>(owner, "double", "Lead / Stack", "%");
+                    mixControl = std::make_unique<ParameterKnob>(owner, "double", "Dry / Wet", "%");
+                    mixControl->setLinear(true);
+                    configureCrossfadeDisplay(mixControl->slider);
                     inspector.addAndMakeVisible(*mixControl);
                     info += "\nLead / Stack balance\nLead pin 0 / Stack pin 1";
                 } else if (localMixParameterId(n->id).isNotEmpty()) {
@@ -2106,7 +2115,8 @@ private:
         if (mixControl) {
             const auto* selected = node(selectedNode);
             const bool dryWet = selected && selected->type == NodeType::mix && !selected->mainControls;
-            mixControl->setBounds(0, 40, dryWet ? inspector.getWidth() : 140, dryWet ? 44 : 110);
+            const bool output = selected && selected->type == NodeType::output;
+            mixControl->setBounds(0, 40, dryWet || output || (selected && selected->type == NodeType::mix) ? inspector.getWidth() : 140, output ? 60 : selected && selected->type == NodeType::mix ? 44 : 110);
         }
         const int infoY = fields.empty() ? (nodeValue.getParentComponent() == &inspector || mixControl ? 160 : selectedLink >= 0 ? 76 : 40) : y + 12;
         inspectorInfo.setBounds(0, infoY, inspector.getWidth(), juce::jmax(20, inspector.getHeight() - infoY));
@@ -2228,7 +2238,7 @@ private:
     int desiredInspectorWidth = 320;
     bool resizingInspector = false;
     juce::Label inspectorTitle, inspectorInfo, status;
-    modulationui::RotaryStyle nodeStyle;
+    ParameterKnob::Style nodeStyle;
     juce::Slider nodeValue;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> nodeValueLink;
 

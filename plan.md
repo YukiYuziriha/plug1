@@ -1,16 +1,18 @@
 # Vocal Stack: Current roadmap and release history
 
-## Implemented source preview — 1.11.0 SIDECHAIN, Spectral Morph and reactive material
+## Current release — 1.11.0 approved, packaged and installed
 
-**Coordinated source edits in progress; build/test execution is paused until the
-parent explicitly confirms all UI agents are done. Pending visual approval, not
-packaged or installed.**
+**All source-owner handoffs are complete. The user approved delivery of the entire
+pending preview; matching Release CLAP/VST3 packages are installed.** See
+[final validation, paths and hashes](docs/Release-1.11.0-Validation.md).
 See [1.11.0 implementation, validation, latency costs and actual review GIFs](docs/Preview-1.11.0.md).
-Full non-editor validation passed 41/41, isolated granular UI passed, and the full
-editor run passed 77/78: the existing desktop-occlusion native-click precondition remains
-blocked, not skipped. Final affected-source checks passed 9/9 plus all-theme real-PCM
-compact/expanded/rack captures. Native CLAP and VST3 wrapper tests are recorded
-separately from unperformed actual DAW listening/transport checks.
+Latest core validation passed 40/40, focused validation 7/7, separate rack/granular
+UI 2/2, and the additional VST3 FFT queue check 1/1 (108 matrix cases). Full editor
+passed 80/81: the desktop-occlusion native-click precondition remains blocked, not
+skipped. The native cost probe is also blocked; no native FPS claim is made.
+All 39 real-PCM/control review GIFs are preserved. Final incremental Release
+verification reported no work to do; packaged and installed CLAP/VST3 smoke passed
+through HalfCpu (6/12 logical processors). Actual DAW listening/transport is unperformed.
 
 The current revision removes the always-on 4096-sample no-Morph penalty. Latency
 is fixed per host preparation: no Morph 1344/2688 samples, declared Morph
@@ -18,12 +20,13 @@ is fixed per host preparation: no Morph 1344/2688 samples, declared Morph
 host deactivate/reactivate; transport stop/reset cannot apply them. Pending slot
 type replacements that could initialize a still-running machine are rejected.
 Serial Morph paths exceeding the 4096-sample graph budget remain rejected. Original host indices 0–2251 are preserved;
-90 controls append for 2342 total. Installed and packaged 1.10.0 hashes are verified
-unchanged. Preserve the pending [1.10.1 historical preview](docs/Preview-1.10.1.md).
-Unchecked acceptance items below mean native-input/DAW/approval gates, not missing
-DSP implementation. No installation, package replacement, commit or push occurred.
+90 Morph controls append through index 2341; fifteen persisted Mono Audition
+booleans append at 2342–2356 for 2357 total. The earlier pending 1.10.1 work is
+included; preserve its [historical preview](docs/Preview-1.10.1.md).
+Unchecked acceptance items below mean unperformed actual DAW checks, not missing
+DSP implementation or a remaining installation gate.
 
-### Coordinated follow-up — awaiting handoff and execution
+### Coordinated follow-up — integrated and delivered
 
 - [x] Source: prepared graph latency policy, explicit pending-topology UI label,
   no-Morph legacy latency, deferred modulation retirement, occupied-slot guard.
@@ -36,15 +39,15 @@ DSP implementation. No installation, package replacement, commit or push occurre
   snapshot/history fields; 200 bins for four-second measured history.
 - [x] Instrumentation: optional native `--benchmark-routing` cost probe at Motion
   0/3/100, collapsed/exposed/offscreen; no delivered-FPS claim.
-- [ ] Parent confirms all control/utility/visual agents finished; integrate their
-  APIs without editing their owned files before handoff.
-- [ ] Sole coordinator builds affected Release targets and runs all regressions,
-  native CLAP/VST3 latency matrix, second-monitor native GUI and cost probe through
-  the required HalfCpu wrapper. Preserve/report native occlusion failures.
-- [ ] All-theme actual-PCM Gate/Stereo/Compressor/Morph and Output/Dry-Wet captures;
-  confirm four-second histories and honest 0–36 dB GR presentation.
-- [ ] Record observed results here and in Preview 1.11.0. No installation, package
-  replacement, commit or push before explicit preview approval.
+- [x] All control/utility/visual source owners finished; APIs integrated after handoff.
+- [x] Sole coordinator built Release and ran regressions and native CLAP/VST3
+  latency/automation matrices through HalfCpu. Native GUI click and cost-probe
+  occlusion failures are recorded, not represented as passes.
+- [x] All-theme actual-PCM Gate/Stereo/Compressor/Morph and Output/Dry-Wet captures;
+  four-second histories and 0–36 dB GR presentation recorded in 39 review GIFs.
+- [x] Recorded results in Preview 1.11.0 and final release validation. After explicit
+  approval, refreshed matching packages/legal notices and installed with the
+  existing exclusive-access preflight; no host killed or lock forced.
 
 ### 1. Host input and first-class routing source
 
@@ -141,17 +144,18 @@ DSP implementation. No installation, package replacement, commit or push occurre
   Separate wrapper smoke tests from actual DAW listening/automation checks and
   record unverified hosts or unsupported layouts explicitly. **Automated CLAP
   nine-layout/rate and native VST3 108-case plus reconnect/rate-change coverage
-  passed; actual DAW listening/transport/controller-queue checks remain unperformed.**
+  passed, including actual VST3 FFT controller parameter queues; actual DAW
+    listening/transport checks remain unperformed.**
 - [x] Run relevant builds, tests and performance checks through the existing
   `tools/Invoke-HalfCpu.ps1` workflow
   in dedicated 64-bit PowerShell; stop if its topology restriction fails. Update
   usage/routing/latency/state documentation and record observed results honestly.
 - [x] Present actual all-theme screenshots/GIFs and results for review **before installing**.
-  The source preview is 1.11.0; packaged and installed binaries remain 1.10.0.
-- [ ] Only after separate approval: refresh matching CLAP/VST3 packages, verify
-  hashes and host smoke results, and install with files unlocked. No package
-  refresh, installation, commit or push is currently authorized; never terminate
-  the DAW or bypass Windows lock-screen input protection to force completion.
+  The entire pending 1.11.0 preview was subsequently approved for installation.
+- [x] After separate approval: refreshed matching CLAP/VST3 packages and legal
+  notices, verified build/package/installed hashes and PE versions, passed both
+  packaged and installed module smoke checks, and installed with files unlocked.
+  No DAW was terminated or lock/input protection bypassed.
 
 ### Explicitly outside this scope
 
@@ -163,7 +167,95 @@ implemented or committed broader effects. Follow the staged order: host source -
 generic auxiliary routing and latency -> DSP -> UI/telemetry -> tests and gated
 delivery, validating each foundation before building the next.
 
-## Current status — 1.10.0 approved, built, packaged and installed
+## Airwindows donor-library research — RESEARCH ONLY; implementation unapproved
+
+**Status: proposed research, not an approved implementation or dependency adoption.**
+The user-supplied idea is to research potentially reusable algorithms, then return
+findings for a decision before any implementation. This does not authorize source
+imports, ports, replacements, new parameters/UI, dependency installation, or changes
+to current DSP. Continue the existing approved roadmap independently; this research
+neither replaces its priorities nor relaxes its preview/delivery gates.
+
+### Unverified leads and deliberately small first pass
+
+All names/spellings, exact versions, descriptions, reputation and third-party
+article claims (including 2026 claims) are **UNVERIFIED leads, not established
+facts**. The categories below are proposed research questions, not verified
+upstream functionality or suitability. No external sources were fetched for this
+planning entry; no upstream links, license conclusions or adopted dependencies
+are asserted.
+
+| User-supplied leads | Research question / possible role, subject to verification |
+| --- | --- |
+| TapeToTape / IronOxide | Tape-style coloration; compare the actual algorithms and versions before choosing one. |
+| Spiral / Mackity / BussColors | Alternative coloration; establish meaningful differences and vocal usefulness rather than collecting variants. |
+| Console family | Identify the exact proposed console algorithm/version and any encode/decode or gain-staging requirements. |
+| ClipOnly | Clipping/headroom treatment; determine actual transfer, state, latency and overshoot behavior. |
+| Galactic / Verbity / Cloudcoat / Clearcoat | Space/ambience candidates; verify names, topology, intended behavior and stereo/mono consequences. |
+| Unspecified weird/slew algorithms | First identify exact upstream candidates and a useful vocal purpose; no open-ended catalog import. |
+
+- [ ] Start with **two or three nonredundant candidates**, not ten imported effects.
+  Provisional research slots: one TapeToTape-or-IronOxide coloration candidate,
+  ClipOnly for clipping/headroom, and one Galactic-or-Verbity space candidate.
+  Choose exact identities only after upstream verification; drop a slot if its
+  role duplicates existing DSP or lacks a concrete vocal-use hypothesis. Keep the
+  other leads as backlog research, not promised effects.
+
+### Provenance and legal gate — before any reuse proposal
+
+- [ ] Locate the official upstream source for each selected algorithm. Record its
+  exact name, source files, version/tag or immutable commit, and retrieval date;
+  distinguish original upstream code from forks, ports, bundles and commentary.
+  Add original upstream links only after actually verifying them; until then keep
+  this as a research task, not a guessed reference or citation to a third-party article.
+- [ ] Inspect the license at that exact revision, including file-level exceptions
+  and required notices. Record attribution, modification and source/binary
+  redistribution obligations, and compatibility with this project's license and
+  distribution model. Do not infer permission from reputation, availability or
+  another algorithm's license. Resolve ambiguity before proposing adoption; no
+  license or legal compatibility is currently verified.
+
+### Per-algorithm engineering assessment — findings required, not work completed
+
+- [ ] Record equations/topology, useful parameter ranges and input/output gain
+  conventions, including any normalization, hidden gain compensation or expected
+  drive/headroom. Identify smoothing requirements and automation discontinuities.
+- [ ] Audit real-time behavior: allocations/deallocations, locks, I/O, lazy setup,
+  bounded worst-case work and CPU cost. Map preparation and resource retirement
+  outside the callback; plan regression coverage using the existing callback-malloc
+  safeguards, including steady processing, automation and supported transitions.
+- [ ] Assess sample-rate scaling, mono/stereo channel coupling and phase, actual
+  algorithmic latency and dry/wet/bypass alignment, aliasing and any oversampling
+  need/cost. Document block-size dependence and supported reset/reprepare behavior.
+- [ ] Inventory state ownership, initialization/reset, denormal handling, dither,
+  injected noise and random seeds. Specify deterministic regression conditions
+  without silently removing sonic behavior; distinguish noisy output from defects.
+- [ ] Describe a minimal fit to existing DSP ownership: JUCE-independent helpers
+  in the DSP layer, `VocalEngine` orchestration, `PluginProcessor` parameter/state
+  ownership, and snapshot-only UI access. No direct UI mutation of DSP, hidden
+  callback setup, or speculative framework. Preserve host IDs, state recall,
+  routing and the current prepared-latency contract.
+
+### Evidence and decision gate — no automatic replacement
+
+- [ ] Write a short per-candidate dossier with verified provenance/license facts,
+  unresolved questions, engineering risks, expected CPU/latency budget and a
+  recommendation: reject, defer, or request approval for a bounded prototype.
+  Research approval is not implementation, dependency or release approval.
+- [ ] Before any later adoption or replacement, require level-matched A/B against
+  current DSP using real vocals, blind where possible. Record matching method and
+  remaining perceived-loudness limitations; do not mistake louder for better.
+  Include mono compatibility, stereo phase, gain staging/headroom, automation,
+  48/96 kHz and irregular blocks, plus other currently supported rates/layouts.
+- [ ] A separately approved prototype must demonstrate finite output, silence,
+  reset/reprepare, deterministic regressions, no callback malloc/locks and honest
+  latency/CPU/aliasing results. Keep automated checks distinct from listening
+  evidence. **Do not replace current processing without this A/B evidence and
+  explicit approval.** No build, test, package, install, commit or push is part of
+  this documentation-only update; later approved execution retains existing
+  HalfCpu, compatibility and delivery requirements.
+
+## Historical status — 1.10.0 approved, built, packaged and installed
 
 - [x] Deliver the entire approved preview: synthetic-space Convolution, Saturator,
   real audio-reactive visuals, linear global Motion (3% base), clustered material

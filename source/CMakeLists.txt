@@ -140,6 +140,11 @@ if(VOCALSTACK_BUILD_TESTS)
         target_link_libraries(VocalStackEditorTests PRIVATE VocalStack vocalstack_dsp
             juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
         add_test(NAME VocalStackEditor COMMAND VocalStackEditorTests)
+        add_test(NAME VocalStackControlLayoutUpdate COMMAND VocalStackEditorTests --filter "Control layout update")
+        add_test(NAME VocalStackCompressorHistory COMMAND VocalStackEditorTests --filter "Compressor measured")
+        add_test(NAME VocalStackUtilityVisualUpdate COMMAND VocalStackEditorTests --filter "Utility visual telemetry")
+        set_tests_properties(VocalStackEditor VocalStackControlLayoutUpdate VocalStackCompressorHistory VocalStackUtilityVisualUpdate
+            PROPERTIES RESOURCE_LOCK VocalStackNativeGui)
 
         juce_add_console_app(VocalStackModulationTests PRODUCT_NAME "Vocal Stack Modulation Tests")
         target_sources(VocalStackModulationTests PRIVATE tests/ModulationBackendTests.cpp)
@@ -184,6 +189,8 @@ if(VOCALSTACK_BUILD_TESTS)
         target_link_libraries(VocalStackGrainSnapshotUiTests PRIVATE VocalStack vocalstack_dsp
             juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
         add_test(NAME VocalStackGrainSnapshotUi COMMAND VocalStackGrainSnapshotUiTests)
+        set_tests_properties(VocalStackMainBusFxRackUi VocalStackGrainSnapshotUi
+            PROPERTIES RESOURCE_LOCK VocalStackNativeGui)
 
         juce_add_console_app(VocalStackFactoryPresetAudioTests PRODUCT_NAME "Vocal Stack Factory Preset Audio Tests")
         target_sources(VocalStackFactoryPresetAudioTests PRIVATE tests/FactoryPresetAudioTests.cpp)
