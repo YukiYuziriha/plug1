@@ -45,7 +45,15 @@ The bundled AGPL text was downloaded verbatim from
 
 ## Current binaries and source provenance
 
-The tracked **v1.11.0** binaries are associated with source commit
+The current **v1.11.1** binaries correspond to source commit
+[`e6bd0ff28b3d103c4045cf141680e51286e4d0f3`](https://github.com/YukiYuziriha/plug1/tree/e6bd0ff28b3d103c4045cf141680e51286e4d0f3).
+Download their [complete corresponding source](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-corresponding-source.zip).
+Dependency pins below are unchanged. For source bundling, pass this revision and
+a version-specific output filename to the bundler command below.
+
+### Historical v1.11.0 provenance
+
+The **v1.11.0** binaries are associated with source commit
 [`12534e87440ca33a41f12bde53956319bd06ebab`](https://github.com/YukiYuziriha/plug1/tree/12534e87440ca33a41f12bde53956319bd06ebab).
 The subsequent README/showcase commit `35ab94c` did not change `source/src`,
 `source/assets`, `source/cmake` or `source/CMakeLists.txt`. This licensing-only
