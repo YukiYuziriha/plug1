@@ -1,4 +1,4 @@
-# Vocal Stack v1.11.2: licenses and corresponding source
+# Vocal Stack v1.11.3: licenses and corresponding source
 
 These CLAP/VST3 binaries combine GPLv3-covered Vocal Stack/Vital code with JUCE
 8.0.12 under **AGPLv3**, using the combination permission in section 13 of both
@@ -10,7 +10,7 @@ complete `ThirdParty` folder with redistributed copies. The software is supplied
 without warranty, as detailed in those licenses.
 
 Binary-producing source revision:
-<https://github.com/YukiYuziriha/plug1/tree/39687ca28fc3945a99843fa0e5d77851c7e67274e>
+<https://github.com/YukiYuziriha/plug1/tree/ae4ee4f9f7f69c2d03aceb625843e718541617e7>
 
 Project source and build scripts:
 <https://github.com/YukiYuziriha/plug1>
@@ -23,11 +23,11 @@ Signalsmith Linear/Stretch, the retained Vital subset and embedded font.
 
 ## Source downloads
 
-For the v1.11.2 correction, use the binary-producing revision linked above
-([editable project source ZIP](https://github.com/YukiYuziriha/plug1/archive/39687ca28fc3945a99843fa0e5d77851c7e67274e.zip)).
+For the v1.11.3 correction, use the binary-producing revision linked above
+([editable project source ZIP](https://github.com/YukiYuziriha/plug1/archive/ae4ee4f9f7f69c2d03aceb625843e718541617e7.zip)).
 The complete dependency sources and pins are unchanged from v1.11.1 and are
 included in its corresponding-source ZIP below. The v1.11.1 release binaries
-remain unchanged; the current v1.11.2 plugin files are in this repository.
+remain unchanged; the current v1.11.3 plugin files are in this repository.
 
 - [Complete corresponding source, including dependencies](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-corresponding-source.zip)
 - [Complete repository source history and per-commit binary/dependency matrix](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/VocalStack-source-history.zip)
@@ -38,7 +38,7 @@ project sources and all external dependency pins used in the audited history.
 Read `VocalStack-history/README.md` for offline restoration/build instructions.
 The matrix records binary bytes co-delivered at each commit; it is not a claim
 that every historical binary has been independently reproduced. The source
-revision above identifies the current v1.11.2 package. Later legal/docs-only
+revision above identifies the current v1.11.3 package. Later legal/docs-only
 updates do not rebuild or change those bytes.
 
 The v1.11.0 history archive covers earlier releases; the v1.11.1 source ZIP
