@@ -66,12 +66,14 @@ public:
                                   const float* const* auxiliary = nullptr, int auxiliaryChannels = 0);
     int latency() const noexcept { return latencySamples + tuningLatencySamples + routingReserve; }
     // Latency reservation is latched by prepare, never changed in process/reset.
-    // OFF-prepared engines defer enable until host restart/reprepare. ON-prepared
-    // engines allow immediate clean bypass, retaining the reservation until prepare.
+    // All tuner storage is prepared even when OFF; OFF-prepared engines still
+    // require host reprepare to enable the latency-aligned tuning path. ON-prepared
+    // engines allow immediate clean bypass, retaining the reservation until the
+    // next normal prepare. Disabling alone must not request a reprepare.
     // Processor must arrange quiescent prepare + host latency notification when
     // this returns true; do not reconfigure from the audio callback.
     bool tuningRequiresReprepare(const Settings& s) const noexcept {
-        return s.tuningEnabled != (tuningLatencySamples != 0);
+        return s.tuningEnabled && tuningLatencySamples == 0;
     }
     int tuningLatency() const noexcept { return tuningLatencySamples; }
     // Audio-owner snapshot only; processor publishes its own concurrent copy.

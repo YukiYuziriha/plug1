@@ -100,13 +100,15 @@ private:
         const auto mask = baseMask();
         for (size_t i = 0; i < notes.size(); ++i)
             notes[i].setToggleState((mask & (1u << i)) != 0, juce::dontSendNotification);
-        const bool liveOn = operationalValue("tuningEnabled") >= .5f;
+        const bool activating = owner.tuningActivationPending();
+        const bool liveOn = operationalValue("tuningEnabled") >= .5f && !activating;
         const auto liveMask = operationalMask();
         const auto telemetry = owner.getTuningTelemetry();
         const bool voiced = liveOn && telemetry.voiced && std::isfinite(telemetry.detectedMidi)
             && std::isfinite(telemetry.detectedHz) && telemetry.detectedHz > 0;
         const bool target = voiced && telemetry.hasTarget && std::isfinite(telemetry.targetMidi);
-        juce::String text = !liveOn ? "TUNING OFF" : !voiced ? "INPUT  --   /   Waiting for a voiced signal" :
+        juce::String text = activating ? "ACTIVATING  /  Waiting for host audio reactivation"
+            : !liveOn ? "TUNING OFF" : !voiced ? "ACTIVE  /  Waiting for a voiced signal" :
             "INPUT  " + pitchName(telemetry.detectedMidi) + "  /  " + juce::String(telemetry.detectedHz, 1) + " Hz";
         text += "\nTARGET  " + (target ? pitchName(telemetry.targetMidi) : juce::String("--"));
         text += "     CORRECTION  " + (target && std::isfinite(telemetry.correctionSemitones)
@@ -117,7 +119,7 @@ private:
         for (size_t i = 0; i < notes.size(); ++i) if (liveMask & (1u << i)) ++allowedCount;
         text += "\nLIVE ALLOWED  " + juce::String(allowedCount) + " / 12";
         if (liveOn && liveMask == 0) text += "\nNo allowed notes: no correction";
-        if (liveOn && owner.routingRestartPending()) text += "\nHost audio restart pending";
+        if (activating) text += "\nAudio reactivation requested automatically";
         status.setText(text, juce::dontSendNotification);
         if (recordHistory) {
             history[historyPosition] = {telemetry.detectedMidi, telemetry.targetMidi, voiced, target};

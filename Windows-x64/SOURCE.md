@@ -1,46 +1,39 @@
-# Vocal Stack v1.11.3: licenses and corresponding source
+# HEAVEN by lil grass block v1.12.1: licenses and corresponding source
 
-These CLAP/VST3 binaries combine GPLv3-covered Vocal Stack/Vital code with JUCE
-8.0.12 under **AGPLv3**, using the combination permission in section 13 of both
-licenses. GPL-covered parts retain GPLv3; third-party components retain their
-own terms. This is not a GPLv3-only binary or a claim of a commercial JUCE license.
+These CLAP/VST3 binaries combine GPLv3-covered project/Vital/MXTune-derived code
+with JUCE 8.0.12 under **AGPLv3**, using section 13 of both licenses. GPL-covered
+parts retain GPLv3 (the tuner adaptation is GPL-3.0-or-later); third-party
+components retain their own terms. This is not a GPLv3-only binary or a claim of
+a commercial JUCE license.
 
 Keep `LICENSE.txt`, `COPYING.AGPLv3`, `PixelifySans-OFL.txt`, this file and the
 complete `ThirdParty` folder with redistributed copies. The software is supplied
 without warranty, as detailed in those licenses.
 
-Binary-producing source revision:
-<https://github.com/YukiYuziriha/plug1/tree/ae4ee4f9f7f69c2d03aceb625843e718541617e7>
+## Current source and provenance
 
-Project source and build scripts:
+Project source, patches and build scripts:
 <https://github.com/YukiYuziriha/plug1>
 
-Build instructions and dependency/source-package details:
-[Building](../docs/Building.md) and [Licensing](../docs/Licensing.md) in the full
-repository (also supplied in the corresponding-source ZIP). Dependencies include
-the complete pinned JUCE source, CLAP extensions and both CLAP submodules,
-Signalsmith Linear/Stretch, the retained Vital subset and embedded font.
+The current binaries and corresponding source are co-delivered in the repository.
+`BUILD-PROVENANCE.json` records the actual source-input hashes and binary hashes
+from the successful Release build. It explicitly identifies a working-tree
+build: its base commit is **not** claimed to be the binary-producing revision.
+The later delivery commit contains those source files and packaged binaries
+together. See [the validation record](../docs/Release-1.12.1-Validation.md).
 
-## Source downloads
+The complete local release assets are named:
+- `HEAVEN-1.12.1-Windows-x64.zip`
+- `HEAVEN-1.12.1-corresponding-source.zip`
+- `SHA256SUMS.txt`
 
-For the v1.11.3 correction, use the binary-producing revision linked above
-([editable project source ZIP](https://github.com/YukiYuziriha/plug1/archive/ae4ee4f9f7f69c2d03aceb625843e718541617e7.zip)).
-The complete dependency sources and pins are unchanged from v1.11.1 and are
-included in its corresponding-source ZIP below. The v1.11.1 release binaries
-remain unchanged; the current v1.11.3 plugin files are in this repository.
+The corresponding-source archive includes the full pinned JUCE source, CLAP
+extensions and enabled submodules, Signalsmith Linear/Stretch, retained Vital
+and MXTune-derived sources and notices, the font, build scripts and the
+reproducible VST3 latency patch. Build and licensing details:
+[Building](../docs/Building.md) and [Licensing](../docs/Licensing.md).
 
-- [Complete corresponding source, including dependencies](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-corresponding-source.zip)
-- [Complete repository source history and per-commit binary/dependency matrix](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/VocalStack-source-history.zip)
-- [SHA256 checksums](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/SHA256SUMS.txt)
-
-The history ZIP plus the complete source ZIP together supply the historical
-project sources and all external dependency pins used in the audited history.
-Read `VocalStack-history/README.md` for offline restoration/build instructions.
-The matrix records binary bytes co-delivered at each commit; it is not a claim
-that every historical binary has been independently reproduced. The source
-revision above identifies the current v1.11.3 package. Later legal/docs-only
-updates do not rebuild or change those bytes.
-
-The v1.11.0 history archive covers earlier releases; the v1.11.1 source ZIP
-provides the previous project revision and the complete unchanged dependencies. Source access accompanies binary access at no extra charge
-under GPLv3/AGPLv3 section 6(d), rather than a future source-on-request offer.
+Local archive creation and a repository push do not mean a GitHub Release has
+been published. Do not substitute an older release's project source for this
+version's changed source and wrapper patch. Historical release downloads remain
+listed in the repository README; they identify historical bytes only.

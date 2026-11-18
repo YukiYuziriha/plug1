@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -17,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -57,7 +60,6 @@ struct Library {
 };
 
 void CLAP_ABI noRequest(const clap_host_t*) {}
-const void* CLAP_ABI noExtension(const clap_host_t*, const char*) { return nullptr; }
 
 struct Instance {
     explicit Instance(const clap_plugin_factory_t& factory) {
@@ -77,8 +79,33 @@ struct Instance {
         return *extension;
     }
 
-    clap_host_t host{CLAP_VERSION, nullptr, "Vocal Stack Test", "Vocal Stack", "", "1.0",
-                    noExtension, noRequest, noRequest, noRequest};
+    static Instance& owner(const clap_host_t* host) { return *static_cast<Instance*>(host->host_data); }
+    static void CLAP_ABI latencyChanged(const clap_host_t* host) { ++owner(host).latencyChanges; }
+    static void CLAP_ABI requestRestart(const clap_host_t* host) { ++owner(host).restartRequests; }
+    static void CLAP_ABI requestCallback(const clap_host_t* host) { owner(host).callbackPending = true; }
+    static const void* CLAP_ABI extension(const clap_host_t*, const char* id) {
+        static const clap_host_latency_t latency{latencyChanged};
+        return std::strcmp(id, CLAP_EXT_LATENCY) == 0 ? &latency : nullptr;
+    }
+
+    void dispatchFor(std::chrono::milliseconds duration) {
+        const auto deadline = std::chrono::steady_clock::now() + duration;
+        do {
+#if defined(_WIN32)
+            MSG message;
+            while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&message); DispatchMessage(&message);
+            }
+#endif
+            if (callbackPending.exchange(false)) plugin->on_main_thread(plugin);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } while (std::chrono::steady_clock::now() < deadline);
+    }
+
+    std::atomic<unsigned> restartRequests{0}, latencyChanges{0};
+    std::atomic<bool> callbackPending{false};
+    clap_host_t host{CLAP_VERSION, this, "Vocal Stack Test", "Vocal Stack", "", "1.0",
+                    extension, requestRestart, noRequest, requestCallback};
     const clap_plugin_t* plugin = nullptr;
 };
 
@@ -401,6 +428,106 @@ void checkSpectralDonor(const clap_plugin_factory_t& factory, clap_id configurat
     expect(error<2.e-3, "CLAP routed external donor/main-phase/absence/channel oracle failed");
 }
 
+#if defined(_WIN32)
+void checkTuningRestart(const clap_plugin_factory_t& factory) {
+    Instance instance(factory);
+    const auto* plug = instance.plugin;
+    const auto& latency = instance.get<clap_plugin_latency_t>(CLAP_EXT_LATENCY);
+    const auto& state = instance.get<clap_plugin_state_t>(CLAP_EXT_STATE);
+    const auto enabled = getParameter(instance, "Tuning Enabled");
+    const std::string xml = R"(<VocalStack><PARAM id="levelOn" value="0"/><PARAM id="doubleOn" value="0"/><PARAM id="tuningFormants" value="0"/><RoutingGraph><Node id="1" type="0"/><Node id="13" type="5"/><Link source="1" destination="13" inputPin="0"/></RoutingGraph></VocalStack>)";
+    Stream preset; preset.bytes.resize(xml.size() + 9);
+    const uint32_t magic = 0x21324356, length = uint32_t(xml.size());
+    std::memcpy(preset.bytes.data(), &magic, 4); std::memcpy(preset.bytes.data() + 4, &length, 4);
+    std::memcpy(preset.bytes.data() + 8, xml.data(), xml.size());
+    expect(state.load(plug, &preset.input), "CLAP tuning neutral state failed");
+    expect(instance.get<clap_plugin_audio_ports_config_t>(CLAP_EXT_AUDIO_PORTS_CONFIG).select(plug, 0),
+           "CLAP tuning stereo layout failed");
+    constexpr uint32_t block = 137;
+    expect(plug->activate(plug, 48000, 1, block) && plug->start_processing(plug), "CLAP tuning baseline activation failed");
+    instance.dispatchFor(std::chrono::milliseconds(250));
+    const auto baseline = latency.get(plug);
+    expect(baseline == 1344, "CLAP tuning baseline latency");
+    const auto restarts = instance.restartRequests.load();
+    const auto notifications = instance.latencyChanges.load();
+
+    std::array<std::array<float, block>, 2> input{}, output{};
+    std::array<float*, 2> ip{input[0].data(), input[1].data()}, op{output[0].data(), output[1].data()};
+    clap_audio_buffer_t in{ip.data(), nullptr, 2, 0, 0}, out{op.data(), nullptr, 2, 0, 0};
+    Events events;
+    clap_process_t process{}; process.frames_count = block;
+    process.audio_inputs = &in; process.audio_inputs_count = 1;
+    process.audio_outputs = &out; process.audio_outputs_count = 1;
+    process.in_events = &events.input; process.out_events = &events.output;
+    int64_t steadyTime = 0;
+    const auto toggle = [&](bool on) {
+        process.steady_time = steadyTime;
+        events.set(enabled.id, on ? enabled.max_value : enabled.min_value, 19);
+        expect(plug->process(plug, &process) != CLAP_PROCESS_ERROR, "CLAP tuning automation failed");
+        steadyTime += block;
+        events.items.clear();
+        expect(currentValue(instance, enabled.id) == (on ? enabled.max_value : enabled.min_value),
+               "CLAP tuning event was not consumed");
+    };
+    toggle(true);
+    expect(latency.get(plug) == baseline, "CLAP first enable changed latency before dispatch");
+    instance.dispatchFor(std::chrono::milliseconds(500));
+    expect(instance.restartRequests.load() == restarts + 1, "CLAP first enable did not automatically request exactly one restart");
+    expect(latency.get(plug) == baseline, "CLAP restart request changed active latency");
+    expect(instance.latencyChanges.load() == notifications, "CLAP announced changed latency before deactivation");
+    instance.dispatchFor(std::chrono::milliseconds(250));
+    expect(instance.restartRequests.load() == restarts + 1, "CLAP pending enable repeatedly requested restart");
+
+    plug->stop_processing(plug); plug->deactivate(plug);
+    expect(plug->activate(plug, 48000, 1, block) && plug->start_processing(plug), "CLAP tuning host restart failed");
+    const auto tuned = latency.get(plug);
+    expect(tuned == baseline + 1344, "CLAP tuning reserve missing after activation");
+    instance.dispatchFor(std::chrono::milliseconds(250));
+    expect(instance.restartRequests.load() == restarts + 1, "CLAP activation commit requested another restart");
+    const auto committedNotifications = instance.latencyChanges.load();
+
+    // Measure actual corrected audio, not merely the parameter or latency report.
+    float previousSample = 0;
+    const auto renderFrequency = [&] {
+        int crossings = 0, first = -1, last = -1;
+        for (int position = 0; position < 36000; position += int(block)) {
+            for (uint32_t i = 0; i < block; ++i)
+                input[0][i] = input[1][i] = .15f * std::sin(float(2 * 3.141592653589793 * 452 * (position + i) / 48000));
+            process.steady_time = steadyTime;
+            expect(plug->process(plug, &process) != CLAP_PROCESS_ERROR, "CLAP tuning audio render failed");
+            steadyTime += block;
+            for (uint32_t i = 0; i < block; ++i) {
+                expect(std::isfinite(output[0][i]) && std::isfinite(output[1][i]), "CLAP tuning nonfinite audio");
+                if (position + int(i) > 18000 && output[0][i] > 0 && previousSample <= 0) {
+                    if (first < 0) first = position + int(i);
+                    last = position + int(i); ++crossings;
+                }
+                previousSample = output[0][i];
+            }
+        }
+        expect(crossings > 100 && last > first, "CLAP tuning output missing periodic audio");
+        return (crossings - 1) * 48000. / (last - first);
+    };
+    expect(std::abs(renderFrequency() - 440) < 2, "CLAP activated tuner did not correct 452 Hz to A440");
+    toggle(false);
+    instance.dispatchFor(std::chrono::milliseconds(500));
+    expect(latency.get(plug) == tuned, "CLAP tuning off discarded reserved latency");
+    expect(instance.restartRequests.load() == restarts + 1, "CLAP tuning off requested an unnecessary restart");
+    expect(std::abs(renderFrequency() - 452) < 1, "CLAP tuning off did not restore clean pitch");
+    toggle(true);
+    instance.dispatchFor(std::chrono::milliseconds(500));
+    expect(latency.get(plug) == tuned && instance.restartRequests.load() == restarts + 1,
+           "CLAP reserved off/on requested restart or changed latency");
+    expect(instance.latencyChanges.load() == committedNotifications, "CLAP reserved off/on announced a latency change");
+    expect(std::abs(renderFrequency() - 440) < 2, "CLAP reserved re-enable did not restore correction");
+    instance.dispatchFor(std::chrono::milliseconds(250));
+    expect(latency.get(plug) == tuned && instance.restartRequests.load() == restarts + 1
+        && instance.latencyChanges.load() == committedNotifications, "CLAP corrected render changed the committed latency contract");
+    plug->stop_processing(plug); plug->deactivate(plug);
+    std::cout << "CLAP automatic tuning restart, retained latency and corrected output verified\n";
+}
+#endif
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -420,6 +547,11 @@ int main(int argc, char** argv) {
         std::cout << "CLAP version " << descriptor->version << " verified\n";
         checkHostControls(*factory);
         checkState(*factory);
+#if defined(_WIN32)
+        checkTuningRestart(*factory);
+#else
+        std::cout << "CLAP automatic tuning restart check requires Windows timer dispatch; skipped\n";
+#endif
         for (clap_id configuration = 0; configuration < 9; ++configuration)
             for (double rate : {44100., 48000., 96000.}) { checkLayout(*factory, configuration, rate); checkSpectralDonor(*factory, configuration, rate); }
         std::cout << "CLAP state, latency, bypass, automation and offline layout checks passed\n";

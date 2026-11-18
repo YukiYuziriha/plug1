@@ -7,7 +7,7 @@ vocal doubling, expand to **eight generated voices plus a separate Lead**, then
 shape individual branches or the whole mix with a modular effects graph. Stack
 and Routing are two views of the same patch—not separate processing modes.
 
-**Upcoming v1.12.0 — shared automatic Tuning** · [Download & install](#download--install) ·
+**v1.12.1 — automatic tuning activation** · [Download & install](#download--install) ·
 [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase) ·
 [Build from source](docs/Building.md) · [GPLv3 + AGPLv3 licensing](docs/Licensing.md)
 
@@ -19,10 +19,11 @@ Formerly **VocalStack** (displayed as **Vocal Stack**), this is a product-name
 change, not a new plugin ID. Internal IDs, preset folders and state extensions
 are preserved for compatibility with existing sessions and presets.
 
-The 1.12.0 feature is documented in [Tuning](docs/Tuning.md). Release packaging
-is gated on a successful, version-verified 1.12.0 build; existing release URLs
-below remain historical until new assets are prepared and published. See the
-[1.12.0 delivery status](docs/Release-1.12.0-Validation.md).
+Shared automatic correction is documented in [Tuning](docs/Tuning.md). In 1.12.1,
+first enable automatically requests host audio reactivation to apply tuning
+latency; subsequent Off/On toggles retain the reservation. See the
+[1.12.1 validation record](docs/Release-1.12.1-Validation.md) for verified checks
+and the remaining actual-DAW/listening validation.
 
 ## What you can make
 
@@ -97,11 +98,11 @@ from either view. [Try the wiring walkthrough](docs/Getting-Started.md#spectral-
 
 ## Download & install
 
-Planned 1.12.0 archives are `HEAVEN-1.12.0-Windows-x64.zip` and
-`HEAVEN-1.12.0-corresponding-source.zip`, with primary local output directory
-`source/build/publication-1.12.0-heaven`. These names are not evidence of a
-completed build or published download; consult the
-[1.12.0 delivery status](docs/Release-1.12.0-Validation.md).
+Version 1.12.1 binaries are tracked below. Local release archive names are
+`HEAVEN-1.12.1-Windows-x64.zip` and
+`HEAVEN-1.12.1-corresponding-source.zip`, in
+`source/build/publication-1.12.1`. Local packages are not a published GitHub
+Release; consult the [delivery record](docs/Release-1.12.1-Validation.md).
 
 **Historical release:** download the [**v1.11.1 Windows x64 ZIP**](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-Windows-x64.zip)
 for both formats, their complete notices and source-download information.
@@ -111,12 +112,11 @@ are supplied with the release. The repository's tracked packages may be newer; c
 
 | Format | Download | Install |
 | --- | --- | --- |
-| CLAP | `Windows-x64/CLAP/HEAVEN by lil grass block.clap` (planned) | Copy the file to `%LOCALAPPDATA%\Programs\Common\CLAP\` or `C:\Program Files\Common Files\CLAP\`. |
-| VST3 | `Windows-x64/VST3/HEAVEN by lil grass block.vst3/` (planned bundle) | Copy the **entire folder**, including `Contents`, to `%LOCALAPPDATA%\Programs\Common\VST3\` or `C:\Program Files\Common Files\VST3\`. |
+| CLAP | `Windows-x64/CLAP/HEAVEN by lil grass block.clap` | Copy the file to `%LOCALAPPDATA%\Programs\Common\CLAP\` or `C:\Program Files\Common Files\CLAP\`. |
+| VST3 | `Windows-x64/VST3/HEAVEN by lil grass block.vst3/` (complete bundle) | Copy the **entire folder**, including `Contents`, to `%LOCALAPPDATA%\Programs\Common\VST3\` or `C:\Program Files\Common Files\VST3\`. |
 
 For VST3, download the repository with GitHub's **Code → Download ZIP** or clone
-it, then take the bundle from `Windows-x64/VST3/` once the renamed package is
-available. Downloading only its inner binary is not a complete installation.
+it, then take the bundle from `Windows-x64/VST3/`. Downloading only its inner binary is not a complete installation.
 Keep the [GPLv3 text](Windows-x64/LICENSE.txt), [AGPLv3 text](Windows-x64/COPYING.AGPLv3),
 [source notice](Windows-x64/SOURCE.md), [font license](Windows-x64/PixelifySans-OFL.txt)
 and [third-party notices](Windows-x64/ThirdParty) with your copy.

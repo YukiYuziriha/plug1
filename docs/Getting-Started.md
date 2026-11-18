@@ -13,12 +13,13 @@ The rename from **VocalStack** (formerly displayed as **Vocal Stack**) does not
 create a new plugin ID. Internal IDs, preset folders and state extensions remain
 unchanged for compatibility with existing sessions and presets.
 
-The planned 1.12.0 packages are `HEAVEN-1.12.0-Windows-x64.zip` and
-`HEAVEN-1.12.0-corresponding-source.zip`. Check the
-[delivery status](Release-1.12.0-Validation.md) before assuming the renamed
-binaries are ready; older packages retain their historical names.
+The planned 1.12.1 packages are `HEAVEN-1.12.1-Windows-x64.zip` and
+`HEAVEN-1.12.1-corresponding-source.zip`. Build, test and packaging validation
+are pending; check the [delivery status](Release-1.12.1-Validation.md) before
+assuming the updated binaries are ready. Older packages retain their historical
+names and behavior.
 
-1. Once published, download and extract `HEAVEN-1.12.0-Windows-x64.zip`, or
+1. Once published, download and extract `HEAVEN-1.12.1-Windows-x64.zip`, or
    download the repository using **Code → Download ZIP** on
    [GitHub](https://github.com/YukiYuziriha/plug1), then extract it, or clone it.
    The paths below describe the planned renamed repository artifacts.
@@ -42,8 +43,10 @@ binaries are ready; older packages retain their historical names.
    completed real-DAW validation.
 
 Check `Windows-x64/SOURCE.md` for the tracked binaries' version and provenance.
-Upcoming 1.12.0 adds [Tuning](Tuning.md); see its
-[delivery status](Release-1.12.0-Validation.md) before assuming packages are ready.
+Tuning was introduced in 1.12.0; the planned 1.12.1 update requests its host audio
+reactivation automatically. See the [Tuning guide](Tuning.md) and
+[delivery status](Release-1.12.1-Validation.md) before assuming updated packages
+are ready.
 
 ## Start with Stack
 
@@ -81,7 +84,7 @@ The first two generated cards cannot be removed through the UI. **Reset to Basic
 derives a two-voice configuration from current basic controls and removes extra
 voice connections without resetting unrelated FX.
 
-## Automatic Tuning (v1.12.0)
+## Automatic Tuning (v1.12.1 activation policy)
 
 Open the themed **Tuning** tab, enable **Tuning On**, choose Key/Scale and adjust
 Correction, Retune Speed, Note Transition and Note Stability. Note buttons select
@@ -89,12 +92,25 @@ Custom allowed notes; Preserve Formants applies envelope compensation. Module Mi
 blends aligned clean/tuned audio; each voice's Tune Mix selects how much of that
 shared blend it receives. Correction is pitch strength, not dry/wet audio mix.
 
-If **Host audio restart pending** appears, deactivate/reactivate the plugin's
-**host audio processing**, or reload it. Transport stop/start is not enough.
+On first enable from an OFF-prepared instance, the monitor shows **ACTIVATING /
+Waiting for host audio reactivation** and **Audio reactivation requested
+automatically**. The plugin requests this from its 10 Hz message-thread timer;
+manual reload is not a required activation step. The running audio path and
+reported latency stay unchanged until the host completes re-preparation.
+Transport stop/start alone does not acknowledge it. If the host has not completed
+reactivation, the monitor remains ACTIVATING rather than claiming tuning is live.
+Once prepared, silence/unvoiced audio shows **ACTIVE / Waiting for a voiced
+signal**. Pending Routing changes have their own warning, not a combined Tuning
+warning.
+
 At 48 kHz the basic ON-prepared path is 2688 samples, versus 1344 OFF-prepared.
-Zero retune still needs about 85 ms detector history after reset. Real-vocal
-listening remains unverified; this is not Antares equivalence. Read the
-[complete Tuning guide](Tuning.md) for timing, routing and source/license details.
+Turning Tuning off starts fading to clean immediately and retains the reserve
+without a new restart request or activation-pending warning. Turning it back on
+uses that reserve; the next preparation with Tuning OFF reclaims it. Zero retune
+still needs about 85 ms detector history after reset. Host-specific reactivation
+and real-vocal listening remain unverified; this is not Antares equivalence.
+Read the [complete Tuning guide](Tuning.md) for timing, routing and source/license
+details.
 
 ## Add effects and routing
 

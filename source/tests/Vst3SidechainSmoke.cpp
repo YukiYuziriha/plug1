@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -72,35 +73,78 @@ struct ParameterChanges final : IParameterChanges {
     IParamValueQueue* PLUGIN_API getParameterData(int32 index) override { return index == 0 ? &queue : nullptr; }
     IParamValueQueue* PLUGIN_API addParameterData(const ParamID& id, int32& index) override { queue.id = id; index = 0; return &queue; }
 };
-ParamID fftParameterId(IPluginFactory& factory, IComponent& component, Host& host) {
-    TUID controllerClass{};
-    check(component.getControllerClassId(controllerClass) == kResultOk, "VST3 controller class unavailable");
-    IEditController* controller = nullptr;
-    check(factory.createInstance(controllerClass, IEditController_iid, reinterpret_cast<void**>(&controller)) == kResultOk && controller,
-          "VST3 automation controller creation failed");
-    check(controller->initialize(&host) == kResultOk, "VST3 automation controller initialization failed");
-    IConnectionPoint* audioConnection = nullptr; IConnectionPoint* controlConnection = nullptr;
-    check(component.queryInterface(IConnectionPoint_iid, reinterpret_cast<void**>(&audioConnection)) == kResultOk && audioConnection,
-          "VST3 component connection point unavailable");
-    check(controller->queryInterface(IConnectionPoint_iid, reinterpret_cast<void**>(&controlConnection)) == kResultOk && controlConnection,
-          "VST3 controller connection point unavailable");
-    check(audioConnection->connect(controlConnection) == kResultOk && controlConnection->connect(audioConnection) == kResultOk,
-          "VST3 component/controller connection failed");
-    bool found = false; ParamID id = 0;
-    const auto parameterCount = controller->getParameterCount();
-    for (int32 index = 0; index < controller->getParameterCount(); ++index) {
-        ParameterInfo info{};
-        if (controller->getParameterInfo(index, info) != kResultOk) continue;
-        std::string title;
-        for (const auto character : info.title) { if (!character) break; title.push_back(char(character)); }
-        if (title == "FX 1 Spectral FFT Size") { id = info.id; found = true; break; }
+void dispatchFor(std::chrono::milliseconds duration) {
+    const auto deadline = std::chrono::steady_clock::now() + duration;
+    do {
+        MSG message;
+        while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message); DispatchMessage(&message);
+        }
+        Sleep(2);
+    } while (std::chrono::steady_clock::now() < deadline);
+}
+struct ComponentHandler final : IComponentHandler {
+    std::atomic<uint32> refs{1};
+    std::atomic<unsigned> latencyRestarts{0}, restarts{0};
+    tresult PLUGIN_API queryInterface(const TUID iid, void** out) override {
+        *out = nullptr;
+        if (equal(iid, IComponentHandler_iid) || equal(iid, FUnknown_iid)) {
+            *out = static_cast<IComponentHandler*>(this); addRef(); return kResultOk;
+        }
+        return kNoInterface;
     }
-    controlConnection->disconnect(audioConnection); audioConnection->disconnect(controlConnection);
-    controlConnection->release(); audioConnection->release();
-    controller->terminate(); controller->release();
-    if (!found) std::cerr << "VST3 controller parameter count=" << parameterCount << '\n';
-    check(found, "VST3 FFT automation parameter metadata missing");
-    return id;
+    uint32 PLUGIN_API addRef() override { return ++refs; }
+    uint32 PLUGIN_API release() override { return --refs; }
+    tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API performEdit(ParamID, ParamValue) override { return kResultOk; }
+    tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API restartComponent(int32 flags) override {
+        ++restarts;
+        if ((flags & kLatencyChanged) != 0) ++latencyRestarts;
+        return kResultOk;
+    }
+};
+struct Controller {
+    ComponentHandler handler;
+    IEditController* controller = nullptr;
+    IConnectionPoint* audioConnection = nullptr;
+    IConnectionPoint* controlConnection = nullptr;
+    Controller(IPluginFactory& factory, IComponent& component, Host& host) {
+        TUID controllerClass{};
+        check(component.getControllerClassId(controllerClass) == kResultOk, "VST3 controller class unavailable");
+        check(factory.createInstance(controllerClass, IEditController_iid, reinterpret_cast<void**>(&controller)) == kResultOk && controller,
+              "VST3 automation controller creation failed");
+        check(controller->initialize(&host) == kResultOk, "VST3 automation controller initialization failed");
+        check(controller->setComponentHandler(&handler) == kResultOk, "VST3 component handler installation failed");
+        check(component.queryInterface(IConnectionPoint_iid, reinterpret_cast<void**>(&audioConnection)) == kResultOk && audioConnection,
+              "VST3 component connection point unavailable");
+        check(controller->queryInterface(IConnectionPoint_iid, reinterpret_cast<void**>(&controlConnection)) == kResultOk && controlConnection,
+              "VST3 controller connection point unavailable");
+        check(audioConnection->connect(controlConnection) == kResultOk && controlConnection->connect(audioConnection) == kResultOk,
+              "VST3 component/controller connection failed");
+    }
+    ParamID parameterId(const char* name) const {
+        const auto parameterCount = controller->getParameterCount();
+        for (int32 index = 0; index < parameterCount; ++index) {
+            ParameterInfo info{};
+            if (controller->getParameterInfo(index, info) != kResultOk) continue;
+            std::string title;
+            for (const auto character : info.title) { if (!character) break; title.push_back(char(character)); }
+            if (title == name) return info.id;
+        }
+        std::cerr << "VST3 controller parameter count=" << parameterCount << '\n';
+        throw std::runtime_error(std::string("VST3 parameter metadata missing: ") + name);
+    }
+    ~Controller() {
+        controller->setComponentHandler(nullptr);
+        controlConnection->disconnect(audioConnection); audioConnection->disconnect(controlConnection);
+        controlConnection->release(); audioConnection->release();
+        controller->terminate(); controller->release();
+    }
+};
+ParamID fftParameterId(IPluginFactory& factory, IComponent& component, Host& host) {
+    Controller controller(factory, component, host);
+    return controller.parameterId("FX 1 Spectral FFT Size");
 }
 struct Stream final : IBStream {
     std::vector<char> bytes; int64 cursor=0; uint32 refs=1;
@@ -273,6 +317,122 @@ void render(IPluginFactory& factory, const TUID cid, double rate, int mainChanne
             << " maxError=" << maximumError << " final=" << out[0][0] << "," << out[1][0] << '\n';
     check(maximumError<(variant ? 2.e-5 : 2.e-3),"VST3 routed donor / main-phase / dry / bypass latency oracle failed");
 }
+void checkTuningRestart(IPluginFactory& factory, const TUID cid) {
+    Host host; IComponent* component = nullptr; IAudioProcessor* processor = nullptr;
+    check(factory.createInstance(cid, IComponent_iid, reinterpret_cast<void**>(&component)) == kResultOk && component,
+          "VST3 tuning component creation failed");
+    check(component->initialize(&host) == kResultOk, "VST3 tuning component initialize failed");
+    check(component->queryInterface(IAudioProcessor_iid, reinterpret_cast<void**>(&processor)) == kResultOk && processor,
+          "VST3 tuning processor query failed");
+    {
+        // Keep the controller connected through timer dispatch and the host's
+        // deactivate/reactivate cycle so restartComponent reaches a real host.
+        Controller controller(factory, *component, host);
+        const auto enabled = controller.parameterId("Tuning Enabled");
+        const std::string xml = R"(<VocalStack><PARAM id="levelOn" value="0"/><PARAM id="doubleOn" value="0"/><PARAM id="tuningFormants" value="0"/><RoutingGraph><Node id="1" type="0"/><Node id="13" type="5"/><Link source="1" destination="13" inputPin="0"/></RoutingGraph></VocalStack>)";
+        Stream preset; preset.bytes.resize(xml.size() + 9);
+        const uint32 magic = 0x21324356, length = uint32(xml.size());
+        std::memcpy(preset.bytes.data(), &magic, 4); std::memcpy(preset.bytes.data() + 4, &length, 4);
+        std::memcpy(preset.bytes.data() + 8, xml.data(), xml.size());
+        check(component->setState(&preset) == kResultOk, "VST3 tuning neutral state failed");
+        preset.cursor = 0;
+        check(controller.controller->setComponentState(&preset) == kResultOk, "VST3 tuning controller state sync failed");
+        SpeakerArrangement inputs[]{SpeakerArr::kStereo, SpeakerArr::kEmpty}, outputs[]{SpeakerArr::kStereo};
+        check(processor->setBusArrangements(inputs, 2, outputs, 1) == kResultOk, "VST3 tuning stereo arrangement failed");
+        check(component->activateBus(kAudio, kInput, 0, true) == kResultOk
+            && component->activateBus(kAudio, kOutput, 0, true) == kResultOk
+            && component->activateBus(kAudio, kInput, 1, false) == kResultOk, "VST3 tuning bus activation failed");
+        constexpr int block = 137;
+        ProcessSetup setup{}; setup.processMode = kOffline; setup.symbolicSampleSize = kSample32;
+        setup.maxSamplesPerBlock = block; setup.sampleRate = 48000;
+        check(processor->setupProcessing(setup) == kResultOk && component->setActive(true) == kResultOk
+            && processor->setProcessing(true) == kResultOk, "VST3 tuning baseline activation failed");
+        dispatchFor(std::chrono::milliseconds(250));
+        const auto baseline = processor->getLatencySamples();
+        check(baseline == 1344, "VST3 tuning baseline latency");
+        const auto restarts = controller.handler.latencyRestarts.load();
+        std::array<std::array<float, block>, 2> input{}, output{};
+        std::array<float*, 2> ip{input[0].data(), input[1].data()}, op{output[0].data(), output[1].data()};
+        AudioBusBuffers in[2]{}, out{};
+        in[0].numChannels = 2; in[0].channelBuffers32 = ip.data();
+        out.numChannels = 2; out.channelBuffers32 = op.data();
+        ProcessData data{}; data.processMode = kOffline; data.symbolicSampleSize = kSample32;
+        data.numSamples = block; data.numInputs = 2; data.inputs = in; data.numOutputs = 1; data.outputs = &out;
+        ParameterChanges changes; changes.queue.id = enabled; changes.queue.offset = 19;
+        const auto toggle = [&](bool on) {
+            changes.queue.value = on ? 1 : 0;
+            check(controller.controller->setParamNormalized(enabled, changes.queue.value) == kResultOk,
+                  "VST3 tuning controller edit failed");
+            data.inputParameterChanges = &changes;
+            check(processor->process(data) == kResultOk, "VST3 tuning automation queue failed");
+            data.inputParameterChanges = nullptr;
+            Stream observed;
+            check(component->getState(&observed) == kResultOk, "VST3 tuning state inspection failed");
+            const std::string saved(observed.bytes.begin(), observed.bytes.end());
+            const auto parameter = saved.find("id=\"tuningEnabled\"");
+            check(parameter != std::string::npos, "VST3 tuning parameter absent from state");
+            const auto start = saved.rfind('<', parameter), end = saved.find('>', parameter);
+            const auto value = saved.find("value=\"", start);
+            check(value != std::string::npos && value < end && std::strtod(saved.c_str() + value + 7, nullptr) == (on ? 1 : 0),
+                  "VST3 tuning queue was not consumed");
+        };
+        toggle(true);
+        check(processor->getLatencySamples() == baseline, "VST3 first enable changed latency before dispatch");
+        dispatchFor(std::chrono::milliseconds(500));
+        check(controller.handler.latencyRestarts.load() == restarts + 1,
+              "VST3 first enable did not automatically request exactly one latency restart");
+        check(processor->getLatencySamples() == baseline, "VST3 restart notification changed active latency");
+        dispatchFor(std::chrono::milliseconds(250));
+        check(controller.handler.latencyRestarts.load() == restarts + 1, "VST3 pending enable repeatedly requested restart");
+        check(processor->setProcessing(false) == kResultOk && component->setActive(false) == kResultOk
+            && component->setActive(true) == kResultOk && processor->setProcessing(true) == kResultOk,
+              "VST3 tuning host restart failed");
+        const auto tuned = processor->getLatencySamples();
+        check(tuned == baseline + 1344, "VST3 tuning reserve missing after activation");
+        dispatchFor(std::chrono::milliseconds(250));
+        check(controller.handler.latencyRestarts.load() == restarts + 1, "VST3 activation commit requested another restart");
+        const auto committedRestarts = controller.handler.restarts.load();
+        float previousSample = 0;
+        const auto renderFrequency = [&] {
+            int crossings = 0, first = -1, last = -1;
+            for (int position = 0; position < 36000; position += block) {
+                for (int i = 0; i < block; ++i)
+                    input[0][size_t(i)] = input[1][size_t(i)] = .15f * std::sin(float(2 * 3.141592653589793 * 452 * (position + i) / 48000));
+                check(processor->process(data) == kResultOk, "VST3 tuning audio render failed");
+                for (int i = 0; i < block; ++i) {
+                    check(std::isfinite(output[0][size_t(i)]) && std::isfinite(output[1][size_t(i)]), "VST3 tuning nonfinite audio");
+                    if (position + i > 18000 && output[0][size_t(i)] > 0 && previousSample <= 0) {
+                        if (first < 0) first = position + i;
+                        last = position + i; ++crossings;
+                    }
+                    previousSample = output[0][size_t(i)];
+                }
+            }
+            check(crossings > 100 && last > first, "VST3 tuning output missing periodic audio");
+            return (crossings - 1) * 48000. / (last - first);
+        };
+        check(std::abs(renderFrequency() - 440) < 2, "VST3 activated tuner did not correct 452 Hz to A440");
+        toggle(false);
+        dispatchFor(std::chrono::milliseconds(500));
+        check(processor->getLatencySamples() == tuned, "VST3 tuning off discarded reserved latency");
+        check(controller.handler.latencyRestarts.load() == restarts + 1
+            && controller.handler.restarts.load() == committedRestarts, "VST3 tuning off requested an unnecessary restart");
+        check(std::abs(renderFrequency() - 452) < 1, "VST3 tuning off did not restore clean pitch");
+        toggle(true);
+        dispatchFor(std::chrono::milliseconds(500));
+        check(processor->getLatencySamples() == tuned && controller.handler.latencyRestarts.load() == restarts + 1,
+              "VST3 reserved off/on requested latency restart or changed latency");
+        check(controller.handler.restarts.load() == committedRestarts, "VST3 reserved off/on requested another component restart");
+        check(std::abs(renderFrequency() - 440) < 2, "VST3 reserved re-enable did not restore correction");
+        dispatchFor(std::chrono::milliseconds(250));
+        check(processor->getLatencySamples() == tuned && controller.handler.latencyRestarts.load() == restarts + 1
+            && controller.handler.restarts.load() == committedRestarts, "VST3 corrected render changed the committed latency contract");
+        check(processor->setProcessing(false) == kResultOk && component->setActive(false) == kResultOk,
+              "VST3 tuning shutdown failed");
+    }
+    processor->release(); component->terminate(); component->release();
+    std::cout << "VST3 automatic tuning restart, retained latency and corrected output verified\n";
+}
 }
 int main(int argc,char** argv) {
     if(argc!=2) return 2;
@@ -291,6 +451,7 @@ int main(int argc,char** argv) {
             if(factory->getClassInfo(i,&info)==kResultOk && std::strcmp(info.category,kVstAudioEffectClass)==0) { found=true; break; }
         }
         check(found,"VST3 audio component missing");
+        checkTuningRestart(*factory, info.cid);
         int cases=0;
         for(double rate : {44100.,48000.,96000.}) for(int layout=0;layout<4;++layout)
             for(int aux=0;aux<3;++aux) for(int variant=0;variant<3;++variant) {

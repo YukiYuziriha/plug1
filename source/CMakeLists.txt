@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.12.0 LANGUAGES C CXX)
+project(VocalStack VERSION 1.12.1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -35,6 +35,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
             -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-ports.patch
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchClap.cmake)
     FetchContent_MakeAvailable(JUCE clap_juce)
+    include(cmake/PatchJuceLatency.cmake)
     include(cmake/PatchClapTail.cmake)
     include(cmake/PatchClapSidechain.cmake)
 
@@ -50,6 +51,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
         NEEDS_MIDI_INPUT TRUE
         EDITOR_WANTS_KEYBOARD_FOCUS FALSE
         COPY_PLUGIN_AFTER_BUILD FALSE)
+    target_compile_definitions(VocalStack_VST3 PRIVATE VOCALSTACK_VST3_DEFERRED_LATENCY=1)
     juce_add_binary_data(VocalStackFonts SOURCES assets/PixelifySans.ttf)
     target_link_libraries(VocalStack PUBLIC VocalStackFonts)
     target_sources(VocalStack PRIVATE src/PluginProcessor.cpp src/PluginEditor.cpp src/MeterPanel.cpp)

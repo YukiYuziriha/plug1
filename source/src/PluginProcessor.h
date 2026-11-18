@@ -339,6 +339,7 @@ public:
 
     // Control-thread API. Setters validate the entire bounded state before publication.
     TuningTelemetry getTuningTelemetry() const noexcept;
+    bool tuningActivationPending() const;
     ModulationState getModulationState() const;
     bool setModulationState(const ModulationState& state, juce::String& error);
     void beginModulationAssignment(uint32_t id);
@@ -449,7 +450,8 @@ private:
     std::atomic<unsigned> tuningTelemetrySequence{0};
     std::array<std::atomic<float>, 5> tuningTelemetryValues{};
     std::atomic<unsigned> tuningTelemetryFlags{0};
-    bool preparedTuningEnabled = false;
+    bool preparedTuningEnabled = false; // Latency reservation, retained through Off.
+    bool tuningRestartRequested = false; // Control thread; coalesced until reactivation.
     int preparedRoutingLatency = 0;
     bool restartPending = false;
     bool prepared = false;

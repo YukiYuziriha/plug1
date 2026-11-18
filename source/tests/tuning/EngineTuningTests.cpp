@@ -32,16 +32,16 @@ Settings neutral(bool enabled) {
     for (auto& v : s.voiceSettings) v = {false, 0, 0, 0, 0, 0, 0, 0, 0, false};
     return s;
 }
-Graph sourceGraph(NodeType type) {
-    return {{{1, type}, {2, NodeType::output}}, {{1, 2, 0}}};
+Graph sourceGraph(NodeType type, int voiceSlot = 0) {
+    return {{{1, type, voiceSlot}, {2, NodeType::output}}, {{1, 2, 0}}};
 }
 struct Render { std::vector<float> left, right; TuningTelemetry telemetry; int latency; };
 Render render(Settings s, double rate = 48000, int channels = 2, int reserve = 0,
               bool hostBypass = false, NodeType source = NodeType::lead,
-              bool resetFirst = false, bool irregular = true) {
+              bool resetFirst = false, bool irregular = true, int voiceSlot = 0) {
     VocalEngine engine;
     engine.prepare(rate, channels, 2, s, reserve);
-    check(bool(engine.requestGraph(sourceGraph(source))), "source graph rejected");
+    check(bool(engine.requestGraph(sourceGraph(source, voiceSlot))), "source graph rejected");
     const int n = int(rate * 0.65);
     std::vector<float> input(n), other(n);
     Render r{std::vector<float>(n), std::vector<float>(n), {}, engine.latency()};
@@ -106,7 +106,8 @@ void latencyAndPolicy() {
     check(e.latency() == 2944 && e.tuningLatency() == 1344, "enabled serial latency");
     check(!e.tuningRequiresReprepare(s), "prepared enable mismatch");
     s.tuningEnabled = false; e.reset(s);
-    check(e.latency() == 2944 && e.tuningRequiresReprepare(s), "disable lost host reservation");
+    check(e.latency() == 2944 && e.tuningLatency() == 1344, "disable lost host reservation");
+    check(!e.tuningRequiresReprepare(s), "disable must not request reprepare");
     check(!e.getTuningTelemetry().hasTarget, "disabled telemetry is stale");
 }
 void paths() {
@@ -128,6 +129,23 @@ void paths() {
     auto dormant = s; dormant.tuningMix = 0.37f; dormant.leadSettings.tuneMix = 0.17f;
     dormant.tuning.referenceHz = 420;
     check(render(s).left == render(dormant).left, "OFF tuning controls changed legacy output");
+    // The tuner's supported range remains 8–192 kHz; OFF must not impose that
+    // limit on the legacy engine, including its clean/dry alignment at 384 kHz.
+    for (int channels : {1, 2}) {
+        auto highRate = neutral(false);
+        highRate.leadSettings.tuneMix = 0;
+        const auto clean = render(highRate, 384000, channels);
+        check(clean.latency == 10752, "384 kHz OFF legacy latency changed");
+        auto dormantHighRate = highRate;
+        dormantHighRate.tuningMix = 0.37f;
+        dormantHighRate.leadSettings.tuneMix = 0.17f;
+        dormantHighRate.tuning.referenceHz = 420;
+        const auto dormantRender = render(dormantHighRate, 384000, channels);
+        check(clean.left == dormantRender.left && clean.right == dormantRender.right,
+              "384 kHz OFF tuning controls changed legacy output");
+        highRate.globalMix = 0;
+        render(highRate, 384000, channels, 256);
+    }
 }
 void automationAndInPlace() {
     auto s = neutral(true);
@@ -205,8 +223,61 @@ void blends() {
         check(std::abs(frequency(voiceClean.left, 48000) - 452 * factor) < 4, "voice clean source missing");
     }
 }
+void basicVoiceTuneMix() {
+    for (int slot : {0, 1}) {
+        auto s = neutral(true);
+        s.advanced = false;
+        // Voice level matching uses the Lead blend as its energy reference.
+        // Keep it clean so equivalent source blends also have identical gain
+        // references when Module Mix changes.
+        s.leadSettings.tuneMix = 0;
+        // Basic supplies geometry/presence, but Tune Mix still belongs to each
+        // stored slot. Route one voice so Lead and its neighbour cannot mask it.
+        const auto voiceRender = [slot](Settings settings) {
+            return render(settings, 48000, 1, 0, false, NodeType::voice, false, true, slot);
+        };
+        const auto sameAudio = [](const Render& a, const Render& b) {
+            return a.left == b.left && a.right == b.right;
+        };
+        s.voiceSettings[size_t(slot)].tuneMix = 1;
+        const auto tuned = voiceRender(s);
+        s.voiceSettings[size_t(slot)].tuneMix = 0;
+        const auto clean = voiceRender(s);
+        auto moduleClean = s;
+        moduleClean.voiceSettings[size_t(slot)].tuneMix = 1;
+        moduleClean.tuningMix = 0;
+        check(sameAudio(clean, voiceRender(moduleClean)), "Basic voice Tune Mix zero is not clean");
+
+        double difference = 0, energy = 0;
+        for (size_t i = 14400; i < clean.left.size(); ++i) {
+            for (int channel : {0, 1}) {
+                const float a = channel == 0 ? clean.left[i] : clean.right[i];
+                const float b = channel == 0 ? tuned.left[i] : tuned.right[i];
+                difference += double(a - b) * (a - b);
+                energy += double(a) * a + double(b) * b;
+            }
+        }
+        check(energy > 1e-6 && difference > energy * 1e-4,
+              "Basic voice stored Tune Mix ignored or voice silent");
+
+        s.voiceSettings[size_t(slot)].tuneMix = 0.5f;
+        const auto half = voiceRender(s);
+        auto moduleHalf = s;
+        moduleHalf.voiceSettings[size_t(slot)].tuneMix = 1;
+        moduleHalf.tuningMix = 0.5f;
+        // Compare equivalent blends before the nonlinear voice renderer rather
+        // than assuming its rendered endpoints can be mixed linearly afterward.
+        check(sameAudio(half, voiceRender(moduleHalf)), "Basic voice Tune Mix is not a true source blend");
+        check(!sameAudio(half, clean) && !sameAudio(half, tuned), "Basic partial Tune Mix snapped to an endpoint");
+        auto independent = s;
+        independent.voiceSettings[size_t(1 - slot)].tuneMix = 0;
+        check(sameAudio(half, voiceRender(independent)), "Basic voice Tune Mix is not slot-independent");
+        const auto reset = render(s, 48000, 1, 0, false, NodeType::voice, true, true, slot);
+        check(sameAudio(half, reset), "Basic voice Tune Mix reset not deterministic");
+    }
+}
 }
 int main() {
-    try { latencyAndPolicy(); paths(); automationAndInPlace(); blends(); std::cout << "Engine tuning integration passed\n"; }
+    try { latencyAndPolicy(); paths(); automationAndInPlace(); blends(); basicVoiceTuneMix(); std::cout << "Engine tuning integration passed\n"; }
     catch (const std::exception& e) { watchAllocations = false; std::cerr << e.what() << '\n'; return 1; }
 }

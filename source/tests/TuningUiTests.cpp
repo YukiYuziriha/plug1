@@ -326,12 +326,44 @@ void run() {
     auto& mix = slider(*panel, "tuningMix");
     expect(mix.getSliderStyle() == juce::Slider::LinearHorizontal, "Module Mix is not a real themed linear slider");
     expect(!mix.isEnabled(), "Disabled tuner leaves module mix enabled");
+    auto* status = dynamic_cast<juce::Label*>(find(*panel, "tuningPitchReadout"));
+    expect(status && status->getText().startsWith("TUNING OFF"), "Disabled tuner status is not OFF");
+    owner->prepareToPlay(48000, 256);
+    const int offLatency = owner->getLatencySamples();
     auto* enableButton = dynamic_cast<juce::TextButton*>(find(*panel, "tuningEnabled"));
     enableButton->triggerClick();
     for (int tick = 0; tick < 6; ++tick) { juce::Thread::sleep(30); dispatch(); }
     panel->sync();
     expect(value(*owner, "tuningEnabled") == 1, "Tuning On click did not reach backend");
     expect(mix.isEnabled(), "Enabled tuner leaves module mix disabled");
+    expect(owner->tuningActivationPending(), "First enable did not wait for host reactivation");
+    expect(status->getText().startsWith("ACTIVATING  /  Waiting for host audio reactivation")
+           && status->getText().contains("Audio reactivation requested automatically"),
+           "Pending activation does not explain automatic host reactivation");
+    expect(!status->getText().contains("ACTIVE  /") && !status->getText().containsIgnoreCase("restart"),
+           "Pending tuner claims active processing or shows a combined restart warning");
+    expect(status->getText().contains("TARGET  --") && status->getText().contains("CORRECTION  --"),
+           "Pending activation invents tuning telemetry");
+    expect(owner->getLatencySamples() == offLatency, "Activation intent prematurely changed host latency");
+    // This fixture has no host wrapper; emulate its release/prepare acknowledgement.
+    owner->releaseResources();
+    owner->prepareToPlay(48000, 256);
+    panel->sync();
+    const int onLatency = owner->getLatencySamples();
+    expect(!owner->tuningActivationPending() && onLatency == offLatency + 1344,
+           "Host preparation did not commit the tuning reservation");
+    expect(status->getText().startsWith("ACTIVE  /  Waiting for a voiced signal")
+           && !status->getText().contains("Audio reactivation requested automatically"),
+           "Prepared unvoiced tuner is not ACTIVE or retains activation instructions");
+    set(*owner, "tuningEnabled", 0); panel->sync();
+    expect(!owner->tuningActivationPending() && status->getText().startsWith("TUNING OFF")
+           && !status->getText().contains("reactivation") && !mix.isEnabled(),
+           "Turning off tuning leaves activation pending or live controls enabled");
+    expect(owner->getLatencySamples() == onLatency, "Turning off prematurely reclaimed tuning latency");
+    set(*owner, "tuningEnabled", 1); panel->sync();
+    expect(!owner->tuningActivationPending() && owner->getLatencySamples() == onLatency
+           && status->getText().startsWith("ACTIVE  /  Waiting for a voiced signal") && mix.isEnabled(),
+           "Re-enabling a reserved tuner unnecessarily waits for host reactivation");
     auto* on = find(*panel, "tuningEnabled");
     auto* mixControl = find(*panel, "tuningMixControl");
     expect(on->getRight() <= mixControl->getX() && on->getY() < mixControl->getBottom(), "Module Mix is not beside Tuning On");
@@ -376,7 +408,6 @@ void run() {
     click(*panel, "tuningNote1");
     expect(value(*owner, "tuningScale") == 6 && int(value(*owner, "tuningNotes")) == (0xab5 | 2), "Custom note edit did not preserve effective scale");
     set(*owner, "tuningNotes", 0); panel->sync();
-    auto* status = dynamic_cast<juce::Label*>(find(*panel, "tuningPitchReadout"));
     expect(status && status->getText().contains("No allowed notes"), "Empty mask not reported honestly");
     expect(status->getText().contains("TARGET  --"), "Unvoiced monitor invents pitch data");
     set(*owner, "leadTuneMix", .37f); set(*owner, "voice8TuneMix", .63f);
@@ -384,6 +415,14 @@ void run() {
     expect(std::abs(value(*owner, "leadTuneMix") - .37f) < .001f && std::abs(value(*owner, "voice8TuneMix") - .63f) < .001f,
            "Module reset changed per-voice settings");
     panel->sync(); expect(!mix.isEnabled(), "Module reset did not restore disabled state");
+    expect(!owner->tuningActivationPending() && status->getText().startsWith("TUNING OFF"),
+           "Module reset left tuning activation pending");
+    expect(owner->getLatencySamples() == onLatency, "Module reset prematurely reclaimed tuning reservation");
+    owner->releaseResources();
+    owner->prepareToPlay(48000, 256);
+    panel->sync();
+    expect(owner->getLatencySamples() == offLatency && !owner->tuningActivationPending(),
+           "Next OFF preparation did not reclaim tuning reservation");
     checkBounds(*panel); checkPassive(*panel);
 
     std::cout << "CHECK voice mixes\n";
@@ -402,6 +441,7 @@ void run() {
     std::cout << "CHECK real audio telemetry\n";
     // Feed actual audio through the processor, never fabricated UI telemetry.
     set(*owner, "tuningEnabled", 1); set(*owner, "tuningNotes", 4095);
+    owner->releaseResources();
     owner->prepareToPlay(48000, 256);
     juce::AudioBuffer<float> audio(2, 256);
     juce::MidiBuffer midi;

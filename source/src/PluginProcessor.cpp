@@ -453,6 +453,7 @@ void Processor::prepareToPlay(double sampleRate, int) {
     preparedRoutingLatency = RoutingExecutor::graphLatency(routingActive);
     const auto activationSettings = settings();
     preparedTuningEnabled = activationSettings.tuningEnabled;
+    tuningRestartRequested = false;
     engine.prepare(sampleRate, getMainBusNumInputChannels(), getMainBusNumOutputChannels(), activationSettings, preparedRoutingLatency);
     publishTuningTelemetry();
     const auto restored = engine.requestGraph(routingActive);
@@ -564,8 +565,9 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
 }
 
 Settings Processor::renderSettings(Settings result) const noexcept {
-    // Enabling from a zero-reserve activation waits for host reactivation. A
-    // disable is immediate, but the engine retains its prepared dry-path delay.
+    // First enable requests host reactivation from the control timer. Until the
+    // host commits the reserve, keep processing at the currently reported latency.
+    // Off is immediate and retains the reservation for subsequent live toggles.
     result.tuningEnabled = result.tuningEnabled && preparedTuningEnabled;
     return result;
 }
@@ -978,8 +980,23 @@ void Processor::resetParameters() {
 }
 
 void Processor::timerCallback() {
-    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
-    if (prepared) engine.collectRetiredGraphs();
+    bool requestTuningActivation = false;
+    {
+        const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+        if (prepared) {
+            engine.collectRetiredGraphs();
+            if (!preparedTuningEnabled && !tuningRestartRequested
+                && values[tuningParameterStart]->load(std::memory_order_relaxed) >= .5f) {
+                // Publish before notifying: a host may reactivate synchronously.
+                tuningRestartRequested = true;
+                requestTuningActivation = true;
+            }
+        }
+    }
+    // Wrapper callbacks belong on the message thread, never parameter/audio
+    // callbacks. This requests reactivation without prematurely changing PDC.
+    if (requestTuningActivation)
+        updateHostDisplay(ChangeDetails{}.withLatencyChanged(true));
 }
 
 Graph Processor::qualitySnapshot(Graph graph) const {
@@ -1021,9 +1038,16 @@ juce::String Processor::getRoutingError() const {
     return routingError;
 }
 
+bool Processor::tuningActivationPending() const {
+    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+    return prepared && !preparedTuningEnabled
+        && values[tuningParameterStart]->load(std::memory_order_relaxed) >= .5f;
+}
+
 bool Processor::routingRestartPending() const {
     const std::lock_guard<std::recursive_mutex> lock(controlMutex);
-    return restartPending || (prepared && (values[tuningParameterStart]->load(std::memory_order_relaxed) >= .5f) != preparedTuningEnabled);
+    return restartPending || (prepared && !preparedTuningEnabled
+        && values[tuningParameterStart]->load(std::memory_order_relaxed) >= .5f);
 }
 
 bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {

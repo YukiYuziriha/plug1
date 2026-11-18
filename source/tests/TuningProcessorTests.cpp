@@ -1,6 +1,8 @@
-// Headless processor integration; run with Run-TuningProcessorTests.ps1.
+// Headless processor integration; no editor or physical GUI window is created.
 #include "PluginProcessor.h"
+#include <chrono>
 #include <cmath>
+#include <functional>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -16,6 +18,34 @@ void set(Processor& p, const char* id, float value) {
     check(parameter != nullptr, "missing parameter");
     parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
 }
+// Allow several 100 ms ticks, including timer-thread scheduling jitter. Dispatch
+// directly on the message thread without opening a window or running a GUI loop.
+void serviceTimersFor(int milliseconds) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+    do {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        juce::Timer::callPendingTimersSynchronously();
+    } while (std::chrono::steady_clock::now() < deadline);
+}
+struct ScopedHostListener final : juce::AudioProcessorListener {
+    explicit ScopedHostListener(Processor& processor) : processor(processor) { processor.addListener(this); }
+    ~ScopedHostListener() override { processor.removeListener(this); }
+    void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override {}
+    void audioProcessorChanged(juce::AudioProcessor*, const juce::AudioProcessorListener::ChangeDetails& details) override {
+        if (!details.latencyChanged) return;
+        ++latencyChanges;
+        allOnMessageThread &= juce::MessageManager::getInstance()->isThisTheMessageThread();
+        if (onLatencyChange) onLatencyChange();
+    }
+    void expectChanges(int expected, const char* message) const {
+        check(latencyChanges == expected, message);
+        check(allOnMessageThread, "latency notification was not on the message thread");
+    }
+    Processor& processor;
+    int latencyChanges = 0;
+    bool allOnMessageThread = true;
+    std::function<void()> onLatencyChange;
+};
 constexpr std::array<float, 21> defaults{0, 1, 0, 0, 4095, 440, 0, 1, 0, 0, .25f, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 constexpr std::array<float, 21> minima{0, 0, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 constexpr std::array<float, 21> maxima{1, 1, 11, 6, 4095, 480, 3, 1, 2000, 2000, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
@@ -63,7 +93,8 @@ void contractAndState() {
     p->prepareToPlay(48000, 137);
     const int activeLatency = p->getLatencySamples();
     check(p->pasteSettings(legacy.createXml()->toString()), "legacy state rejected");
-    check(!p->settings().tuningEnabled && p->routingRestartPending() && p->getLatencySamples() == activeLatency,
+    check(!p->settings().tuningEnabled && !p->routingRestartPending() && !p->tuningActivationPending()
+            && p->getLatencySamples() == activeLatency,
         "legacy restore did not disable previously active tuning safely");
     for (size_t i = 0; i < defaults.size(); ++i)
         near(p->parameters.getRawParameterValue(tuningParameterIds[i])->load(), defaults[i], "missing legacy field inherited previous edit");
@@ -87,9 +118,13 @@ void activationAndBypass(int channels, double rate) {
     check(p->setBusesLayout(layout), "bus layout rejected");
     p->prepareToPlay(rate, 137);
     const int base = p->getLatencySamples();
-    check(!p->routingRestartPending(), "default restart pending");
-    set(*p, "tuningEnabled", 1);
-    check(p->routingRestartPending(), "enable must advertise pending reactivation");
+    check(!p->routingRestartPending() && !p->tuningActivationPending(), "default restart pending");
+    ScopedHostListener host(*p);
+    // Host automation may originate off the message thread; it only records intent.
+    std::thread automation([&] { set(*p, "tuningEnabled", 1); });
+    automation.join();
+    host.expectChanges(0, "enable synchronously notified the host");
+    check(p->routingRestartPending() && p->tuningActivationPending(), "enable must advertise pending activation");
     p->reset(); check(p->getLatencySamples() == base, "reset changed host latency");
     juce::AudioBuffer<float> audio(channels, 137); audio.clear(); juce::MidiBuffer midi;
     p->processBlock(audio, midi);
@@ -99,9 +134,18 @@ void activationAndBypass(int channels, double rate) {
     auto recalled = std::make_unique<Processor>();
     recalled->setStateInformation(pending.getData(), int(pending.getSize()));
     check(recalled->settings().tuningEnabled, "pending enable not saved");
+    serviceTimersFor(350);
+    host.expectChanges(1, "first zero-reserve enable did not emit exactly one automatic latency request");
+    check(p->getLatencySamples() == base && p->tuningActivationPending(), "request changed latency before host prepare");
+    serviceTimersFor(250);
+    host.expectChanges(1, "activation request repeated while host deferred prepare");
     p->releaseResources(); p->prepareToPlay(rate, 137);
     const int tuned = p->getLatencySamples();
-    check(tuned > base && !p->routingRestartPending(), "reactivation did not reserve tuner latency");
+    check(tuned > base && !p->routingRestartPending() && !p->tuningActivationPending(), "reactivation did not reserve tuner latency");
+    // prepare itself legitimately reports the new numeric latency to the host.
+    const int preparedChanges = host.latencyChanges;
+    serviceTimersFor(250);
+    host.expectChanges(preparedChanges, "activation request repeated after host prepare");
     const auto bypassImpulse = [&] {
         // Start at the bypass endpoint rather than measuring its normal ramp.
         set(*p, "bypass", 1);
@@ -121,10 +165,119 @@ void activationAndBypass(int channels, double rate) {
     };
     bypassImpulse();
     set(*p, "tuningEnabled", 0);
-    check(p->routingRestartPending(), "disable must retain reserve until reactivation");
+    check(!p->routingRestartPending() && !p->tuningActivationPending() && p->getLatencySamples() == tuned,
+        "disable must retain reserve without a pending restart");
     bypassImpulse();
+    serviceTimersFor(250);
+    host.expectChanges(preparedChanges, "reserved disable requested a restart");
+    set(*p, "tuningEnabled", 1);
+    check(!p->routingRestartPending() && !p->tuningActivationPending(), "reserved re-enable requested activation");
+    bypassImpulse();
+    serviceTimersFor(250);
+    host.expectChanges(preparedChanges, "reserved off/on repeated activation request");
+    set(*p, "tuningEnabled", 0);
     p->releaseResources(); p->prepareToPlay(rate, 137);
-    check(p->getLatencySamples() == base && !p->routingRestartPending(), "disable reactivation retained reserve");
+    check(p->getLatencySamples() == base && !p->routingRestartPending() && !p->tuningActivationPending(),
+        "normal prepare while off did not reclaim reserve");
+}
+void rapidActivationChanges() {
+    auto p = std::make_unique<Processor>();
+    p->prepareToPlay(48000, 137);
+    const int base = p->getLatencySamples();
+    ScopedHostListener host(*p);
+    set(*p, "tuningEnabled", 1);
+    set(*p, "tuningEnabled", 0);
+    check(!p->tuningActivationPending() && !p->routingRestartPending(), "cancel before timer left activation pending");
+    serviceTimersFor(350);
+    host.expectChanges(0, "enable/disable before timer requested activation");
+    check(p->getLatencySamples() == base, "cancel before timer changed latency");
+
+    set(*p, "tuningEnabled", 1);
+    serviceTimersFor(350);
+    host.expectChanges(1, "enable after cancelled intent did not request activation");
+    set(*p, "tuningEnabled", 0);
+    check(!p->tuningActivationPending() && !p->routingRestartPending(), "cancel after request left activation pending");
+    serviceTimersFor(250);
+    host.expectChanges(1, "disable after request emitted another notification");
+    for (int i = 0; i < 8; ++i) {
+        set(*p, "tuningEnabled", 1);
+        set(*p, "tuningEnabled", 0);
+    }
+    set(*p, "tuningEnabled", 1);
+    serviceTimersFor(350);
+    host.expectChanges(1, "rapid off/on after request was not coalesced");
+    check(p->tuningActivationPending() && p->routingRestartPending() && p->getLatencySamples() == base,
+        "coalesced request prematurely activated tuner");
+
+    // A delayed host response must use the latest (off) intent, not the request's.
+    set(*p, "tuningEnabled", 0);
+    p->releaseResources(); p->prepareToPlay(48000, 137);
+    check(p->getLatencySamples() == base && !p->tuningActivationPending() && !p->routingRestartPending(),
+        "delayed host prepare activated cancelled tuning");
+    host.expectChanges(1, "prepare of cancelled intent changed latency");
+    serviceTimersFor(250);
+    host.expectChanges(1, "cancelled request repeated after prepare");
+    set(*p, "tuningEnabled", 1);
+    serviceTimersFor(350);
+    host.expectChanges(2, "new zero-reserve activation after prepare did not request restart");
+    check(p->getLatencySamples() == base, "fresh activation request changed latency");
+}
+void restoredActivationRequest() {
+    auto source = std::make_unique<Processor>();
+    set(*source, "tuningEnabled", 1);
+    juce::MemoryBlock state; source->getStateInformation(state);
+    const auto text = source->settingsText();
+    // Both host binary recall and text/preset recall must reach the timer path.
+    for (const bool binary : {true, false}) {
+        auto p = std::make_unique<Processor>();
+        p->prepareToPlay(48000, 137);
+        const int base = p->getLatencySamples();
+        ScopedHostListener host(*p);
+        if (binary) p->setStateInformation(state.getData(), int(state.getSize()));
+        else check(p->pasteSettings(text), "enabled text restore rejected");
+        host.expectChanges(0, "state restore synchronously requested latency change");
+        check(p->settings().tuningEnabled && p->tuningActivationPending() && p->routingRestartPending()
+            && p->getLatencySamples() == base, "state restore did not defer tuning activation");
+        serviceTimersFor(350);
+        host.expectChanges(1, "enabled state restore did not automatically request activation");
+        serviceTimersFor(250);
+        host.expectChanges(1, "state restore request was not coalesced");
+        check(p->getLatencySamples() == base, "state restore request changed latency before prepare");
+        p->releaseResources(); p->prepareToPlay(48000, 137);
+        check(p->getLatencySamples() > base && !p->tuningActivationPending() && !p->routingRestartPending(),
+            "restored enable did not activate at host prepare");
+        const int preparedChanges = host.latencyChanges;
+        serviceTimersFor(250);
+        host.expectChanges(preparedChanges, "restored activation repeated request after prepare");
+    }
+}
+void reentrantHostActivation() {
+    auto p = std::make_unique<Processor>();
+    p->prepareToPlay(48000, 137);
+    const int base = p->getLatencySamples();
+    ScopedHostListener host(*p);
+    int requests = 0;
+    bool inPrepare = false, requestHadOldLatency = false;
+    host.onLatencyChange = [&] {
+        // setLatencySamples during prepare may itself call this listener.
+        if (inPrepare) return;
+        ++requests;
+        requestHadOldLatency = p->getLatencySamples() == base && p->tuningActivationPending();
+
+        inPrepare = true;
+        p->releaseResources(); p->prepareToPlay(48000, 137);
+        inPrepare = false;
+    };
+    set(*p, "tuningEnabled", 1);
+    serviceTimersFor(350);
+    check(requests == 1 && requestHadOldLatency,
+        "synchronous host activation request was repeated or prematurely changed latency");
+    check(p->getLatencySamples() > base && !p->tuningActivationPending() && !p->routingRestartPending(),
+        "synchronous host listener prepare did not activate tuning");
+    const int preparedChanges = host.latencyChanges;
+    serviceTimersFor(250);
+    host.expectChanges(preparedChanges, "synchronous host prepare left a repeated activation request");
+    check(requests == 1, "synchronous host activation repeated");
 }
 void telemetryAndModulation() {
     auto p = std::make_unique<Processor>();
@@ -182,6 +335,9 @@ int main() {
         contractAndState(); std::cout << "PASS parameter contract and state migration\n";
         for (const double rate : {44100., 48000., 96000.}) for (const int channels : {1, 2}) activationAndBypass(channels, rate);
         std::cout << "PASS mono/stereo activation latency and irregular-block bypass at 44.1/48/96 kHz\n";
+        rapidActivationChanges(); std::cout << "PASS rapid tuning activation cancellation and request coalescing\n";
+        restoredActivationRequest(); std::cout << "PASS binary/text state restore activation requests\n";
+        reentrantHostActivation(); std::cout << "PASS synchronous reentrant host activation\n";
         telemetryAndModulation(); std::cout << "PASS concurrent telemetry, reset and modulation render paths\n";
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }
 }

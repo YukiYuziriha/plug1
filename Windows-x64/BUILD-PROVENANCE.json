@@ -1,20 +1,21 @@
 {
-  "base_commit_not_producing_revision": "a8e3a51855b1f4583bcbe80cf43a51973ca37979",
+  "base_commit_not_producing_revision": "f00f1c88b1645d46646df927efd1961267bfc3b2",
   "build_directory": "source/build",
   "build_exit_code": 0,
-  "build_log": "source/build/heaven-build.log",
-  "build_log_sha256": "d0724b0502329a638aa09fd3c28a981745d15e3a3936e648c9f6cb9591d85503",
-  "observed_utc": "2026-11-18T07:12:10.755249+00:00",
+  "build_log": "source/build/activation-build.log",
+  "build_log_sha256": "f3c8bebf24c22ccd947f57dcec0d47f4d9d7f724bc79ad072666475526ddf6cd",
+  "observed_utc": "2026-11-18T08:41:39.883883+00:00",
   "packaged_binaries_sha256": {
-    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "066f6c4516a2e98d8de947f27c2cda1638089d79f546382a64f761c7acc91f94",
-    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "e884258314428112760de173f480335bb4ebd1ffbb6479a526b098096cb1f92d"
+    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "6d25fe1aa9b3957737a036bde349002eca6aff6711436f939e5f56a6321e225c",
+    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "2efe9d9abc57381896e6fdd62f051f2e5c1231abc58aeac112221e8555d43416"
   },
   "source_inputs_sha256": {
-    "source/CMakeLists.txt": "5a4993d593f437e54c82307d50fbffe7d6b5b4418cbde31c144532a84d97beeb",
+    "source/CMakeLists.txt": "3dacdae1975a34d97dee0156f4d0be4f0657bc2abf24cfbc9e22e4fa12aa5638",
     "source/assets/PixelifySans.ttf": "9ba86cd010a4de309d263ceff8e8044092c9db7efda869620cb9ff1c4389e8a5",
     "source/cmake/PatchClap.cmake": "58ea27a3d5cac8ea912378c0a4a3aa89fec17f69d3a0e570a5f3cdd48f214a32",
     "source/cmake/PatchClapSidechain.cmake": "858610a9a40e777e1d1f08cc18bad19e3616d029a0a1a31834be59d1cf167619",
     "source/cmake/PatchClapTail.cmake": "e2984899d94e48a8eba9c36a58817944a2f4ddbcaf1e7afa6ac59d5d13fa4d00",
+    "source/cmake/PatchJuceLatency.cmake": "f6f993cfd65416c9bb3c44bf53faced79b56a9ae193cad7f45b90a9b54580019",
     "source/cmake/clap-ports.patch": "310ae2744c552a796474e18563ee22e15cdd1fc193bfac1a9180f6c1345eea9a",
     "source/src/AutomaticTuner.h": "cabcd1f9e96cc73ea431fca00bf04fe6328d23c55e349649ad0a8b35e4ed434b",
     "source/src/ChoiceDropdown.h": "cf6d419dc93d39f8296d84f9d91e759b234e6a8f049f49bd63068c7f67f96b3c",
@@ -44,8 +45,8 @@
     "source/src/ParameterKnob.h": "6a6bf3da3d0f83a8b209aba6970ec319c10f41f23df5728ce83af471152070ac",
     "source/src/PluginEditor.cpp": "be075a92c29b9c369e870a2134e2b975579f0326b98bdba78d6d90bccd730c90",
     "source/src/PluginEditor.h": "5aadddd502e0c261ff7e23ecdab34a9e73d39b716c618e8eee1549b54bcec1b0",
-    "source/src/PluginProcessor.cpp": "d7875a1c0f470e92462b9fac8d40d4e2de309ce61e5bb974235b35552271c2b1",
-    "source/src/PluginProcessor.h": "d3df85a5b78155afc35482c6dc6ca39f34373fbaca43e91b7164043ec3ea11f9",
+    "source/src/PluginProcessor.cpp": "60c929ea1903c893c697b74df861df23c3a11ef8092530da90cf5255588cdd66",
+    "source/src/PluginProcessor.h": "cd15bf17ff1815a7f3559a77d4dfc7f82ac538021a870a76faeb611e113bd2ea",
     "source/src/PresetManager.h": "bae228b3a2fa2b40557273212e1a35cbc316be4928c1f00edac8d37b002ef8d8",
     "source/src/ProcessorRoutingState.h": "ace17e64753d1f2975ebc5e53908c715771eb762bb58f517b97dede9c2a6dc18",
     "source/src/ReactiveFxVisualModels.h": "b3512340e0e4938da45fd56d9469d69422dd9a20e6032c059e637881cab36712",
@@ -57,7 +58,7 @@
     "source/src/SpectralMorphVisual.h": "706c3c0800eaa091a65aae30d6c8ef00929c58ed16c00a788e920c878e2c6405",
     "source/src/ToneEffectPanel.h": "3d92c51c4c3846283c705fed91583ce15d455f0d97567e137508a15ea4f2ecfd",
     "source/src/ToneEqGraph.h": "868a0e9d38d2c6618f21dc8ccaae2cf760ce25d23c21b5ea88c5fb3ef3582a47",
-    "source/src/TuningPanel.h": "26ecf655ef6f0211f2c30ab4156470993aca40feb1b84f2596238d422534a432",
+    "source/src/TuningPanel.h": "1459ba034840d95fb145f48ae127d30186dc59fb91ba595f4de9995a86a147b2",
     "source/src/TuningSettings.h": "1f682cec153f58d6fa64b1586a785014114914b01c3d4baa0b10892e66eb9b2f",
     "source/src/UiControlPolicy.h": "bd585b7c6ef6f37a4d2a39e2bcbf8e6cecc405d0486a2a7ceb14d346d52fefd3",
     "source/src/UtilityEffectPanel.h": "ae32710b44cdbca9c5b8cba64ffce798a3ee9a7ad04689d91436ac4cd89e6ffc",
@@ -65,12 +66,12 @@
     "source/src/UtilityTelemetry.h": "b70563fb40618aa29bfbc1dd02fd692c9dbb5c9ecb96d035ec94d53a18413716",
     "source/src/VisualTheme.h": "f99d5c989d0a54f3b114c9926cee8efb9e075c2b0738e24b8e5cd70b86fca35b",
     "source/src/VitalFilterDSP.h": "def897917262084098bd88394e37d6b5104fe41f448456e783d392f0af9c27d2",
-    "source/src/VocalEngine.cpp": "6f25f1ea5bef073e5540248cc281d1d178b71a34bfe3573de17e0acaac097b75",
-    "source/src/VocalEngine.h": "f56368e974425815872f17561f2f039c49b60a64553700d72d30236f646ed3ac",
+    "source/src/VocalEngine.cpp": "260f77ffdb3a588fd7e93c7549559fef6adf7c07992abc02106ce984349dce0f",
+    "source/src/VocalEngine.h": "21809414f808b136309a91abfb9f1977ecfd40f3c912317028844d197dd5daa5",
     "source/src/VoiceBridge.h": "99814f40c0094008b9e0ca374968d6be12d3404eb343eef98ad00e1d69351f98",
     "source/src/VoiceMonitor.h": "a241628eb217394738f71fbfe740959b5174bd79378d60c86296f72801ee97fa",
     "source/src/Waveshaper.h": "2e98576a2e9bb38864a7675629fce399b51cf3166daa840cb6fe385b17f47050"
   },
   "source_mode": "uncommitted-working-tree",
-  "version": "1.12.0"
+  "version": "1.12.1"
 }

@@ -47,6 +47,41 @@ void revealNavigation() {
     require(!tuning->isVisible(), "Stack parameter reveal left Tuning selected");
     editor.removeFromDesktop();
 }
+void tuningRoutingStatusIsolation() {
+    using namespace vocalstack;
+    auto owner = std::make_unique<Processor>();
+    auto* enabled = owner->parameters.getParameter("tuningEnabled");
+    require(enabled != nullptr, "Missing tuning enable parameter");
+    enabled->setValueNotifyingHost(enabled->convertTo0to1(1));
+    owner->prepareToPlay(48000, 256);
+    const int latency = owner->getLatencySamples();
+    TuningPanel panel(*owner);
+    juce::Label* status = nullptr;
+    for (auto* child : panel.getChildren())
+        if (child->getComponentID() == "tuningPitchReadout") status = dynamic_cast<juce::Label*>(child);
+    require(status != nullptr, "Missing tuning status readout");
+    Graph graph{{{1, NodeType::lead}, {100, NodeType::spectralMorph}, {13, NodeType::output}},
+                {{1, 100, 0}, {100, 13, 0}}};
+    juce::String error;
+    require(owner->setRoutingGraph(graph, error) && owner->routingRestartPending(),
+            "Morph routing fixture did not create a pending topology");
+    panel.sync(false);
+    require(!owner->tuningActivationPending() && owner->getLatencySamples() == latency,
+            "Routing draft altered tuning activation or running latency");
+    require(status->getText().startsWith("ACTIVE  /  Waiting for a voiced signal")
+            && !status->getText().containsIgnoreCase("restart")
+            && !status->getText().containsIgnoreCase("reactivation"),
+            "Routing restart warning leaked into active tuning status");
+    enabled->setValueNotifyingHost(enabled->convertTo0to1(0));
+    panel.sync(false);
+    require(owner->routingRestartPending() && !owner->tuningActivationPending(),
+            "Tuning off cleared pending routing or requested tuning activation");
+    require(status->getText().startsWith("TUNING OFF")
+            && !status->getText().containsIgnoreCase("restart")
+            && !status->getText().containsIgnoreCase("reactivation"),
+            "Routing restart warning leaked into disabled tuning status");
+    owner->releaseResources();
+}
 void nestedReveal() {
     juce::Component root, outerContent, innerContent, target;
     juce::Viewport outer, inner;
@@ -84,6 +119,7 @@ int main() {
     run("Crossover coherent effective state", [] { vocalstack::EffectiveUiArchitectureTests::crossoverEffectiveSnapshot(); });
     run("Tuning base edits and operational state", [] { vocalstack::EffectiveUiArchitectureTests::tuningBaseAndOperationalState(); });
     run("Formants assignment does not write base", [] { vocalstack::EffectiveUiArchitectureTests::preserveFormantsAssignDoesNotWriteBase(); });
+    run("Tuning status excludes pending routing", tuningRoutingStatusIsolation);
     run("Page-aware reveal", revealNavigation);
     run("Nested viewport reveal", nestedReveal);
     std::cout << "UI architecture failures=" << failures << '\n';

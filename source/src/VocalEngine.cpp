@@ -115,12 +115,17 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     for (auto& voice : voices)
         voice.stretch.configure(1, window, hop);
     latencySamples = lead.inputLatency() + lead.outputLatency();
-    tuningLatencySamples = 0;
-    if (settings.tuningEnabled) {
+    // Tuning still supports only 8–192 kHz. Preallocate at supported rates even
+    // when OFF, without restricting the legacy OFF engine's sample-rate range.
+    // Enabled unsupported rates retain tuner.prepare's existing rejection.
+    int maximumTuningLatency = 0;
+    if (settings.tuningEnabled || (rate >= 8000 && rate <= 192000)) {
         tuner.prepare(rate, quantum);
-        tuningLatencySamples = tuner.latency();
+        maximumTuningLatency = tuner.latency();
     }
-    for (auto& delay : tuningCleanDelay) delay.prepare(tuningLatencySamples + 2);
+    // Storage capacity is independent of the latency latched for this prepare.
+    tuningLatencySamples = settings.tuningEnabled ? maximumTuningLatency : 0;
+    for (auto& delay : tuningCleanDelay) delay.prepare(maximumTuningLatency + 2);
     // 100 ms user delay plus up to 14 ms of Human motion.
     maxDoubleDelay = static_cast<int>(std::ceil(rate * 0.115));
     for (auto& voice : voices) {
@@ -129,12 +134,12 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     }
     for (auto* delays : {&dryDelay, &levelDelay, &auxiliaryDelay})
         for (auto& delay : *delays)
-            delay.prepare(latencySamples + tuningLatencySamples + 2);
+            delay.prepare(latencySamples + maximumTuningLatency + 2);
     for (size_t channel = 0; channel < 2; ++channel) {
         leadHarmony[channel].prepare(rate, latencySamples);
         leadLocalDelay[channel].prepare(maxDoubleDelay + 2);
     }
-    articulationDelay.prepare(latencySamples + tuningLatencySamples + maxDoubleDelay + 2);
+    articulationDelay.prepare(latencySamples + maximumTuningLatency + maxDoubleDelay + 2);
 
     parameterStep = coefficient(0.018);
     rmsStep = coefficient(0.043);
@@ -187,7 +192,7 @@ void VocalEngine::reset(const Settings& requested) {
     for (size_t index = 0; index < voices.size(); ++index) {
         auto& voice = voices[index];
         voice.controls = bounded(initialVoices[index]);
-        voice.tuningBlend = voice.controls.tuneMix;
+        voice.tuningBlend = bounded(settings.voiceSettings[index]).tuneMix;
         voice.presence = voice.controls.present && voice.controls.enabled ? 1.0f : 0.0f;
         voice.running = voice.controls.present;
         voice.harmony.reset();
@@ -473,7 +478,8 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         }
         for (int i = 0; i < count; ++i) {
             if (tuningLatencySamples) {
-                voice.tuningBlend = mix(voice.tuningBlend, bounded(chunkTargets[index]).tuneMix, parameterStep);
+                // Tune Mix is independent of Basic/Advanced voice geometry.
+                voice.tuningBlend = mix(voice.tuningBlend, bounded(targets.voiceSettings[index]).tuneMix, parameterStep);
                 const int right = inChannels == 2 ? 1 : 0;
                 const float clean = 0.5f * (cleanInput[0][i] + cleanInput[right][i]);
                 const float tuned = 0.5f * (tunedInput[0][i] + tunedInput[right][i]);
