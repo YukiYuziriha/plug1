@@ -488,6 +488,8 @@ void compactCards() {
         std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
         editor->setSize(1280, 800);
         vocalstack::guiTestDisplay::attach(*editor);
+        // Native hit-testing must target our fixture, not an overlapping host/editor window.
+        editor->toFront(false);
         auto& stack = component<vocalstack::DoublerPanel>(*editor);
         for (const auto* prefix : {"lead", "voice1", "voice2"}) {
             auto* card = ui::find<vocalstack::VoiceControls>(stack, [&](auto& c) {
@@ -501,9 +503,12 @@ void compactCards() {
                 expect(slider.getSliderStyle() == juce::Slider::LinearHorizontal,
                        "Compact Lead/voice cards must use horizontal sliders");
                 auto& control = *slider.getParentComponent();
-                expect(control.getBounds() == juce::Rectangle<int>(8 + int(i % 2) * 78, 52 + int(i / 2) * 54, 78, 54),
-                       "Compact card must use two columns and four fixed-height rows");
+                expect(control.getBounds() == juce::Rectangle<int>(8 + int(i % 2) * 78, 52 + int(i / 2) * 43, 78, 43),
+                       "Compact card must reserve a full-width Tune Mix below four two-column rows");
             }
+            auto& tuneMix = ui::slider(*card, juce::String(prefix) + "TuneMix");
+            expect(tuneMix.getParentComponent()->getBounds() == juce::Rectangle<int>(8, 224, 156, 44),
+                   "Compact Tune Mix must fit below the existing voice controls");
         }
         auto& lead = ui::slider(stack, "leadPitch");
         peerClick(*editor, *lead.getParentComponent()->getParentComponent(), {20, 15});

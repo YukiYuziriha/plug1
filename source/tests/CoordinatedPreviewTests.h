@@ -55,7 +55,7 @@ inline void motionState() {
     juce::MemoryBlock state; owner->getStateInformation(state);
     auto copy = std::make_unique<Processor>(); copy->setStateInformation(state.getData(), int(state.getSize()));
     ui::near(float(copy->getMotionPercent()), 17.25f, "Binary Motion recall");
-    ui::require(copy->getParameters().size() == 2357, "Motion must not append a host parameter");
+    ui::require(copy->getParameters().size() == 2378, "Motion must not append a host parameter");
     auto legacy = juce::parseXML(owner->settingsText()); legacy->removeAttribute("motionPercent");
     ui::require(copy->pasteSettings(legacy->toString()), "Legacy state restore");
     ui::near(float(copy->getMotionPercent()), 3, "Missing Motion legacy default");

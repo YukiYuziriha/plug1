@@ -41,13 +41,7 @@ void connectMainBusUndo(MainBusFxRackPanel& rack, Routing& routing) {
 }
 
 void leaveKeyboardToHost(Component& component) {
-    // Numeric entry owns keys only while its transient TextEditor is open.
-    if (dynamic_cast<TextEditor*>(&component) != nullptr)
-        return;
-    component.setWantsKeyboardFocus(false);
-    component.setMouseClickGrabsKeyboardFocus(false);
-    for (int i = 0; i < component.getNumChildComponents(); ++i)
-        leaveKeyboardToHost(*component.getChildComponent(i));
+    applyPassiveFocusPolicy(component);
 }
 
 void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
@@ -59,7 +53,7 @@ void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
 }
 
 Editor::Editor(Processor& processor)
-    : AudioProcessorEditor(processor), owner(processor), presets(processor), globalMix(processor, "globalMix", "Mix", "%"), routingPanel(processor),
+    : AudioProcessorEditor(processor), owner(processor), presets(processor), globalMix(processor, "globalMix", "Mix", "%"), routingPanel(processor), tuningPanel(processor),
       advancedPanel(processor), mainBusFxRack(processor) {
     setLookAndFeel(&style);
     getProperties().set(vocalstackAnimationTimeProperty, 0.0);
@@ -163,7 +157,7 @@ Editor::Editor(Processor& processor)
         feedbackTicks = 48;
     };
     paste.setButtonText("Paste");
-    paste.setTooltip("Load Vocal Stack settings from the clipboard");
+    paste.setTooltip("Load HEAVEN settings from the clipboard");
     paste.onClick = [this] {
         paste.setButtonText(owner.pasteSettings(SystemClipboard::getTextFromClipboard()) ? "Pasted" : "Invalid");
         feedbackTicks = 48;
@@ -171,12 +165,17 @@ Editor::Editor(Processor& processor)
     // Stack controls are always visible; legacy activation/state remains host-compatible.
     stackTab.setButtonText("Stack");
     stackTab.setTooltip("Show the vocal stack controls");
-    stackTab.onClick = [this] { routingVisible = false; syncDrawer(); };
+    stackTab.onClick = [this] { routingVisible = false; tuningVisible = false; syncDrawer(); };
     routingTab.setButtonText("Routing");
     routingTab.setTooltip("Show the audio graph and independent FX inspector");
     routingTab.onClick = [this] { openRouting(); };
     layoutCanvas.addAndMakeVisible(stackTab);
     layoutCanvas.addAndMakeVisible(routingTab);
+    tuningTab.setButtonText("Tuning");
+    tuningTab.setTooltip("Show shared pitch correction settings and live pitch telemetry");
+    tuningTab.onClick = [this] { routingVisible = false; tuningVisible = true; stackViewport.setViewPosition(0, 0); syncDrawer(); };
+    layoutCanvas.addAndMakeVisible(tuningTab);
+    layoutCanvas.addChildComponent(tuningPanel);
     addChildComponent(routingPanel);
 
     layoutCanvas.addChildComponent(advancedPanel);
@@ -222,6 +221,7 @@ Editor::~Editor() {
 }
 
 void Editor::openRouting() {
+    tuningVisible = false;
     routingVisible = true;
     syncDrawer();
     if (!routingOpened) {
@@ -253,6 +253,7 @@ void Editor::applyTheme() {
     advancedPanel.setNeon(style.flash);
     mainBusFxRack.setNeon(style.flash);
     routingPanel.setNeon(style.flash);
+    tuningPanel.setNeon(style.flash);
     const auto foreground = palette.text;
     const auto muted = palette.muted;
     theme.setButtonText(selectedTheme == Theme::spectral ? "SKIN / SPECTRAL"
@@ -271,7 +272,7 @@ void Editor::applyTheme() {
                     ? palette.accent.withAlpha(0.3f) : rgb(style.flash ? 0x34496a : 0x4b5175));
         knob.repaint();
     }
-    for (auto* button : {&theme, &reset, &copy, &paste, &stackTab, &routingTab}) {
+    for (auto* button : {&theme, &reset, &copy, &paste, &stackTab, &routingTab, &tuningTab}) {
         button->setColour(TextButton::textColourOffId, foreground);
         button->setColour(TextButton::textColourOnId, rgb(0x17171c));
         button->repaint();
@@ -295,7 +296,8 @@ void Editor::resized() {
     stackViewport.setBounds((getWidth() - viewportWidth) / 2, 0, viewportWidth, contentHeight);
     stackViewport.setScrollBarsShown(!routingVisible, false);
     layoutCanvas.setTransform(AffineTransform());
-    layoutCanvas.setSize(routingVisible ? getWidth() : editorWidth, routingVisible ? contentHeight : stackCanvasHeight);
+    layoutCanvas.setSize(routingVisible ? getWidth() : editorWidth,
+                         routingVisible ? contentHeight : tuningVisible ? 830 : stackCanvasHeight);
     if (routingVisible) stackViewport.setViewPosition(0, 0);
     constexpr std::array<int, 6> centers{70, 183, 285, 387, 500, 614};
     for (size_t i = 0; i < knobs.size(); ++i) {
@@ -315,32 +317,37 @@ void Editor::resized() {
     meterPanel.setBounds(678, 76, 244, 246);
 
     motion.setBounds(228, 14, 146, 40);
-    stackTab.setBounds(382, 26, 70, 26);
-    routingTab.setBounds(458, 26, 78, 26);
+    stackTab.setBounds(382, 26, 64, 26);
+    routingTab.setBounds(452, 26, 72, 26);
+    tuningTab.setBounds(530, 26, 64, 26);
+    tuningPanel.setBounds(18, 76, 904, 730);
     routingPanel.setBounds(18, 100, jmax(0, getWidth() - 36), jmax(0, contentHeight - 118));
-    assignmentBanner.setBounds(24, routingVisible ? 70 : 588 + rackExtraHeight, routingVisible ? jmax(0, getWidth() - 118) : 760, 22);
-    endAssignment.setBounds(routingVisible ? getWidth() - 88 : 790, routingVisible ? 70 : 588 + rackExtraHeight, 64, 22);
+    const int assignmentY = routingVisible ? 70 : tuningVisible ? 808 : 588 + rackExtraHeight;
+    assignmentBanner.setBounds(24, assignmentY, routingVisible ? jmax(0, getWidth() - 118) : 760, 22);
+    endAssignment.setBounds(routingVisible ? getWidth() - 88 : 790, assignmentY, 64, 22);
     mainBusFxRack.setBounds(18, 344, 904, MainBusFxRackPanel::preferredHeight);
     advancedPanel.setBounds(18, stackPanelY, 904, stackPanelHeight);
     if (!restoringWindow) rememberWindow();
 }
 
 void Editor::syncDrawer() {
-
-    for (auto& knob : knobs) knob.setVisible(!routingVisible);
-    for (auto& label : labels) label.setVisible(!routingVisible);
+    const bool stackVisible = !routingVisible && !tuningVisible;
+    for (auto& knob : knobs) knob.setVisible(stackVisible);
+    for (auto& label : labels) label.setVisible(stackVisible);
     for (size_t i = 0; i < switches.size() - 1; ++i)
-        switches[i].setVisible(!routingVisible);
+        switches[i].setVisible(stackVisible);
     for (auto* button : {&theme, &reset, &copy, &paste})
-        button->setVisible(!routingVisible);
-    meterPanel.setVisible(!routingVisible);
-    mainBusFxRack.setVisible(!routingVisible);
-    advancedPanel.setVisible(!routingVisible);
+        button->setVisible(stackVisible || (tuningVisible && button == &theme));
+    meterPanel.setVisible(stackVisible);
+    mainBusFxRack.setVisible(stackVisible);
+    advancedPanel.setVisible(stackVisible);
+    tuningPanel.setVisible(tuningVisible);
     routingPanel.setVisible(routingVisible);
-    stackTab.setToggleState(!routingVisible, dontSendNotification);
+    stackTab.setToggleState(stackVisible, dontSendNotification);
+    tuningTab.setToggleState(tuningVisible, dontSendNotification);
     routingTab.setToggleState(routingVisible, dontSendNotification);
 
-    if (!routingVisible) {
+    if (stackVisible) {
         const auto tree = owner.getRoutingLayout();
         selectedVoiceSlot = jlimit(-1, 7, int(tree.getProperty("selectedVoiceSlot", selectedVoiceSlot)));
         advancedPanel.selectVoice(selectedVoiceSlot, true, false);
@@ -393,9 +400,10 @@ void Editor::timerCallback() {
     } else {
         decorativeMotion.pause();
     }
-    if (advancedPanel.isVisible() != !routingVisible)
+    if (advancedPanel.isVisible() != (!routingVisible && !tuningVisible))
         syncDrawer();
     advancedPanel.sync();
+    tuningPanel.sync();
     if (themeFromInt(owner.getSkin()) != componentTheme(*this))
         applyTheme();
     if (feedbackTicks > 0 && --feedbackTicks == 0) {
@@ -432,7 +440,13 @@ void Editor::revealParameter(const String& id) {
     auto* target = find(find, layoutCanvas);
     if (target == nullptr) return;
     routingVisible = false;
+    tuningVisible = &tuningPanel == target || tuningPanel.isParentOf(target);
     syncDrawer();
+    if (mainBusFxRack.isParentOf(target))
+        target = mainBusFxRack.revealParameter(id);
+    if (target == nullptr) return;
+    revealThroughViewports(*target);
+    if (!target->isShowing()) return;
     revealBubble.toFront(false);
     AttributedString text;
     text.append("Target: " + (target->getName().isNotEmpty() ? target->getName() : id),
@@ -469,10 +483,11 @@ void Editor::drawDevice(Graphics& g) {
         rgb(0x373a37), themePalette(*this).accent, fluidAnimationSeconds(*this), .45f);
     g.setColour(rgb(0xf5a24b));
     g.fillRect(27.0f, 25.0f, 4.0f, 25.0f);
-    text(g, "Vocal Stack", {41, 20, 168, 32}, rgb(0xf4f4ea), 22.0f, true);
+    text(g, "HEAVEN", {41, 17, 168, 27}, rgb(0xf4f4ea), 23.0f, true);
+        text(g, "by lil grass block", {41, 43, 168, 16}, rgb(0xf4f4ea), 12.0f);
 
 
-    if (routingVisible)
+    if (routingVisible || tuningVisible)
         return;
 
     plateSurround.paint(g, {14, 72, 656, 222}, rgb(0x1c1f1e),
@@ -516,10 +531,11 @@ void Editor::drawFlash(Graphics& g) {
     g.drawRect(35, 22, 32, 32);
     for (int x = 40; x <= 52; x += 6)
         g.drawLine(static_cast<float>(x), 46.0f, static_cast<float>(x + 8), 30.0f, 2.3f);
-    text(g, "VOCAL STACK", {78, 20, 142, 30}, rgb(nightText), 22.0f, true);
+    text(g, "HEAVEN", {78, 17, 142, 27}, rgb(nightText), 23.0f, true);
+        text(g, "by lil grass block", {78, 43, 142, 16}, rgb(nightText), 12.0f);
 
 
-    if (routingVisible)
+    if (routingVisible || tuningVisible)
         return;
 
     for (size_t i = 0; i < controlPlates.size(); ++i) {
@@ -557,9 +573,10 @@ void Editor::drawSpectral(Graphics& g) {
         p.panel, p.accent, fluidAnimationSeconds(*this), .45f);
     g.setColour(p.accent);
     g.fillRect(18, 14, 3, 50);
-    text(g, "Vocal Stack", {36, 21, 168, 30}, p.text, 23.0f);
+    text(g, "HEAVEN", {36, 17, 168, 27}, p.text, 23.0f);
+        text(g, "by lil grass block", {36, 43, 168, 16}, p.text, 12.0f);
 
-    if (routingVisible) return;
+    if (routingVisible || tuningVisible) return;
     const std::array<const char*, 4> captions{
         "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
     };

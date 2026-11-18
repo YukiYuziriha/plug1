@@ -3,6 +3,7 @@
 
 #include "DoublerPanel.h"
 #include "ModulationUI.h"
+#include "UiControlPolicy.h"
 #include <functional>
 
 namespace vocalstack {
@@ -51,7 +52,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             rotary.drawRotarySlider(g, x, y, w, h, value, start, end, slider);
         }
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
-            auto* label = juce::LookAndFeel_V4::createSliderTextBox(slider);
+            auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
             label->setFont(modulationFont(10.0f));
             return label;
         }
@@ -61,7 +62,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
     struct Numeric final : juce::Component {
         juce::Label label;
         NumericStyle style;
-        juce::Slider slider;
+        PassiveNumericSlider slider;
         Numeric(const juce::String& name, double lo, double hi, double step) {
             label.setText(name, juce::dontSendNotification); label.setJustificationType(juce::Justification::centred);
             label.setFont(modulationFont(10.0f));
@@ -82,7 +83,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             slider.valueFromTextFunction = [](const juce::String& text) { return text.getDoubleValue(); };
             slider.setVelocityModeParameters(1.0, 1, 0.0, true, static_cast<juce::ModifierKeys::Flags>(juce::ModifierKeys::shiftModifier | juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::commandModifier));
             addAndMakeVisible(slider);
-            detail::passiveControl(*this);
+            applyPassiveFocusPolicy(*this);
         }
         ~Numeric() override { slider.setLookAndFeel(nullptr); }
                 void resized() override { auto a = getLocalBounds(); label.setBounds(a.removeFromBottom(16)); slider.setBounds(a); }
@@ -130,7 +131,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             remove.onClick = [this] { parent.editAssignment(target, true, false); };
             reveal.setButtonText("Reveal"); addAndMakeVisible(reveal);
             reveal.onClick = [this] { if (parent.onReveal) parent.onReveal(target); };
-            detail::passiveControl(*this);
+            applyPassiveFocusPolicy(*this);
         }
         ~AssignmentRow() override { amount.setLookAndFeel(nullptr); }
         void setNeon(bool neon) {
@@ -157,7 +158,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
         juce::String target;
         juce::Label name;
         modulationui::RotaryStyle style;
-        juce::Slider amount;
+        PassiveNumericSlider amount;
         juce::TextButton enabled, remove, reveal;
     };
 public:
@@ -206,7 +207,7 @@ public:
         contentViewport.setViewedComponent(&content, false);
         contentViewport.setScrollBarsShown(true, true);
         juce::Component::addAndMakeVisible(contentViewport);
-        detail::passiveControl(*this); startTimerHz(20);
+        applyPassiveFocusPolicy(*this); startTimerHz(20);
     }
     ~ModulationPanel() override {
         setLookAndFeel(nullptr);
@@ -233,7 +234,7 @@ public:
         for (auto* c : {&rate, &division, &phase, &depth, &shape, &smooth}) {
             c->label.setColour(juce::Label::textColourId, p.text);
             modulationui::styleRotary(c->slider, neon);
-            detail::passiveControl(c->slider);
+            applyPassiveFocusPolicy(c->slider);
         }
         for (auto& row : rows) row->setNeon(neon);
         for (auto* b : {&controlsTab, &assignmentsTab, &assign, &remove, &sync, &bipolar})
@@ -384,15 +385,15 @@ private:
                             juce::ComboBox::lookAndFeelChanged();
                             for (auto* child : getChildren())
                                 if (auto* label = dynamic_cast<juce::Label*>(child)) label->setFont(modulationFont(10.0f));
-                            detail::passiveControl(*this);
+                            applyPassiveFocusPolicy(*this);
                         }
         };
         PassiveCombo waveform, retrigger, divisions;
     juce::Component content;
-    juce::Viewport contentViewport;
+    PassiveViewport contentViewport;
     juce::Label title, message;
     juce::Component rowsArea;
-    juce::Viewport rowsViewport;
+    PassiveViewport rowsViewport;
     std::vector<std::unique_ptr<AssignmentRow>> rows;
 };
 } // namespace vocalstack

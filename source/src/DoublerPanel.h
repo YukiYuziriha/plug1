@@ -10,10 +10,7 @@
 namespace vocalstack {
 namespace detail {
 inline void passiveControl(juce::Component& component) {
-    if (dynamic_cast<juce::TextEditor*>(&component) != nullptr) return;
-    component.setWantsKeyboardFocus(false);
-    component.setMouseClickGrabsKeyboardFocus(false);
-    for (auto* child : component.getChildren()) passiveControl(*child);
+    applyPassiveFocusPolicy(component);
 }
 
 // Signed tracks start at the actual zero value (gain is not symmetric).
@@ -100,7 +97,8 @@ class VoiceControls final : public juce::Component {
     public:
         enum class ControlMode { knobs, stackSliders };
         VoiceControls(Processor& owner, int index, ControlMode mode = ControlMode::knobs)
-            : voiceSlot(index), controlMode(mode), pitch(owner, index < 0 ? "leadPitch" : voicePitchParameterId(size_t(index)), "PITCH", "st") {
+            : voiceSlot(index), controlMode(mode), pitch(owner, index < 0 ? "leadPitch" : voicePitchParameterId(size_t(index)), "PITCH", "st"),
+              tuneMix(owner, index < 0 ? "leadTuneMix" : "voice" + juce::String(index + 1) + "TuneMix", "Tune Mix") {
             jassert(index >= -1 && index < 8);
             setComponentID(index < 0 ? "leadCard" : "voice" + juce::String(index + 1) + "Card");
             const auto parameterId = [index](size_t field) -> juce::String {
@@ -122,6 +120,12 @@ class VoiceControls final : public juce::Component {
                 fields[f] = std::make_unique<ParameterKnob>(owner, parameterId(f + 1), names[f], units[f]);
                 addAndMakeVisible(*fields[f]);
             }
+            tuneMix.setLinear(true);
+            tuneMix.slider.textFromValueFunction = [](double v) { return juce::String(v * 100, 0) + " %"; };
+            tuneMix.slider.valueFromTextFunction = [](const juce::String& s) { return s.getDoubleValue() / 100.; };
+            tuneMix.slider.updateText();
+            tuneMix.slider.setTooltip("Clean Lead / tuned Lead blend before this voice's processing. Retained when tuning is off.");
+            addAndMakeVisible(tuneMix);
             pitch.setLinear(controlMode == ControlMode::stackSliders);
             for (auto& field : fields) field->setLinear(controlMode == ControlMode::stackSliders);
             fields[1]->slider.setTooltip("L / C / R; effective spread also includes main Width");
@@ -157,10 +161,18 @@ class VoiceControls final : public juce::Component {
             const int columns = compact ? 2 : 4;
             if (compact) area.removeFromTop(14);
             const int width = area.getWidth() / columns;
-            const int height = compact && controlMode == ControlMode::stackSliders ? 54 : 104;
-            for (size_t i = 0; i < controls.size(); ++i)
-                controls[i]->setBounds(area.getX() + int(i % size_t(columns)) * width,
+            const int rows = 8 / columns;
+            const int preferredHeight = compact && controlMode == ControlMode::stackSliders ? 44 : 104;
+            const int height = juce::jmin(preferredHeight, juce::jmax(1, (area.getHeight() - 44) / rows));
+            for (size_t i = 0; i < controls.size(); ++i) {
+                auto& control = *controls[i];
+                control.setBounds(area.getX() + int(i % size_t(columns)) * width,
                     area.getY() + int(i / size_t(columns)) * height, width, height);
+                // Reclaim label padding, not the slider's track/text-entry area.
+                if (compact && controlMode == ControlMode::stackSliders) layoutMixRow(control);
+            }
+            tuneMix.setBounds(area.getX(), area.getY() + rows * height, area.getWidth(), 44);
+            layoutMixRow(tuneMix);
         }
 
         void paint(juce::Graphics& g) override {
@@ -196,18 +208,26 @@ class VoiceControls final : public juce::Component {
                 button->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
             }
             pitch.setNeon(neon);
+            tuneMix.setNeon(neon);
             for (auto& field : fields) field->setNeon(neon);
             repaint();
         }
         std::function<void()> onSelect;
     private:
+        static void layoutMixRow(ParameterKnob& control) {
+            auto row = control.getLocalBounds();
+            const auto caption = row.removeFromBottom(17);
+            for (auto* child : control.getChildren())
+                if (auto* label = dynamic_cast<juce::Label*>(child)) label->setBounds(caption);
+            control.slider.setBounds(row);
+        }
         FluidBackground cardMaterial;
         const int voiceSlot;
         const ControlMode controlMode;
         bool neon = false, selected = false, compact = false;
         modulationui::Button enabled;
         juce::TextButton remove;
-        ParameterKnob pitch;
+        ParameterKnob pitch, tuneMix;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> link;
         std::array<std::unique_ptr<ParameterKnob>, 7> fields;
 };

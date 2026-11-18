@@ -1,39 +1,49 @@
-# Getting Started
+# HEAVEN by lil grass block — Getting Started
 
 [Overview](../README.md) · [Build from source](Building.md) ·
 [Detailed manual/history](Manual-and-History.md)
 
 ## Install on Windows x64
 
-Vocal Stack v1.11.0 is an audio effect supplied as CLAP and VST3. Choose the
+HEAVEN by lil grass block is an audio effect supplied as CLAP and VST3. Choose the
 format your host supports; installing both is optional. There is no tracked
 installer. Building from source is not required to use the supplied binaries.
 
-1. Download the repository using **Code → Download ZIP** on
+The rename from **VocalStack** (formerly displayed as **Vocal Stack**) does not
+create a new plugin ID. Internal IDs, preset folders and state extensions remain
+unchanged for compatibility with existing sessions and presets.
+
+The planned 1.12.0 packages are `HEAVEN-1.12.0-Windows-x64.zip` and
+`HEAVEN-1.12.0-corresponding-source.zip`. Check the
+[delivery status](Release-1.12.0-Validation.md) before assuming the renamed
+binaries are ready; older packages retain their historical names.
+
+1. Once published, download and extract `HEAVEN-1.12.0-Windows-x64.zip`, or
+   download the repository using **Code → Download ZIP** on
    [GitHub](https://github.com/YukiYuziriha/plug1), then extract it, or clone it.
-   For CLAP alone, the [tracked binary](https://github.com/YukiYuziriha/plug1/raw/refs/heads/main/Windows-x64/CLAP/Vocal%20Stack.clap)
-   is also a direct download.
-2. Close hosts that currently have Vocal Stack loaded. Do not force replacement
+   The paths below describe the planned renamed repository artifacts.
+2. Close hosts that currently have HEAVEN by lil grass block or Vocal Stack loaded. Do not force replacement
    of a locked plugin or terminate the host to install it.
 3. Copy the appropriate item:
 
    | Format | From the repository | Per-user destination |
    | --- | --- | --- |
-   | CLAP | `Windows-x64/CLAP/Vocal Stack.clap` | `%LOCALAPPDATA%\Programs\Common\CLAP\` |
-   | VST3 | **Entire** `Windows-x64/VST3/Vocal Stack.vst3/` folder | `%LOCALAPPDATA%\Programs\Common\VST3\` |
+   | CLAP | `Windows-x64/CLAP/HEAVEN by lil grass block.clap` | `%LOCALAPPDATA%\Programs\Common\CLAP\` |
+   | VST3 | **Entire** `Windows-x64/VST3/HEAVEN by lil grass block.vst3/` folder | `%LOCALAPPDATA%\Programs\Common\VST3\` |
 
    System-wide alternatives are `C:\Program Files\Common Files\CLAP\` and
    `C:\Program Files\Common Files\VST3\`; writing there may require administrator
    permission. The VST3 inner module alone is not a complete bundle.
-4. Keep `Windows-x64/LICENSE.txt`, `Windows-x64/PixelifySans-OFL.txt` and the
+4. Keep `Windows-x64/LICENSE.txt`, `Windows-x64/COPYING.AGPLv3`,
+   `Windows-x64/SOURCE.md`, `Windows-x64/PixelifySans-OFL.txt` and the
    `Windows-x64/ThirdParty/` notices with your distribution/copy.
-5. Open the host, check its plugin search folders, rescan, and insert **Vocal
-   Stack** on an audio track. In Bitwig, check **Settings → Locations → Plug-in
+5. Open the host, check its plugin search folders, rescan, and insert **HEAVEN by lil grass block** on an audio track. In Bitwig, check **Settings → Locations → Plug-in
    Locations** if it is missing. These are installation pointers, not a claim of
    completed real-DAW validation.
 
-The tracked binaries are v1.11.0. The release record includes their
-[SHA256 hashes and automated module results](Release-1.11.0-Validation.md).
+Check `Windows-x64/SOURCE.md` for the tracked binaries' version and provenance.
+Upcoming 1.12.0 adds [Tuning](Tuning.md); see its
+[delivery status](Release-1.12.0-Validation.md) before assuming packages are ready.
 
 ## Start with Stack
 
@@ -70,6 +80,21 @@ and disconnects it without renumbering other voices; re-adding retains its edits
 The first two generated cards cannot be removed through the UI. **Reset to Basic**
 derives a two-voice configuration from current basic controls and removes extra
 voice connections without resetting unrelated FX.
+
+## Automatic Tuning (v1.12.0)
+
+Open the themed **Tuning** tab, enable **Tuning On**, choose Key/Scale and adjust
+Correction, Retune Speed, Note Transition and Note Stability. Note buttons select
+Custom allowed notes; Preserve Formants applies envelope compensation. Module Mix
+blends aligned clean/tuned audio; each voice's Tune Mix selects how much of that
+shared blend it receives. Correction is pitch strength, not dry/wet audio mix.
+
+If **Host audio restart pending** appears, deactivate/reactivate the plugin's
+**host audio processing**, or reload it. Transport stop/start is not enough.
+At 48 kHz the basic ON-prepared path is 2688 samples, versus 1344 OFF-prepared.
+Zero retune still needs about 85 ms detector history after reset. Real-vocal
+listening remains unverified; this is not Antares equivalence. Read the
+[complete Tuning guide](Tuning.md) for timing, routing and source/license details.
 
 ## Add effects and routing
 
@@ -130,13 +155,18 @@ MAIN. It is not a vocoder/phase-transfer mode.
 
 ### Latency and RESTART PENDING
 
-Reported total latency at the rates covered by the current module checks:
+Legacy reported total latency **with Tuning OFF-prepared**, at the rates
+covered by the earlier module checks:
 
 | Sample rate | No declared Morph | With declared Morph |
 | --- | ---: | ---: |
 | 44.1 kHz | 1344 samples / 30.48 ms | 5440 samples / 123.36 ms |
 | 48 kHz | 1344 samples / 28.00 ms | 5440 samples / 113.33 ms |
 | 96 kHz | 2688 samples / 28.00 ms | 6784 samples / 70.67 ms |
+
+At 48 kHz, ON-prepared Tuning adds 1344 samples to either column: 2688 without
+Morph, 6784 with Morph. A zero wet mix does not remove the prepared reservation.
+Re-prepare with Tuning OFF to restore legacy latency.
 
 A declared Morph node reserves its additional 4096 samples even when dormant,
 bypassed or disconnected. FFT size selection does not change that reported total.

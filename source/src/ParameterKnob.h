@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "VisualTheme.h"
 #include "FluidBackground.h"
+#include "UiControlPolicy.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 #include <cstdint>
@@ -117,9 +118,40 @@ inline juce::Label* createPassiveSliderTextBox(juce::Label* originalTextBox) {
     return label.release();
 }
 
+// Numeric entry and wheel policy only: local controls must not become
+// modulation-assignment targets just to share the passive slider lifecycle.
+class PassiveNumericSlider : public juce::Slider {
+public:
+    PassiveNumericSlider() {
+        setScrollWheelEnabled(false);
+        restoreIdleFocusPolicy();
+    }
+    void setTextBoxStyle(juce::Slider::TextEntryBoxPosition position, bool readOnly, int width, int height) {
+        juce::Slider::setTextBoxStyle(position, readOnly, width, height);
+        restoreIdleFocusPolicy();
+    }
+    void setTextBoxIsEditable(bool editable) {
+        juce::Slider::setTextBoxIsEditable(editable);
+        restoreIdleFocusPolicy();
+    }
+    void lookAndFeelChanged() override {
+        juce::Slider::lookAndFeelChanged();
+        restoreIdleFocusPolicy();
+    }
+    void enablementChanged() override {
+        juce::Slider::enablementChanged();
+        restoreIdleFocusPolicy();
+    }
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+        forwardPassiveWheel(*this, event, wheel);
+    }
+protected:
+    void restoreIdleFocusPolicy() { applyPassiveFocusPolicy(*this); }
+};
+
 // Refresh from a single message-thread snapshot for the complete editor tree.
 // Ordinary gestures never take keyboard focus; only explicit numeric entry does.
-class ModulationSlider : public juce::Slider {
+class ModulationSlider : public PassiveNumericSlider {
 public:
     void bindModulation(Processor& processor, const juce::String& parameterId) {
         owner = &processor; id = parameterId;
@@ -132,20 +164,10 @@ public:
                                  | juce::ModifierKeys::commandModifier));
     }
     void setTextBoxStyle(juce::Slider::TextEntryBoxPosition position, bool readOnly, int width, int height) {
-        juce::Slider::setTextBoxStyle(position, readOnly || (bool(getProperties()["vocalstackTexturedBar"]) && !bool(getProperties()["vocalstackSeparateBarValue"])), width, height);
-        restoreIdleFocusPolicy();
+        PassiveNumericSlider::setTextBoxStyle(position, readOnly || (bool(getProperties()["vocalstackTexturedBar"]) && !bool(getProperties()["vocalstackSeparateBarValue"])), width, height);
     }
     void setTextBoxIsEditable(bool editable) {
-        juce::Slider::setTextBoxIsEditable(editable && (!bool(getProperties()["vocalstackTexturedBar"]) || bool(getProperties()["vocalstackSeparateBarValue"])));
-        restoreIdleFocusPolicy();
-    }
-    void lookAndFeelChanged() override {
-        juce::Slider::lookAndFeelChanged();
-        restoreIdleFocusPolicy();
-    }
-    void enablementChanged() override {
-        juce::Slider::enablementChanged();
-        restoreIdleFocusPolicy();
+        PassiveNumericSlider::setTextBoxIsEditable(editable && (!bool(getProperties()["vocalstackTexturedBar"]) || bool(getProperties()["vocalstackSeparateBarValue"])));
     }
     // displayedSource may be selected without being in assignment mode.
     void refreshModulation(const ModulationSnapshot& snapshot, const ModulationState& state, uint32_t displayedSource) {
@@ -228,9 +250,6 @@ public:
     void mouseDoubleClick(const juce::MouseEvent& e) override {
         if (!owner || owner->modulationAssignmentId() == 0) juce::Slider::mouseDoubleClick(e);
     }
-    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
-        forwardPassiveWheel(*this, event, wheel);
-    }
     void drawLinearModulation(juce::Graphics& g, juce::Rectangle<float> track) {
         const auto x = [&](float value) { return track.getX() + juce::jlimit(0.0f, 1.0f, value) * track.getWidth(); };
         const float base = float(valueToProportionOfLength(getValue())), y = track.getCentreY();
@@ -278,18 +297,6 @@ public:
         }
     }
 private:
-    void restoreIdleFocusPolicy() {
-        // JUCE Label::setEditable restores keyboard focusability. Keep the idle
-        // label passive without touching the deliberate transient TextEditor.
-        const auto passive = [](auto&& self, juce::Component& component) -> void {
-            if (dynamic_cast<juce::TextEditor*>(&component)) return;
-            component.setWantsKeyboardFocus(false);
-            component.setMouseClickGrabsKeyboardFocus(false);
-            component.setFocusContainerType(juce::Component::FocusContainerType::none);
-            for (auto* child : component.getChildren()) self(self, *child);
-        };
-        passive(passive, *this);
-    }
     bool displayDirty = true;
     double displayedFrame = -1;
     Processor* owner = nullptr;

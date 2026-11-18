@@ -130,7 +130,8 @@ inline void controlError(const juce::Component::SafePointer<juce::Component>& co
 inline void showDiscreteAssignmentMenu(Processor& owner, juce::Component& control) {
     const auto parameterId = control.getComponentID();
     auto* parameter = owner.parameters.getParameter(parameterId);
-    if (!parameter || parameterId == "bypass" || parameterId == "advancedOn" || parameterId.endsWith("Present")) return;
+    if (!parameter || parameterId == "bypass" || parameterId == "advancedOn"
+        || parameterId == "tuningEnabled" || parameterId.endsWith("Present")) return;
     const auto state = owner.getModulationState();
     const auto assigning = owner.modulationAssignmentId();
     const auto selected = assigning ? assigning : selectedModulator(owner);
@@ -218,7 +219,8 @@ private:
     bool eligible() const {
         if (!owner || !this->isEnabled()) return false;
         const auto id = this->getComponentID();
-        return id.isNotEmpty() && id != "bypass" && id != "advancedOn" && !id.endsWith("Present") && owner->parameters.getParameter(id);
+        return id.isNotEmpty() && id != "bypass" && id != "advancedOn"
+            && id != "tuningEnabled" && !id.endsWith("Present") && owner->parameters.getParameter(id);
     }
     Processor* owner = nullptr;
     bool suppressUp = false;

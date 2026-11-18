@@ -63,6 +63,8 @@ struct Instance {
     explicit Instance(const clap_plugin_factory_t& factory) {
         const auto* descriptor = factory.get_plugin_descriptor(&factory, 0);
         expect(descriptor && std::string_view(descriptor->id) == "audio.vocalstack.effect", "Unexpected CLAP ID");
+        expect(descriptor->name && std::string_view(descriptor->name) == "HEAVEN by lil grass block",
+               "CLAP display name was not renamed");
         plugin = factory.create_plugin(&factory, &host, descriptor->id);
         expect(plugin && plugin->init(plugin), "CLAP plugin initialization failed");
     }
@@ -150,7 +152,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
     const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
-    expect(params.count(instance.plugin) == 2357, "Expected 2087 preserved + 165 convolution/saturator parameters");
+    expect(params.count(instance.plugin) == 2378, "Expected 2357 preserved + 21 tuning parameters");
     for (uint32_t i = 0; i < params.count(instance.plugin); ++i) {
         clap_param_info_t info{};
         expect(params.get_info(instance.plugin, i, &info), "Host parameter metadata missing");
@@ -175,7 +177,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
     expect(remote.count(instance.plugin) == 2, "Expected Main and Output remote controls pages");
     clap_remote_controls_page_t page{};
     expect(remote.get(instance.plugin, 0, &page) && !page.is_for_preset &&
-           std::string_view(page.page_name) == "Vocal Stack", "Remote controls page was not advertised");
+           std::string_view(page.page_name) == "HEAVEN by lil grass block", "Remote controls page was not advertised");
     for (size_t i = 0; i < names.size(); ++i) {
         const auto info = getParameter(instance, names[i]);
         expect((info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0, "Host parameter cannot be automated");
@@ -189,7 +191,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
            "Output remote controls are mapped incorrectly");
     for (size_t i = 2; i < CLAP_REMOTE_CONTROLS_COUNT; ++i)
         expect(page.param_ids[i] == CLAP_INVALID_ID, "An unused Output remote slot is not empty");
-    std::cout << "2357 automatable parameters and two remote pages verified; original indices unchanged\n";
+    std::cout << "2378 automatable parameters and two remote pages verified; original indices unchanged\n";
 }
 
 void checkState(const clap_plugin_factory_t& factory) {

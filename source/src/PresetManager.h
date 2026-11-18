@@ -564,7 +564,7 @@ private:
         if (choosing) return;
         choosing = true;
         report(juce::Result::ok(), saving ? "Choose a new preset filename..." : "Choose the user preset folder...");
-        chooser = std::make_unique<juce::FileChooser>(saving ? "Save new Vocal Stack preset (no overwrite)" : "Choose Vocal Stack preset folder",
+        chooser = std::make_unique<juce::FileChooser>(saving ? "Save new HEAVEN preset (no overwrite)" : "Choose HEAVEN preset folder",
             saving ? manager.getFolder().getChildFile("Untitled" + juce::String(PresetManager::extension)) : manager.getFolder(),
             saving ? "*" + juce::String(PresetManager::extension) : juce::String());
         const int flags = saving ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles

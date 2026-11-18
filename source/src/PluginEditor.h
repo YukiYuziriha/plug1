@@ -7,6 +7,7 @@
 #include "MeterPanel.h"
 #include "DoublerPanel.h"
 #include "RoutingPanel.h"
+#include "TuningPanel.h"
 #include "MainBusFxRackPanel.h"
 #include "PresetManager.h"
 
@@ -89,8 +90,10 @@ private:
     juce::TextButton endAssignment;
     std::array<juce::Label, knobParameterIds.size()> labels;
     std::array<modulationui::Button, switchParameterIds.size()> switches;
-    juce::TextButton theme, reset, copy, paste, stackTab, routingTab;
+    juce::TextButton theme, reset, copy, paste, stackTab, routingTab, tuningTab;
     RoutingPanel routingPanel;
+    TuningPanel tuningPanel;
+    bool tuningVisible = false;
     bool routingVisible = false;
     bool routingOpened = false;
     DoublerPanel advancedPanel;

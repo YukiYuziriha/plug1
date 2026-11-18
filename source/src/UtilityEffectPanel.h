@@ -58,6 +58,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                         label.setMinimumHorizontalScale(1.f);
             label.setInterceptsMouseClicks(false, false); addAndMakeVisible(label);
             if (mode) {
+                combo.setModulationOwner(panel.owner);
                 combo.setComponentID(id); combo.setName(name);
                 if (panel.kind == UtilityKind::xpFilter)
                     for (size_t i = 0; i < xpFilterConfigurations.size(); ++i) combo.addItem(xpFilterConfigurations[i], int(i + 1));
@@ -165,7 +166,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         juce::Label label;
         EditSlider slider;
         modulationui::Button toggle;
-        juce::ComboBox combo;
+        modulationui::ComboBox combo;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> link;
     };
     class Visual final : public toneui::FxMonitorView, public juce::SettableTooltipClient {

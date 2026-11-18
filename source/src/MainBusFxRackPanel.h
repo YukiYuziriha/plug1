@@ -122,6 +122,18 @@ public:
                 background.paint(g, getLocalBounds(), p.panel, p.accent, fluidAnimationSeconds(*this));
         g.setColour(p.border); g.drawRect(getLocalBounds());
     }
+    juce::Component* revealParameter(const juce::String& id) {
+        for (auto& card : cards) {
+            if (auto* target = card->parameterTarget(id)) {
+                select(card->model.id);
+                if (auto* tone = dynamic_cast<ToneEffectPanel*>(target->findParentComponentOfClass<ToneEffectPanel>()))
+                    tone->revealParameter(id);
+                revealThroughViewports(*target);
+                return target;
+            }
+        }
+        return nullptr;
+    }
 private:
     static juce::String name(NodeType type) {
         if (type == NodeType::spectralMorph) return "Spectral Morph";
@@ -315,6 +327,15 @@ private:
                              active ? p.text : p.text.interpolatedWith(p.inset, .45f));
             handle.setColour(juce::TextButton::textColourOnId,
                              active ? selectedText : selectedText.interpolatedWith(p.accent, .25f));
+        }
+        juce::Component* parameterTarget(const juce::String& id) {
+            const auto find = [&](auto&& self, juce::Component& component) -> juce::Component* {
+                if (component.getComponentID() == id) return &component;
+                for (auto* child : component.getChildren())
+                    if (auto* target = self(self, *child)) return target;
+                return nullptr;
+            };
+            return find(find, *this);
         }
         void cancelEditing() { cancelGestures(*this); }
         void showSelected(bool selected) {

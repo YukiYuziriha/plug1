@@ -319,6 +319,28 @@ State::ParameterLayout Processor::makeParameters() {
     for (size_t slot = 1; slot < 16; ++slot)
         layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{stereoMonoParameterId(slot), 1},
             "FX " + juce::String(int(slot)) + " Mono Audition", false));
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"tuningEnabled", 1}, "Tuning Enabled", false));
+    const auto tuningFloat = [&](const char* id, const char* name, float lo, float hi, float initial, const char* unit = "") {
+        layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, name,
+            juce::NormalisableRange<float>{lo, hi}, initial, juce::AudioParameterFloatAttributes{}.withLabel(unit)));
+    };
+    tuningFloat("tuningMix", "Tuning Mix", 0, 1, 1);
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"tuningRoot", 1}, "Tuning Root",
+        juce::StringArray{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}, 0));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"tuningScale", 1}, "Tuning Scale",
+        juce::StringArray{"Chromatic", "Major", "NaturalMinor", "HarmonicMinor", "MajorPentatonic", "MinorPentatonic", "Custom"}, 0));
+    layout.add(std::make_unique<DiscreteAudioParameterInt>(juce::ParameterID{"tuningNotes", 1}, "Tuning Notes", 0, 4095, 4095));
+    tuningFloat("tuningReference", "Tuning Reference", 400, 480, 440, "Hz");
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"tuningRange", 1}, "Tuning Range",
+        juce::StringArray{"Wide", "Low", "Mid", "High"}, 0));
+    tuningFloat("tuningAmount", "Tuning Amount", 0, 1, 1);
+    tuningFloat("tuningRetune", "Tuning Retune", 0, 2000, 0, "ms");
+    tuningFloat("tuningTransition", "Tuning Transition", 0, 2000, 0, "ms");
+    tuningFloat("tuningStability", "Tuning Stability", 0, 1, .25f);
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"tuningFormants", 1}, "Tuning Formants", true));
+    tuningFloat("leadTuneMix", "Lead Tuning Mix", 0, 1, 1);
+    for (size_t v = 0; v < 8; ++v)
+        tuningFloat(tuningParameterIds[13 + v], ("Voice " + juce::String(int(v + 1)) + " Tuning Mix").toRawUTF8(), 0, 1, 1);
     return layout;
 }
 
@@ -383,6 +405,21 @@ Settings Processor::settingsFromValues(const std::array<float, parameterIds.size
     const auto i = leadParameterStart;
     result.leadSettings = {value(i) >= 0.5f, value(i + 1), value(i + 2), value(i + 3), value(i + 4),
         value(i + 5), value(i + 6), value(i + 7), value(i + 8), true};
+    const auto t = tuningParameterStart;
+    result.tuningEnabled = value(t) >= .5f;
+    result.tuningMix = value(t + 1);
+    result.tuning.root = int(value(t + 2));
+    result.tuning.scale = static_cast<TuningScale>(int(value(t + 3)));
+    result.tuning.allowedNotesMask = static_cast<std::uint16_t>(value(t + 4));
+    result.tuning.referenceHz = value(t + 5);
+    result.tuning.vocalRange = static_cast<TuningVocalRange>(int(value(t + 6)));
+    result.tuning.amount = value(t + 7);
+    result.tuning.retuneMs = value(t + 8);
+    result.tuning.transitionMs = value(t + 9);
+    result.tuning.stability = value(t + 10);
+    result.tuning.preserveFormants = value(t + 11) >= .5f;
+    result.leadSettings.tuneMix = value(t + 12);
+    for (size_t v = 0; v < result.voiceSettings.size(); ++v) result.voiceSettings[v].tuneMix = value(t + 13 + v);
     return result;
 }
 
@@ -414,7 +451,10 @@ void Processor::prepareToPlay(double sampleRate, int) {
     // Commit deferred lifecycle cleanup only now, never against running audio.
     if (!setRoutingGraphLocked(routingDraft, activationError)) routingError = activationError;
     preparedRoutingLatency = RoutingExecutor::graphLatency(routingActive);
-    engine.prepare(sampleRate, getMainBusNumInputChannels(), getMainBusNumOutputChannels(), settings(), preparedRoutingLatency);
+    const auto activationSettings = settings();
+    preparedTuningEnabled = activationSettings.tuningEnabled;
+    engine.prepare(sampleRate, getMainBusNumInputChannels(), getMainBusNumOutputChannels(), activationSettings, preparedRoutingLatency);
+    publishTuningTelemetry();
     const auto restored = engine.requestGraph(routingActive);
     restartPending = false;
     if (!restored) routingError = juce::String(restored.message);
@@ -442,7 +482,8 @@ void Processor::reset() {
         activeTargetMask.fill(false);
         for (auto& target : snapshotTargeted) target.store(false);
         modulationSnapshotSequence.fetch_add(1);
-        engine.reset(settings());
+        engine.reset(renderSettings(settings()));
+        publishTuningTelemetry();
         grainBridge.publish(engine.grainSnapshot());
         spectralBridge.publish(engine.spectralSnapshots());
         voiceBridge.publish(engine.voiceSnapshots());
@@ -481,7 +522,7 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
     // engine path. A newly published plan is picked up on the next host block.
     if (modulation.isIdle()) {
         engine.process(mainInput.getArrayOfReadPointers(), mainOutput.getArrayOfWritePointers(),
-            audio.getNumSamples(), settings(), hostBypass,
+            audio.getNumSamples(), renderSettings(settings()), hostBypass,
             auxiliaryChannels > 0 ? auxiliary.getArrayOfReadPointers() : nullptr, auxiliaryChannels);
         processedSamples += uint64_t(audio.getNumSamples());
         grainBridge.publish(engine.grainSnapshot());
@@ -489,6 +530,7 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
         voiceBridge.publish(engine.voiceSnapshots());
         voiceBridge.publishLead(engine.leadSnapshot());
         metering.publish(engine.meters());
+        publishTuningTelemetry();
         return;
     }
     const auto blockBaseSettings = settings();
@@ -508,7 +550,7 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
                     auxiliaryChannels > 0 ? auxiliary.getReadPointer(std::min(1, auxiliaryChannels - 1), offset) : nullptr};
         float* output[2] = {mainOutput.getWritePointer(0, offset), mainOutput.getWritePointer(std::min(1, mainOutput.getNumChannels() - 1), offset)};
         engine.process(input, output, count, modulation.targets().empty()
-            ? blockBaseSettings : settingsFromValues(effectiveValues), hostBypass, donor, auxiliaryChannels);
+            ? renderSettings(blockBaseSettings) : renderSettings(settingsFromValues(effectiveValues)), hostBypass, donor, auxiliaryChannels);
         modulation.advance(count);
         processedSamples += uint64_t(count);
         offset += count;
@@ -518,6 +560,46 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
     voiceBridge.publish(engine.voiceSnapshots());
     voiceBridge.publishLead(engine.leadSnapshot());
     metering.publish(engine.meters());
+    publishTuningTelemetry();
+}
+
+Settings Processor::renderSettings(Settings result) const noexcept {
+    // Enabling from a zero-reserve activation waits for host reactivation. A
+    // disable is immediate, but the engine retains its prepared dry-path delay.
+    result.tuningEnabled = result.tuningEnabled && preparedTuningEnabled;
+    return result;
+}
+
+void Processor::publishTuningTelemetry() noexcept {
+    const auto frame = engine.getTuningTelemetry();
+    tuningTelemetrySequence.fetch_add(1);
+    tuningTelemetryValues[0].store(frame.detectedHz);
+    tuningTelemetryValues[1].store(frame.detectedMidi);
+    tuningTelemetryValues[2].store(frame.confidence);
+    tuningTelemetryValues[3].store(frame.targetMidi);
+    tuningTelemetryValues[4].store(frame.correctionSemitones);
+    tuningTelemetryFlags.store((frame.voiced ? 1u : 0u) | (frame.hasTarget ? 2u : 0u));
+    tuningTelemetrySequence.fetch_add(1);
+}
+
+TuningTelemetry Processor::getTuningTelemetry() const noexcept {
+    // Sequentially consistent atomic payloads make this bounded seqlock valid
+    // under the C++ memory model. A contended read returns an empty snapshot.
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const auto before = tuningTelemetrySequence.load();
+        if (before & 1u) continue;
+        TuningTelemetry frame;
+        frame.detectedHz = tuningTelemetryValues[0].load();
+        frame.detectedMidi = tuningTelemetryValues[1].load();
+        frame.confidence = tuningTelemetryValues[2].load();
+        frame.targetMidi = tuningTelemetryValues[3].load();
+        frame.correctionSemitones = tuningTelemetryValues[4].load();
+        const auto flags = tuningTelemetryFlags.load();
+        frame.voiced = (flags & 1u) != 0;
+        frame.hasTarget = (flags & 2u) != 0;
+        if (before == tuningTelemetrySequence.load()) return frame;
+    }
+    return {};
 }
 
 bool Processor::readGrainSnapshot(size_t slot, RoutingGrainFrame& out) const noexcept {
@@ -549,7 +631,7 @@ bool Processor::remoteControlsPageFill(uint32_t index, juce::String& section, ui
     slots.fill(nullptr);
     if (index == 0) {
         section = "Main";
-        name = "Vocal Stack";
+        name = getName();
         id = 1;
         // Keep the original eight controller assignments unchanged.
         for (size_t i = 0; i < slots.size(); ++i)
@@ -766,7 +848,7 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                 for (const auto& node : active.nodes) if (node.type == NodeType::spectralMorph && routingFxSlot(node.id) == int(slot))
                     initial = spectralMorphValues(node.spectralMorph)[field];
             }
-            if (i >= stereoMonoParameterStart) {
+            if (i >= stereoMonoParameterStart && i < tuningParameterStart) {
                 initial = 0;
                 for (const auto& node : draft.nodes)
                     if (node.type == NodeType::stereo && processorRouting::fxSlot(node.id) == int(i - stereoMonoParameterStart + 1))
@@ -941,7 +1023,7 @@ juce::String Processor::getRoutingError() const {
 
 bool Processor::routingRestartPending() const {
     const std::lock_guard<std::recursive_mutex> lock(controlMutex);
-    return restartPending;
+    return restartPending || (prepared && (values[tuningParameterStart]->load(std::memory_order_relaxed) >= .5f) != preparedTuningEnabled);
 }
 
 bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error) {
@@ -1226,8 +1308,10 @@ bool Processor::setModulationState(const ModulationState& state, juce::String& e
         for (size_t i = 0; i < plan.modulatorCount; ++i) if (plan.modulators[i].id == a.modulatorId) source = i;
         for (size_t i = 0; i < parameterIds.size(); ++i) if (a.targetParameterId == parameterIds[i]) target = i;
         if (source == plan.modulatorCount || target == parameterIds.size()) return fail("Unknown modulation source or parameter ID");
-        if (target >= stereoMonoParameterStart) return fail("Mono Audition is host automation only, not a continuous modulation target");
-        if (target >= spectralMorphParameterStart) {
+        if (target >= stereoMonoParameterStart && target < tuningParameterStart)
+            return fail("Mono Audition is host automation only, not a continuous modulation target");
+        if (target == tuningParameterStart) return fail("Tuning Enabled requires host reactivation and cannot be a modulation target");
+        if (target >= spectralMorphParameterStart && target < stereoMonoParameterStart) {
             const auto field = (target - spectralMorphParameterStart) % spectralMorphParameterCount;
             if (spectralMorphParameters[field].discrete) return fail("Spectral Mode, FFT and Freeze are host automation only, not continuous modulation targets");
         }

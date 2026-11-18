@@ -86,7 +86,7 @@ void advancedParameterContract() {
     Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 2357, "Expected 2087 preserved + 165 new effect parameters");
+    expect(owner.getParameters().size() == 2378, "Expected 2357 preserved + 21 tuning parameters");
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
             const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
@@ -766,7 +766,7 @@ void editorSkin(int theme) {
         });
         expect(choraleTab != nullptr, "Main Bus Chorale node tab missing");
         checkDrawerControls(owner, *choraleTab, choraleSliders, choraleButtons);
-    expect(advancedSliders == 24 && advancedButtons == 3, "Fresh Stack must contain Lead and two complete eight-slider voice cards");
+    expect(advancedSliders == 27 && advancedButtons == 3, "Fresh Stack must contain Lead and two complete nine-slider voice cards");
     expect(choraleSliders == 2 && choraleButtons == 1, "Main Bus Chorale knobs or host-bound switch missing");
     auto* addVoice = findButton(*editor, "+ Add voice");
     expect(addVoice != nullptr, "Missing Add voice action");
@@ -776,7 +776,7 @@ void editorSkin(int theme) {
     for (auto* child : canvas.getChildren())
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
             checkDrawerControls(owner, *child, advancedSliders, advancedButtons, true);
-    expect(advancedSliders == 72 && advancedButtons == 9, "Lead and eight complete stable voice cards missing");
+    expect(advancedSliders == 81 && advancedButtons == 9, "Lead and eight complete nine-slider voice cards missing");
     expectPassiveControls(*editor);
     setParameter(owner, "advancedOn", 0);
     expect(!owner.settings().advanced, "Legacy host activation no longer disables Advanced");

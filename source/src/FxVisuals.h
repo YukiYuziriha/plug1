@@ -12,6 +12,8 @@
 #include <map>
 #include <memory>
 
+namespace vocalstack { struct EffectiveUiArchitectureTests; }
+
 namespace vocalstack::toneui {
 
 inline float visualParameter(Processor& owner, const juce::String& id, float fallback = 0,
@@ -400,11 +402,12 @@ public:
     void paint(juce::Graphics& g) override {
         paintBackground(g);
         auto bounds = getLocalBounds().reduced(7);
-        const bool enabled = visualParameter(monitorOwner, fxParameterId(monitorSlot, "On"), 1) >= 0.5f;
-        const int count = visualParameter(monitorOwner, toneParameterId(monitorSlot, "BandCount"), 3) < 2.5f ? 2 : 3;
+        const auto model = renderParameters(monitorOwner.getModulationSnapshot());
+        const bool enabled = model.enabled;
+        const int count = model.count;
         const double rate = visualSampleRate(hasLiveFrame() ? frame.sampleRate : monitorOwner.getSampleRate());
-        const double low = visualParameter(monitorOwner, toneParameterId(monitorSlot, "CrossoverLow"), 250);
-        const double high = visualParameter(monitorOwner, toneParameterId(monitorSlot, "CrossoverHigh"), 4000);
+        const double low = model.low;
+        const double high = model.high;
         g.drawText(enabled ? "LR4 | settled branch response" : "BYPASS | one full-band output", bounds.removeFromTop(16), juce::Justification::centredLeft);
         auto axes = bounds.removeFromTop(14);
         g.drawText("Response dB", axes.removeFromLeft(100), juce::Justification::centredLeft);
@@ -459,6 +462,21 @@ public:
         g.drawText(isStreamStalled() ? "No new frames | fading last capture"
                                : hasLiveFrame() ? "Input FFT: Hann / stereo power / peak dBFS" : "No live audio | requested response only", bounds.removeFromTop(16), juce::Justification::centredLeft);
     }
+private:
+    friend struct vocalstack::EffectiveUiArchitectureTests;
+    struct RenderParameters { bool enabled; int count; double low, high; };
+    RenderParameters renderParameters(ModulationSnapshot next) {
+        // One retained publication supplies every modulated value in this paint.
+        if (next.consistent) modulationSnapshot = std::move(next);
+        const auto parameter = [&](const juce::String& id, float fallback) {
+            return visualParameter(monitorOwner, id, fallback, &modulationSnapshot);
+        };
+        return {parameter(fxParameterId(monitorSlot, "On"), 1) >= .5f,
+                parameter(toneParameterId(monitorSlot, "BandCount"), 3) < 2.5f ? 2 : 3,
+                parameter(toneParameterId(monitorSlot, "CrossoverLow"), 250),
+                parameter(toneParameterId(monitorSlot, "CrossoverHigh"), 4000)};
+    }
+    ModulationSnapshot modulationSnapshot;
 };
 
 } // namespace vocalstack::toneui

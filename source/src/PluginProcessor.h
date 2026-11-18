@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <clap-juce-extensions/clap-juce-extensions.h>
 #include "VocalEngine.h"
+#include "AutomaticTuner.h"
 #include "MeterBridge.h"
 #include "VoiceBridge.h"
 #include "FxMonitor.h"
@@ -216,8 +217,15 @@ inline const auto stereoMonoIdStorage = [] {
 inline juce::String stereoMonoParameterId(size_t slot) {
     return slot > 0 && slot < 16 ? juce::String(stereoMonoIdStorage[slot - 1]) : juce::String();
 }
+inline constexpr size_t tuningParameterStart = stereoMonoParameterStart + 15;
+static_assert(tuningParameterStart == 2357);
+inline constexpr std::array<const char*, 21> tuningParameterIds{
+    "tuningEnabled", "tuningMix", "tuningRoot", "tuningScale", "tuningNotes",
+    "tuningReference", "tuningRange", "tuningAmount", "tuningRetune", "tuningTransition",
+    "tuningStability", "tuningFormants", "leadTuneMix", "voice1TuneMix", "voice2TuneMix",
+    "voice3TuneMix", "voice4TuneMix", "voice5TuneMix", "voice6TuneMix", "voice7TuneMix", "voice8TuneMix"};
 inline const auto parameterIds = [] {
-    std::array<const char*, stereoMonoParameterStart + 15> ids{};
+    std::array<const char*, tuningParameterStart + tuningParameterIds.size()> ids{};
         static_assert(utilityParameterStart + 15 * utilityParameterCount == newCreativeParameterStart);
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
@@ -241,6 +249,7 @@ inline const auto parameterIds = [] {
         ids[utilityParameterStart + i] = utilityParameterIdStorage[i].c_str();
     for (size_t i = 0; i < spectralMorphIdStorage.size(); ++i) ids[spectralMorphParameterStart + i] = spectralMorphIdStorage[i].c_str();
     for (size_t i = 0; i < stereoMonoIdStorage.size(); ++i) ids[stereoMonoParameterStart + i] = stereoMonoIdStorage[i].c_str();
+    for (size_t i = 0; i < tuningParameterIds.size(); ++i) ids[tuningParameterStart + i] = tuningParameterIds[i];
     return ids;
 }();
 static_assert(parameterIds.size() <= ModulationBackend::maxTargets);
@@ -306,7 +315,7 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
-    const juce::String getName() const override { return "Vocal Stack"; }
+    const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
 
@@ -329,6 +338,7 @@ public:
     Settings settings() const;
 
     // Control-thread API. Setters validate the entire bounded state before publication.
+    TuningTelemetry getTuningTelemetry() const noexcept;
     ModulationState getModulationState() const;
     bool setModulationState(const ModulationState& state, juce::String& error);
     void beginModulationAssignment(uint32_t id);
@@ -385,6 +395,8 @@ private:
     juce::ValueTree copyState();
     bool restoreState(const juce::XmlElement&);
     void render(juce::AudioBuffer<float>&, juce::MidiBuffer&, bool hostBypass);
+    void publishTuningTelemetry() noexcept;
+    Settings renderSettings(Settings) const noexcept;
     Settings settingsFromValues(const std::array<float, parameterIds.size()>&) const;
     Graph qualitySnapshot(Graph) const;
     void updateModulationValues();
@@ -432,6 +444,12 @@ private:
     SpectralMorphBridge spectralBridge;
     VocalEngine engine;
     std::atomic<int> sidechainChannels{0};
+    // Atomic payload plus sequence: readers never race plain DSP-owned fields.
+    static_assert(std::atomic<float>::is_always_lock_free && std::atomic<unsigned>::is_always_lock_free);
+    std::atomic<unsigned> tuningTelemetrySequence{0};
+    std::array<std::atomic<float>, 5> tuningTelemetryValues{};
+    std::atomic<unsigned> tuningTelemetryFlags{0};
+    bool preparedTuningEnabled = false;
     int preparedRoutingLatency = 0;
     bool restartPending = false;
     bool prepared = false;

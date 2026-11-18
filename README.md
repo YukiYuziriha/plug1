@@ -1,13 +1,13 @@
-# Vocal Stack
+# HEAVEN by lil grass block
 
 **Build a vocal stack. Shape each voice. Route the result your way.**
 
-Vocal Stack is a Windows x64 audio effect in **CLAP and VST3** formats. Start with
+HEAVEN by lil grass block is a Windows x64 audio effect in **CLAP and VST3** formats. Start with
 vocal doubling, expand to **eight generated voices plus a separate Lead**, then
 shape individual branches or the whole mix with a modular effects graph. Stack
 and Routing are two views of the same patch—not separate processing modes.
 
-**v1.11.1** · [Download & install](#download--install) ·
+**Upcoming v1.12.0 — shared automatic Tuning** · [Download & install](#download--install) ·
 [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase) ·
 [Build from source](docs/Building.md) · [GPLv3 + AGPLv3 licensing](docs/Licensing.md)
 
@@ -15,8 +15,21 @@ and Routing are two views of the same patch—not separate processing modes.
 
 *The Neon theme, with Spectral Morph open in the Stack FX rack.*
 
+Formerly **VocalStack** (displayed as **Vocal Stack**), this is a product-name
+change, not a new plugin ID. Internal IDs, preset folders and state extensions
+are preserved for compatibility with existing sessions and presets.
+
+The 1.12.0 feature is documented in [Tuning](docs/Tuning.md). Release packaging
+is gated on a successful, version-verified 1.12.0 build; existing release URLs
+below remain historical until new assets are prepared and published. See the
+[1.12.0 delivery status](docs/Release-1.12.0-Validation.md).
+
 ## What you can make
 
+- **Shared automatic Tuning.** An MXTune-derived GPL-3.0-or-later detector and
+  linked stereo Signalsmith shifter with envelope formant compensation feed
+  aligned clean/tuned sources and per-voice Tune Mix. The themed **Tuning** tab
+  has real controls for scale, notes, correction and timing. [Usage and limits](docs/Tuning.md).
 - **Doubles and layered harmonies.** Control pitch, fine detune, formant, gain,
   pan, delay and motion per generated voice, with independent Lead edits.
 - **A patch, not just an effects chain.** Route voices through independent FX,
@@ -84,36 +97,43 @@ from either view. [Try the wiring walkthrough](docs/Getting-Started.md#spectral-
 
 ## Download & install
 
-Download the [**v1.11.1 Windows x64 ZIP**](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-Windows-x64.zip)
+Planned 1.12.0 archives are `HEAVEN-1.12.0-Windows-x64.zip` and
+`HEAVEN-1.12.0-corresponding-source.zip`, with primary local output directory
+`source/build/publication-1.12.0-heaven`. These names are not evidence of a
+completed build or published download; consult the
+[1.12.0 delivery status](docs/Release-1.12.0-Validation.md).
+
+**Historical release:** download the [**v1.11.1 Windows x64 ZIP**](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-Windows-x64.zip)
 for both formats, their complete notices and source-download information.
 [SHA256 checksums](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/SHA256SUMS.txt)
-are supplied with the release. The same plugin bytes are also tracked below.
+are supplied with the release. The repository's tracked packages may be newer; consult
+`Windows-x64/SOURCE.md` for their own provenance rather than assuming identical bytes.
 
 | Format | Download | Install |
 | --- | --- | --- |
-| CLAP | [Vocal Stack.clap](https://github.com/YukiYuziriha/plug1/raw/refs/heads/main/Windows-x64/CLAP/Vocal%20Stack.clap) | Copy the file to `%LOCALAPPDATA%\Programs\Common\CLAP\` or `C:\Program Files\Common Files\CLAP\`. |
-| VST3 | [Vocal Stack.vst3 bundle](Windows-x64/VST3/Vocal%20Stack.vst3) | Copy the **entire folder**, including `Contents`, to `%LOCALAPPDATA%\Programs\Common\VST3\` or `C:\Program Files\Common Files\VST3\`. |
+| CLAP | `Windows-x64/CLAP/HEAVEN by lil grass block.clap` (planned) | Copy the file to `%LOCALAPPDATA%\Programs\Common\CLAP\` or `C:\Program Files\Common Files\CLAP\`. |
+| VST3 | `Windows-x64/VST3/HEAVEN by lil grass block.vst3/` (planned bundle) | Copy the **entire folder**, including `Contents`, to `%LOCALAPPDATA%\Programs\Common\VST3\` or `C:\Program Files\Common Files\VST3\`. |
 
 For VST3, download the repository with GitHub's **Code → Download ZIP** or clone
-it, then take the bundle from `Windows-x64/VST3/`. The bundle link above browses
-the folder; downloading only its inner binary is not a complete installation.
+it, then take the bundle from `Windows-x64/VST3/` once the renamed package is
+available. Downloading only its inner binary is not a complete installation.
 Keep the [GPLv3 text](Windows-x64/LICENSE.txt), [AGPLv3 text](Windows-x64/COPYING.AGPLv3),
 [source notice](Windows-x64/SOURCE.md), [font license](Windows-x64/PixelifySans-OFL.txt)
 and [third-party notices](Windows-x64/ThirdParty) with your copy.
 
-**Build or modify it:** download the [complete corresponding source](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-corresponding-source.zip),
+**Build or modify the historical release:** download its [complete corresponding source](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-corresponding-source.zip),
 including pinned dependencies, patches and build tools. See the
 [build guide](docs/Building.md), [licensing details](docs/Licensing.md) and
 [historical source downloads](docs/Historical-Source.md).
 
 Close hosts that have the plugin loaded before replacing it. Add the chosen
-folder to your host's scan locations if needed, rescan, and insert **Vocal Stack**
+folder to your host's scan locations if needed, rescan, and insert **HEAVEN by lil grass block**
 as an audio effect. You only need the format your host supports.
 [Detailed installation and first patch](docs/Getting-Started.md).
 
 ## First patch
 
-1. Insert Vocal Stack on a vocal track. Start with **Leveler**, **Human** and
+1. Insert **HEAVEN by lil grass block** on a vocal track. Start with **Leveler**, **Human** and
    **Width**, then balance the edited Lead against generated voices with **Lead / Stack**.
 2. Select a voice card to edit it; use **+ Add voice** to expand up to eight.
    The Lead is separate. Use moderate pitch/formant offsets before trying extremes.
@@ -130,7 +150,12 @@ latency-aligned original input and the entire patch.
 
 - **Delivered platform:** Windows x64, CLAP and VST3. No macOS/Linux binaries,
   standalone application or other plugin formats are supplied.
-- **Latency:** without Morph, reported totals are **1344 samples at 44.1/48 kHz**
+- **Tuning latency:** at 48 kHz, ON-prepared Tuning adds **1344 samples**, making
+  a basic patch **2688 samples** total; OFF-prepared retains the legacy **1344**.
+  Enabling from OFF-prepared needs **host audio deactivation/reactivation**, not
+  just transport stop/start; the UI shows a pending message. Zero Retune Speed
+  does not remove detector history (about **85 ms** at 48 kHz). [Details](docs/Tuning.md).
+- **Legacy latency (Tuning OFF-prepared):** without Morph, reported totals are **1344 samples at 44.1/48 kHz**
   and **2688 at 96 kHz**. A graph declaring Morph adds **4096 samples**, even if
   that node is bypassed or disconnected. Adding/removing it can show
   **RESTART PENDING**: deactivate/reactivate or reload the plugin to apply that
@@ -142,7 +167,8 @@ latency-aligned original input and the entire patch.
 
 **Experimental status:** automated DSP and CLAP/VST3 checks cover mono/stereo
 layouts and sidechains at 44.1, 48 and 96 kHz. Actual DAW listening/workflow and
-native UI performance remain unverified. See the
+native UI performance remain unverified. **Real-vocal tuning listening is
+unverified; no Antares/Auto-Tune equivalence is claimed.** See the
 [release validation](docs/Release-1.11.1-Validation.md) for test results, outstanding
 checks and known limitations.
 
@@ -150,6 +176,7 @@ checks and known limitations.
 
 - [Getting Started](docs/Getting-Started.md) — installation, voices, routing,
   sidechain, latency and troubleshooting.
+- [Tuning](docs/Tuning.md) — controls, shared sources, reactivation and tracking limits.
 - [Building](docs/Building.md) — prerequisites, pinned dependencies, CMake and tests.
 - [Manual and history archive](docs/Manual-and-History.md) — preserved detailed
   controls, architecture and earlier release records; historical values are labeled.
@@ -169,7 +196,8 @@ Open source under **GPLv3 + AGPLv3**: project-owned code retains
 work and redistribution terms; third-party components retain their own licenses.
 
 [ThirdParty](ThirdParty) retains notices for JUCE, CLAP/CLAP JUCE Extensions, the
-VST3 SDK, Signalsmith Stretch/Linear, the GPL-covered
+VST3 SDK, Signalsmith Stretch/Linear, the GPL-3.0-or-later
+  [MXTune/Autotalent detector adaptation](ThirdParty/Tuning.md), the GPL-covered
 [Vital filter subset](ThirdParty/Vital/README.md), and Pixelify Sans under the
 [SIL Open Font License 1.1](ThirdParty/PixelifySans-OFL.txt). Embedded dependency
 notices also remain applicable. Convolution uses original synthetic Church,

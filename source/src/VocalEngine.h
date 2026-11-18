@@ -4,6 +4,7 @@
 #include "DoublerSettings.h"
 #include "Routing.h"
 #include "HarmonyShifter.h"
+#include "AutomaticTuner.h"
 #include <signalsmith-stretch/signalsmith-stretch.h>
 #include <array>
 #include <cstdint>
@@ -37,6 +38,9 @@ struct Settings {
     double tempoBpm = 120;
     float globalMix = 1.0f; // Untouched latency-aligned input vs complete graph + trim.
     VoiceSettings leadSettings{true, 0, 0, 0, 0, 0, 0, 0, 0, true};
+    bool tuningEnabled = false;
+    float tuningMix = 1.0f;
+    TuningSettings tuning{};
 };
 
 // Audio-thread value snapshot. The processor must publish copies via its own
@@ -60,12 +64,25 @@ public:
     void process(const float* const* input, float* const* output, int count,
                  const Settings&, bool hostBypass = false,
                                   const float* const* auxiliary = nullptr, int auxiliaryChannels = 0);
-    int latency() const noexcept { return latencySamples + routingReserve; }
+    int latency() const noexcept { return latencySamples + tuningLatencySamples + routingReserve; }
+    // Latency reservation is latched by prepare, never changed in process/reset.
+    // OFF-prepared engines defer enable until host restart/reprepare. ON-prepared
+    // engines allow immediate clean bypass, retaining the reservation until prepare.
+    // Processor must arrange quiescent prepare + host latency notification when
+    // this returns true; do not reconfigure from the audio callback.
+    bool tuningRequiresReprepare(const Settings& s) const noexcept {
+        return s.tuningEnabled != (tuningLatencySamples != 0);
+    }
+    int tuningLatency() const noexcept { return tuningLatencySamples; }
+    // Audio-owner snapshot only; processor publishes its own concurrent copy.
+    TuningTelemetry getTuningTelemetry() const noexcept {
+        return tuningLatencySamples && targets.tuningEnabled ? tuner.telemetry() : TuningTelemetry{};
+    }
     // Active routing plan's longest connected tail, plus source delay/latency.
     // Queued graph edits update the routing bound when audio installs them.
     // Tone EQ/LR4 phase and ADAA phase are not integer sample latency.
     double tailSeconds() const noexcept {
-        return (latencySamples + routingReserve + maxDoubleDelay) / rate + routing.tailSeconds();
+        return (latencySamples + tuningLatencySamples + routingReserve + maxDoubleDelay) / rate + routing.tailSeconds();
     }
     Meters meters() const noexcept;
     void resetMeters() noexcept;
@@ -117,6 +134,7 @@ private:
         float appliedPitch = 0, appliedDetune = 0, appliedFormant = 0, measuredEnergy = 0;
         bool running = false, harmonyRunning = false;
         float harmonyBlend = 0;
+        float tuningBlend = 1;
         int harmonyWarmup = 0;
     };
 
@@ -146,6 +164,11 @@ private:
     bool active = false;
     LevelMatch leadMatch;
     Stretch lead{421};
+        AutomaticTuner tuner;
+        int tuningLatencySamples = 0;
+        float tuningMix = 1, leadTuningBlend = 1;
+        std::array<DelayLine, 2> tuningCleanDelay;
+        std::array<Buffer, 2> cleanInput{}, tunedInput{};
     Voice leadMotion{613};
     std::array<HarmonyShifter, 2> leadHarmony;
     std::array<DelayLine, 2> leadLocalDelay;

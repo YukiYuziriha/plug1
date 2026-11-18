@@ -48,31 +48,58 @@ def export_git(repo, revision, destination, include_submodules=True):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--revision", required=True, help="Exact binary-producing Git commit")
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--revision", help="Exact binary-producing Git commit")
+    selection.add_argument("--working-tree", action="store_true",
+                           help="Explicit uncommitted snapshot; base commit is not a producing revision")
     parser.add_argument("--deps-cache", type=Path, default=ROOT / "source/build/_deps")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    revision = git(ROOT, "rev-parse", args.revision + "^{commit}").decode().strip()
+    revision = git(ROOT, "rev-parse", (args.revision or "HEAD") + "^{commit}").decode().strip()
     # Packaging overlays must not disguise code/configuration changes.
-    for command in (("diff", revision, "--", "source", "ThirdParty"),
-                    ("ls-files", "--others", "--exclude-standard", "source", "ThirdParty")):
-        if git(ROOT, *command).strip():
-            raise RuntimeError("Source/ThirdParty differs from the binary revision; review before bundling")
-    cmake = git(ROOT, "show", revision + ":source/CMakeLists.txt").decode()
+    if not args.working_tree:
+        for command in (("diff", revision, "--", "source", "ThirdParty"),
+                        ("ls-files", "--others", "--exclude-standard", "source", "ThirdParty")):
+            if git(ROOT, *command).strip():
+                raise RuntimeError("Source/ThirdParty differs from the binary revision; review before bundling")
+    cmake = ((ROOT / "source/CMakeLists.txt").read_text(encoding="utf-8") if args.working_tree
+             else git(ROOT, "show", revision + ":source/CMakeLists.txt").decode())
+    version_match = re.search(r"project\(VocalStack VERSION ([0-9]+\.[0-9]+\.[0-9]+)(?:\s|\))", cmake)
+    if version_match is None:
+        raise RuntimeError("Missing numeric source project version")
+    archive_root = f"HEAVEN-{version_match.group(1)}"
     declarations = dict(re.findall(r"FetchContent_Declare\(([^\s]+)(.*?)\)" , cmake, re.S))
-    manifest = {"binary_source_commit": revision, "packaging_overlays": {}, "dependencies": {}}
+    manifest = {"binary_source_commit": None if args.working_tree else revision,
+                "source_mode": "working-tree-snapshot" if args.working_tree else "git-revision",
+                "base_commit": revision, "packaging_overlays": {}, "dependencies": {}}
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         raise RuntimeError(f"Refusing to overwrite {output}")
     with tempfile.TemporaryDirectory(prefix="vocalstack-source-") as temporary:
-        stage = Path(temporary) / "VocalStack-source"
+        stage = Path(temporary) / archive_root
         stage.mkdir()
-        tracked = git(ROOT, "ls-tree", "-r", "--name-only", revision).decode().splitlines()
-        paths = [p for p in tracked if p.startswith(("source/", "ThirdParty/", "tools/", "docs/"))
-                 or p in ("LICENSE", "README.md", "AGENTS.md", ".gitignore", ".gitattributes")]
-        with zipfile.ZipFile(io.BytesIO(git(ROOT, "archive", "--format=zip", revision, "--", *paths))) as archive:
-            archive.extractall(stage)
+        tracked = (git(ROOT, "ls-files", "-z", "--cached", "--others", "--exclude-standard").decode().split("\0")
+                   if args.working_tree else git(ROOT, "ls-tree", "-r", "--name-only", revision).decode().splitlines())
+        paths = sorted({p for p in tracked if p.startswith(("source/", "ThirdParty/", "tools/", "docs/"))
+                        or p in ("LICENSE", "COPYING.AGPLv3", "README.md", "AGENTS.md", ".gitignore", ".gitattributes")})
+        snapshot = {}
+        if args.working_tree:
+            for name in paths:
+                source = ROOT / name
+                if not source.exists():  # Respect working-tree deletions.
+                    continue
+                if source.is_symlink() or not source.is_file():
+                    raise RuntimeError(f"Unsupported snapshot input: {name}")
+                data = source.read_bytes()
+                target = stage / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+                snapshot[name] = hashlib.sha256(data).hexdigest()
+            manifest["working_tree_files_sha256"] = snapshot
+        else:
+            with zipfile.ZipFile(io.BytesIO(git(ROOT, "archive", "--format=zip", revision, "--", *paths))) as archive:
+                archive.extractall(stage)
         for name in LEGAL_OVERLAYS:
             data = (ROOT / name).read_bytes()
             target = stage / name
@@ -111,6 +138,21 @@ def main():
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 roots[0].rename(destination)
                 manifest["dependencies"][name] = {"url": url, "sha256": digest}
+        if args.working_tree:
+            current = set(git(ROOT, "ls-files", "-z", "--cached", "--others", "--exclude-standard").decode().split("\0"))
+            current = {p for p in current if (p.startswith(("source/", "ThirdParty/", "tools/", "docs/"))
+                       or p in ("LICENSE", "COPYING.AGPLv3", "README.md", "AGENTS.md", ".gitignore", ".gitattributes"))
+                       and (ROOT / p).exists()}
+            if current != set(snapshot) or any(sha256(ROOT / p) != h for p, h in snapshot.items()):
+                raise RuntimeError("Working tree changed during source export; wait for edits to finish")
+            for required in ("source/src/AutomaticTuner.h", "ThirdParty/Tuning.md",
+                             "ThirdParty/MXTune/README.md", "ThirdParty/MXTune/LICENSE",
+                             "ThirdParty/MXTune/COPYING-autotalent",
+                             "ThirdParty/MXTune/autotalent-0.2-notice.txt",
+                             "ThirdParty/MXTune/pitch_detector_talent.cpp",
+                             "ThirdParty/MXTune/pitch_detector_talent.h"):
+                if required not in snapshot:
+                    raise RuntimeError(f"Missing Tuning corresponding source: {required}")
         manifest["files_sha256"] = {
             p.relative_to(stage).as_posix(): sha256(p)
             for p in sorted(stage.rglob("*")) if p.is_file()
@@ -122,7 +164,7 @@ def main():
             with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
                 for path in sorted(stage.rglob("*")):
                     if path.is_file():
-                        info = zipfile.ZipInfo("VocalStack-source/" + path.relative_to(stage).as_posix())
+                        info = zipfile.ZipInfo(archive_root + "/" + path.relative_to(stage).as_posix())
                         info.compress_type = zipfile.ZIP_DEFLATED
                         info.external_attr = 0o100644 << 16
                         archive.writestr(info, path.read_bytes())

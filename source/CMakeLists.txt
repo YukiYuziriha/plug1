@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.11.3 LANGUAGES C CXX)
+project(VocalStack VERSION 1.12.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -39,11 +39,11 @@ if(VOCALSTACK_BUILD_PLUGIN)
     include(cmake/PatchClapSidechain.cmake)
 
     juce_add_plugin(VocalStack
-        COMPANY_NAME "Vocal Stack"
+        COMPANY_NAME "lil grass block"
         BUNDLE_ID audio.vocalstack.effect
         PLUGIN_MANUFACTURER_CODE VoSt
         PLUGIN_CODE Vs01
-        PRODUCT_NAME "Vocal Stack"
+        PRODUCT_NAME "HEAVEN by lil grass block"
         FORMATS VST3
         VST3_CATEGORIES Fx Tools
         VST3_AUTO_MANIFEST FALSE
@@ -114,6 +114,13 @@ if(VOCALSTACK_BUILD_TESTS)
         add_test(NAME VocalStack${suite} COMMAND vocalstack_${suite_lower}_tests)
     endforeach()
 
+    add_executable(vocalstack_automatictuner_tests tests/tuning/AutomaticTunerTests.cpp)
+    target_link_libraries(vocalstack_automatictuner_tests PRIVATE vocalstack_dsp)
+    add_test(NAME VocalStackAutomaticTuner COMMAND vocalstack_automatictuner_tests)
+    add_executable(vocalstack_enginetuning_tests tests/tuning/EngineTuningTests.cpp)
+    target_link_libraries(vocalstack_enginetuning_tests PRIVATE vocalstack_dsp)
+    add_test(NAME VocalStackEngineTuning COMMAND vocalstack_enginetuning_tests)
+
     # Optional pinned-history comparison; ordinary source archives need no Git/Python.
     option(VOCALSTACK_TEST_BASELINE "Compare default DSP with the pre-routing Git revision" OFF)
     if(VOCALSTACK_TEST_BASELINE)
@@ -133,6 +140,7 @@ if(VOCALSTACK_BUILD_TESTS)
         add_executable(vocalstack_clap_smoke tests/ClapSmoke.cpp)
         target_compile_definitions(vocalstack_clap_smoke PRIVATE VOCALSTACK_EXPECTED_VERSION="${PROJECT_VERSION}")
         target_link_libraries(vocalstack_clap_smoke PRIVATE clap-core ${CMAKE_DL_LIBS})
+        add_dependencies(vocalstack_clap_smoke VocalStack_CLAP)
         add_test(NAME VocalStackCLAP COMMAND vocalstack_clap_smoke $<TARGET_FILE:VocalStack_CLAP>)
 
         juce_add_console_app(VocalStackEditorTests PRODUCT_NAME "Vocal Stack Editor Tests")
@@ -191,6 +199,15 @@ if(VOCALSTACK_BUILD_TESTS)
         add_test(NAME VocalStackGrainSnapshotUi COMMAND VocalStackGrainSnapshotUiTests)
         set_tests_properties(VocalStackMainBusFxRackUi VocalStackGrainSnapshotUi
             PROPERTIES RESOURCE_LOCK VocalStackNativeGui)
+
+        foreach(suite IN ITEMS TuningProcessor TuningUi UiArchitecture)
+            juce_add_console_app(VocalStack${suite}Tests PRODUCT_NAME "Vocal Stack ${suite} Tests")
+            target_sources(VocalStack${suite}Tests PRIVATE tests/${suite}Tests.cpp)
+            target_link_libraries(VocalStack${suite}Tests PRIVATE VocalStack vocalstack_dsp
+                juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
+            add_test(NAME VocalStack${suite} COMMAND VocalStack${suite}Tests)
+        endforeach()
+        set_tests_properties(VocalStackTuningUi VocalStackUiArchitecture PROPERTIES RESOURCE_LOCK VocalStackNativeGui)
 
         juce_add_console_app(VocalStackFactoryPresetAudioTests PRODUCT_NAME "Vocal Stack Factory Preset Audio Tests")
         target_sources(VocalStackFactoryPresetAudioTests PRIVATE tests/FactoryPresetAudioTests.cpp)
