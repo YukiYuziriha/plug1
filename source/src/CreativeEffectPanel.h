@@ -158,12 +158,12 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
         int inspectorHeight(int width) const {
             if (spaceChoice) return 60;
             if (buttonLink) return 44;
-            return 20 + juce::jmin(96, juce::jmax(1, width - 2)) + captionHeight(width);
+            return 22 + juce::jmin(96, juce::jmax(1, width - 2)) + captionHeight(width);
         }
         int preferredWidth() const {
             if (spaceChoice) return 200;
             if (buttonLink) return toggle.getComponentID().endsWith("saturator_level_match") ? 92 : 60;
-            return slider.getComponentID().endsWith("convolution_brightness") ? 88 : 68;
+            return slider.getComponentID().endsWith("convolution_brightness") ? 100 : 82;
         }
         bool textEditing = false, inspectorLayout = false;
         void setNeon(bool neon) {

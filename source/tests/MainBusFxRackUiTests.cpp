@@ -9,6 +9,8 @@
 
 namespace {
 using namespace vocalstack;
+// Fixed-size rack fixtures deliberately exercise nested overflow independently of Stack.
+constexpr int constrainedRackHeight = 388;
 void expect(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 juce::Component* find(juce::Component& root, const juce::String& id) {
     if (root.getComponentID() == id) return &root;
@@ -195,53 +197,139 @@ void editorHitTestedWheelRegressions() {
             auto* header = find(*tab, "mainBusFxDrag");
             expect(header != nullptr, "creative node has a selectable drag tab");
             const auto prefix = CreativeEffectPanel::effectName(creativeKind(creativeTypes[effect])) + " / ";
-            const auto reset = [&](int innerY) {
-                const auto rackBounds = stack->getViewedComponent()->getLocalArea(rack, rack->getLocalBounds());
-                stack->setViewPosition(0, rackBounds.getCentreY() - stack->getViewHeight() / 2);
-                row->setViewPosition(tab->getX() - 60, 0);
-                body->setViewPosition(0, innerY);
-                expect(stack->getViewPositionY() > 0
-                           && stack->getViewPositionY() + stack->getViewHeight() < stack->getViewedComponent()->getHeight(),
-                       "Stack ancestor can move in both directions while FX card is on screen");
-                expect(row->getViewPositionX() > 0, "horizontal row starts away from left clamp");
+            const auto reset = [&] {
+                const int maximum = stack->getViewedComponent()->getHeight() - stack->getViewHeight();
+                stack->setViewPosition(0, juce::jmin(maximum - 20, rack->getY() - 16));
+                row->setViewPosition(juce::jmax(0, tab->getRight() - row->getViewWidth()), 0);
+                body->setViewPosition(0, 0);
             };
-            reset(0);
-            expect(body->getViewedComponent()->getHeight() > body->getViewHeight(), "creative inner body must overflow");
-            centre(*visual, -.3f, body, prefix + "visual at inner top scrolls only inner body");
-            reset(0);
-            centre(*visual, .3f, stack, prefix + "visual at inner top bubbles up only to Stack");
-            reset(1);
-            centre(*visual, .3f, body, prefix + "visual one pixel from top consumes event without residual ancestor scroll");
-            reset(0);
-            const int maximum = body->getViewedComponent()->getHeight() - body->getViewHeight();
-            const auto background = [&](float deltaY, juce::Viewport* expectedMover, const juce::String& name) {
-                const auto point = editor.getLocalPoint(body, juce::Point<int>(2, body->getHeight() / 2));
-                auto* hit = editor.getComponentAt(point);
-                expect(hit == body->getViewedComponent(), "inner background point hits actual content margin, not knob or scrollbar");
-                dispatch(*hit, hit->getLocalPoint(&editor, point), deltaY, expectedMover, prefix + name);
-            };
-            for (bool bottom : {false, true}) {
-                const int edge = bottom ? maximum : 0;
-                const float outward = bottom ? -.3f : .3f;
-                const float inward = -outward;
-                const auto edgeName = bottom ? "bottom" : "top";
-                reset(edge); background(outward, stack, juce::String("background at ") + edgeName + " bubbles outward to Stack");
-                reset(edge); background(inward, body, juce::String("background at ") + edgeName + " scrolls inward only in body");
-                for (auto* surface : {header}) {
-                    reset(edge); centre(*surface, outward, stack, prefix + "header/title at inner " + edgeName + " scrolls Stack only");
-                    reset(edge); centre(*surface, inward, stack, prefix + "header/title reverse at inner " + edgeName + " scrolls Stack only");
-                }
-                reset(edge);
-                dispatch(*card, {2, 16}, outward, stack, prefix + "card border/background at inner " + edgeName);
-                reset(edge);
-                dispatch(*rack, {2, rack->getHeight() / 2}, outward, stack, prefix + "rack background at inner " + edgeName);
+            const int innerRange = body->getViewedComponent()->getHeight() - body->getViewHeight();
+            reset();
+            centre(*visual, .3f, stack, prefix + "visual at inner top scrolls Stack up");
+            reset();
+            centre(*visual, -.3f, innerRange > 0 ? body : stack, prefix + "visual scrolls only the viewport with range");
+            reset();
+            centre(*header, -.3f, stack, prefix + "tab scrolls Stack, not the row");
+            reset();
+            dispatch(*card, {2, 16}, -.3f, stack, prefix + "card border scrolls Stack");
+            reset();
+            dispatch(*rack, {2, 16}, .3f, stack, prefix + "rack background scrolls Stack");
+            if (innerRange > 0) {
+                reset();
+                body->setViewPosition(0, 1);
+                centre(*visual, .3f, body, prefix + "one pixel from inner top consumes wheel without moving Stack");
             }
-            reset(maximum - 1);
-            background(-.3f, body, "background one pixel from bottom consumes event without residual ancestor scroll");
 
         }
         parameters.check();
         std::cout << "Editor hit-tested wheel regressions: skin " << skin << ", " << cases << " cases passed" << std::endl;
+    }
+}
+void stackRackGeometry() {
+    const auto empty = defaultGraph(false);
+    auto graph = defaultGraph();
+    const std::array types{NodeType::waveshaper, NodeType::bitcrusher, NodeType::compressor,
+        NodeType::delay, NodeType::reverb, NodeType::granular, NodeType::equalizer, NodeType::gain,
+        NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter,
+        NodeType::convolution, NodeType::saturator, NodeType::spectralMorph};
+    for (auto type : types) {
+        auto edit = mainBusFx::add(graph, type);
+        expect(edit.changed, "install every supported rack FX for geometry coverage");
+        graph = std::move(edit.graph);
+    }
+    const auto effects = mainBusFx::discover(graph).effects;
+    expect(effects.size() == 16, "geometry coverage includes all 16 FX types");
+    std::cout << "OFFSCREEN Stack rack geometry: no physical monitor placement\n";
+    for (int skin = 0; skin < 3; ++skin) {
+        auto storage = std::make_unique<Processor>(); auto& owner = *storage;
+        const auto publish = [&](const Graph& next) {
+            juce::String error;
+            expect(owner.setRoutingGraph(next, error), "publish Stack rack geometry fixture");
+        };
+        owner.setSkin(skin);
+        Editor editor(owner);
+        editor.setSize(940, 560);
+        auto* stack = dynamic_cast<juce::Viewport*>(find(editor, "stackViewport"));
+        auto* rack = dynamic_cast<MainBusFxRackPanel*>(find(editor, "mainBusFxRack"));
+        auto* voices = descendant<DoublerPanel>(editor);
+        auto* banner = find(editor, "stackAssignmentBanner");
+        auto* done = find(editor, "stackAssignmentDone");
+        auto* add = dynamic_cast<juce::TextButton*>(find(editor, "mainBusAddFx"));
+        auto* row = find(editor, "mainBusFxRowViewport");
+        expect(stack && rack && voices && banner && done && add && row, "Stack geometry components exist");
+        auto* canvas = stack->getViewedComponent();
+        const auto checkCanvas = [&] {
+            expect(canvas->getHeight() == rack->getBottom() + editorLayout::stackBottomPadding,
+                   "outer Stack content tracks rack height exactly");
+            expect(rack->getY() > voices->getBottom() && canvas->getLocalBounds().contains(rack->getBounds()),
+                   "rack is after the complete voice section and inside the outer canvas");
+        };
+        checkCanvas();
+        const int emptyHeight = rack->getHeight();
+        expect(emptyHeight == MainBusFxRackPanel::emptyHeight && emptyHeight <= 50
+                   && !row->isVisible() && add->isEnabled() && add->getButtonText() == "Add FX"
+                   && rack->getLocalBounds().contains(add->getBounds()),
+               "empty rack is a single compact, usable Add FX row");
+
+        ModulationState modulation; modulation.modulators.push_back({1});
+        juce::String error;
+        expect(owner.setModulationState(modulation, error), "install assignment fixture");
+        owner.beginModulationAssignment(1);
+        for (int i = 0; i < 4 && !banner->isVisible(); ++i) pump();
+        expect(banner->isVisible() && done->isVisible() && banner->getRight() < done->getX()
+                   && banner->getBottom() < voices->getY() && done->getBottom() < voices->getY(),
+               "active Stack assignment row fits above voices without overlapping Done");
+        for (auto* child : canvas->getChildren()) {
+            if (!child->isVisible() || child == banner || child == done) continue;
+            expect(!child->getBounds().intersects(banner->getBounds())
+                       && !child->getBounds().intersects(done->getBounds()),
+                   "visible Stack controls do not overlap assignment row");
+        }
+        owner.endModulationAssignment();
+
+        publish(graph); rack->sync(); checkCanvas();
+        const auto shortHeight = rack->getHeight();
+        expect(shortHeight > emptyHeight, "first insertion grows the rack");
+        int fit = 0, tallest = 0;
+        for (auto id : effects) {
+            auto* card = selectRackNode(editor, id);
+            checkCanvas();
+            expect(rack->getHeight() == rack->preferredHeightForWidth(rack->getWidth())
+                       && card->getHeight() <= MainBusFxRackPanel::maxInspectorHeight,
+                   "selected content controls Stack rack height within the outlier cap");
+            tallest = juce::jmax(tallest, rack->getHeight());
+            std::vector<juce::Viewport*> viewports; collectViewports(*card, viewports);
+            expect(!viewports.empty(), "every FX has mounted controls");
+            bool innerOverflow = false;
+            for (auto* viewport : viewports) {
+                auto* content = viewport->getViewedComponent();
+                if (!content || content->getHeight() <= viewport->getViewHeight()) continue;
+                innerOverflow = true;
+                expect(viewport->getVerticalScrollBar().isVisible(), "capped content remains scrollable");
+            }
+            if (!innerOverflow) ++fit;
+            else expect(card->getHeight() == MainBusFxRackPanel::maxInspectorHeight,
+                        "only capped outliers may require inner vertical scrolling");
+            stack->setViewPosition(0, canvas->getHeight());
+            expect(stack->getViewArea().contains(rack->getBounds().getBottomLeft()),
+                   "outer Stack scroll reaches the end of each FX");
+        }
+        std::cout << "Stack skin " << skin << ": " << fit << '/' << effects.size() << " FX fit without inner scrolling\n";
+        expect(size_t(fit) * 10 >= effects.size() * 9, "at least 90% of FX fit without inner scrolling");
+        expect(tallest > shortHeight, "different effect content produces different rack heights");
+        const auto delayId = *std::find_if(effects.begin(), effects.end(), [&](auto id) {
+            return mainBusFx::find(graph, id)->type == NodeType::delay;
+        });
+        selectRackNode(editor, delayId);
+        const auto wideHeight = rack->getHeight();
+        expect(rack->preferredHeightForWidth(560) > wideHeight && rack->getHeight() == wideHeight,
+               "measuring the stacked narrow layout accounts for wrapping without resizing the live rack");
+        selectRackNode(editor, effects.front());
+        expect(rack->getHeight() == shortHeight, "returning to a short tab shrinks the rack again");
+        publish(empty); rack->sync(); checkCanvas();
+        expect(rack->getHeight() == emptyHeight && !row->isVisible()
+                   && stack->getViewPositionY() + stack->getViewHeight() <= canvas->getHeight(),
+               "removing the last FX restores the compact row and clamps outer scroll");
     }
 }
 void tabSelectionLifecycleRegressions(Processor& owner) {
@@ -254,7 +342,7 @@ void tabSelectionLifecycleRegressions(Processor& owner) {
     rack.commitGraph = [&](const Graph& candidate, juce::String& rejection) {
         return routing.commitExternalGraphEdit(candidate, rejection);
     };
-    rack.sync(); rack.setBounds(0, 0, 904, MainBusFxRackPanel::preferredHeight);
+    rack.sync(); rack.setBounds(0, 0, 904, constrainedRackHeight);
     guiTestDisplay::attach(rack); pump();
     auto* first = selectRackNode(rack, 100);
     auto* second = find(rack, "mainBusFx101");
@@ -355,7 +443,7 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
     RoutingPanel routing(owner);
     MainBusFxRackPanel rack(owner);
     rack.commitGraph = [&](const Graph& candidate, juce::String& rejection) { return routing.commitExternalGraphEdit(candidate, rejection); };
-    rack.sync(); rack.setBounds(0, 0, 904, MainBusFxRackPanel::preferredHeight);
+    rack.sync(); rack.setBounds(0, 0, 904, constrainedRackHeight);
     guiTestDisplay::attach(rack); rack.toFront(false); pump();
     auto* row = dynamic_cast<juce::Viewport*>(find(rack, "mainBusFxRowViewport"));
     expect(row && row->getHorizontalScrollBar().isVisible(), "rack has horizontal overflow");
@@ -583,10 +671,10 @@ void tabbedInspectorsAndScreenshots(Processor& owner, const juce::File& output) 
         // All-tabs overview can exceed the physical work area; no native window.
         rack.removeFromDesktop();
         std::cout << "OFFSCREEN all-tabs overview: no physical monitor placement\n";
-        rack.setSize(row->getViewedComponent()->getWidth() + 80, MainBusFxRackPanel::preferredHeight);
+        rack.setSize(row->getViewedComponent()->getWidth() + 92, constrainedRackHeight);
         row->setViewPosition(0, 0);
         writeSnapshot(rack, output, juce::String("rack-row-all-") + skins[size_t(skin)]);
-        rack.setSize(904, MainBusFxRackPanel::preferredHeight);
+        rack.setSize(904, constrainedRackHeight);
         guiTestDisplay::attach(rack);
     }
     expect(processorRouting::encode(owner.getRoutingGraph(), "Graph").toXmlString() == before, "layout and scrolling never publish topology");
@@ -660,6 +748,7 @@ void run(const juce::File& output) {
     expect(find(*editor, "mainBusFxRack") != nullptr, "Stack replaces fixed Chorale with rack");
     editor.reset();
     tabSelectionLifecycleRegressions(owner);
+    stackRackGeometry();
     editorHitTestedWheelRegressions();
     tabbedInspectorsAndScreenshots(owner, output);
     std::cout << "Main Bus FX rack UI/bindings/recall tests passed\n";
@@ -670,6 +759,7 @@ int main(int argc, char** argv) {
     try {
         guiTestDisplay::enumerate();
         std::cout << "Rack PNGs use offscreen component rendering, not a physical framebuffer capture\n";
+        if (argc == 2 && juce::String(argv[1]) == "--geometry") { stackRackGeometry(); return 0; }
         const auto output = argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile(argv[1])
             : juce::File::getCurrentWorkingDirectory().getChildFile("mainbus-rack-screenshots");
         expect(output.createDirectory().wasOk(), "create rack screenshot directory");

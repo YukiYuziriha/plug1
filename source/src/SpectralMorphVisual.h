@@ -84,13 +84,19 @@ public:
         const int availableWidth = std::max(1, area.getWidth() - controlsViewport.getScrollBarThickness());
         const int columns = std::clamp(availableWidth / 88, 1, 4);
         const int rows = (4 + columns - 1) / columns;
-        auto controls = usesSideBySideLayout() ? area
-            : area.removeFromBottom(std::min(rows * 138, std::max(0, area.getHeight() - 106)));
-        controlsViewport.setBounds(controls);
-        controlsContent.setSize(availableWidth, rows * 138);
         const int width = availableWidth / columns;
+        // Keep the dial at least 90px tall after the actual enlarged caption and
+        // inspector value lanes; wrapped captions may need more than 142px total.
+        int rowHeight = 0;
+        for (const auto& knob : knobs)
+            rowHeight = juce::jmax(rowHeight, 90 + ParameterKnob::Style::rotaryValueLaneHeight
+                + knob->captionHeightForWidth(width));
+        auto controls = usesSideBySideLayout() ? area
+            : area.removeFromBottom(std::min(rows * rowHeight, std::max(0, area.getHeight() - 106)));
+        controlsViewport.setBounds(controls);
+        controlsContent.setSize(availableWidth, rows * rowHeight);
         for (size_t i = 0; i < knobs.size(); ++i)
-            knobs[i]->setBounds(int(i) % columns * width, int(i) / columns * 138, width, 138);
+            knobs[i]->setBounds(int(i) % columns * width, int(i) / columns * rowHeight, width, rowHeight);
         // Two explicit axis rows keep technical units readable in narrow inspectors.
                 plot = (usesSideBySideLayout() ? visual : area).withTrimmedTop(18).withTrimmedBottom(32);
     }

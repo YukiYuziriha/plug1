@@ -23,7 +23,6 @@ VoiceSettings bounded(VoiceSettings v) {
     v.pitchSemitones = limit(v.pitchSemitones, -36, 36, 0);
     v.depth = limit(v.depth, 0, 2, 1);
     v.rateHz = limit(v.rateHz, 0, 8, 1);
-    v.tuneMix = limit(v.tuneMix, 0, 1, 1);
     return v;
 }
 
@@ -36,8 +35,6 @@ Settings boundedSettings(Settings s) {
     s.formant = std::isfinite(s.formant) ? std::clamp(s.formant, -24.0f, 24.0f) : 0;
     s.outputGainDb = std::isfinite(s.outputGainDb) ? s.outputGainDb : 0;
     s.globalMix = unit(s.globalMix, 1);
-    s.tuningMix = unit(s.tuningMix, 1);
-    s.tuning = sanitiseTuningSettings(s.tuning);
     s.leadSettings = bounded(s.leadSettings);
     return s;
 }
@@ -115,17 +112,6 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     for (auto& voice : voices)
         voice.stretch.configure(1, window, hop);
     latencySamples = lead.inputLatency() + lead.outputLatency();
-    // Tuning still supports only 8–192 kHz. Preallocate at supported rates even
-    // when OFF, without restricting the legacy OFF engine's sample-rate range.
-    // Enabled unsupported rates retain tuner.prepare's existing rejection.
-    int maximumTuningLatency = 0;
-    if (settings.tuningEnabled || (rate >= 8000 && rate <= 192000)) {
-        tuner.prepare(rate, quantum);
-        maximumTuningLatency = tuner.latency();
-    }
-    // Storage capacity is independent of the latency latched for this prepare.
-    tuningLatencySamples = settings.tuningEnabled ? maximumTuningLatency : 0;
-    for (auto& delay : tuningCleanDelay) delay.prepare(maximumTuningLatency + 2);
     // 100 ms user delay plus up to 14 ms of Human motion.
     maxDoubleDelay = static_cast<int>(std::ceil(rate * 0.115));
     for (auto& voice : voices) {
@@ -134,12 +120,12 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     }
     for (auto* delays : {&dryDelay, &levelDelay, &auxiliaryDelay})
         for (auto& delay : *delays)
-            delay.prepare(latencySamples + maximumTuningLatency + 2);
+            delay.prepare(latencySamples + 2);
     for (size_t channel = 0; channel < 2; ++channel) {
         leadHarmony[channel].prepare(rate, latencySamples);
         leadLocalDelay[channel].prepare(maxDoubleDelay + 2);
     }
-    articulationDelay.prepare(latencySamples + maximumTuningLatency + maxDoubleDelay + 2);
+    articulationDelay.prepare(latencySamples + maxDoubleDelay + 2);
 
     parameterStep = coefficient(0.018);
     rmsStep = coefficient(0.043);
@@ -165,10 +151,6 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
 
 void VocalEngine::reset(const Settings& requested) {
     const auto settings = boundedSettings(requested);
-    tuner.reset();
-    for (auto& delay : tuningCleanDelay) delay.clear();
-    tuningMix = settings.tuningEnabled ? settings.tuningMix : 0;
-    leadTuningBlend = settings.leadSettings.tuneMix;
     lead.reset();
     lead.setFormantBase(static_cast<float>(150.0 / rate));
     leadMotion.controls = settings.leadSettings;
@@ -192,7 +174,6 @@ void VocalEngine::reset(const Settings& requested) {
     for (size_t index = 0; index < voices.size(); ++index) {
         auto& voice = voices[index];
         voice.controls = bounded(initialVoices[index]);
-        voice.tuningBlend = bounded(settings.voiceSettings[index]).tuneMix;
         voice.presence = voice.controls.present && voice.controls.enabled ? 1.0f : 0.0f;
         voice.running = voice.controls.present;
         voice.harmony.reset();
@@ -379,7 +360,6 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
                                const float* const* auxiliary, int auxiliaryChannels) {
     // Capture the whole chunk first because a host may use the same buffer for input and output.
     std::array<Buffer, 2> alignedDry{}, alignedLevel{}, alignedAuxiliary{};
-    Buffer tuningAmounts{};
     for (int i = 0; i < count; ++i) {
         const float levelTarget = targets.levelOn ? targets.level : 0.0f;
         controls.level = mix(controls.level, levelTarget, parameterStep);
@@ -393,41 +373,19 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
             inputMeters[channel].process(sample);
             leadInput[channel][i] = sample * multiplier;
             dryDelay[channel].push(sample);
-            if (!tuningLatencySamples) levelDelay[channel].push(leadInput[channel][i]);
-            alignedDry[channel][i] = dryDelay[channel].read(static_cast<float>(latencySamples + tuningLatencySamples));
+            levelDelay[channel].push(leadInput[channel][i]);
+            alignedDry[channel][i] = dryDelay[channel].read(static_cast<float>(latencySamples));
             alignedLevel[channel][i] = levelDelay[channel].read(static_cast<float>(latencySamples));
         }
         for (int channel = 0; channel < 2; ++channel) {
             const float sample = auxiliary && auxiliaryChannels > 0
                 ? sampleAt(auxiliary[auxiliaryChannels == 1 ? 0 : channel], offset + i) : 0.f;
             auxiliaryDelay[channel].push(sample);
-            alignedAuxiliary[channel][i] = auxiliaryDelay[channel].read(float(latencySamples + tuningLatencySamples));
+            alignedAuxiliary[channel][i] = auxiliaryDelay[channel].read(float(latencySamples));
         }
         const float mid = 0.5f * (left + right);
         monoInput[i] = mid * multiplier;
         articulationInput[i] = consonantWeight(mid);
-    }
-
-    if (tuningLatencySamples) {
-        // One linked stereo tuner before fan-out. Each existing renderer receives
-        // one blended source, never separately rendered clean and tuned voices.
-        const float* tunerIn[] = {leadInput[0].data(), leadInput[1].data()};
-        float* tunerOut[] = {tunedInput[0].data(), tunedInput[1].data()};
-        tuner.process(tunerIn, tunerOut, count, inChannels, targets.tuning);
-        for (int i = 0; i < count; ++i) {
-            tuningMix = mix(tuningMix, targets.tuningEnabled ? targets.tuningMix : 0, parameterStep);
-            if (std::abs(tuningMix - (targets.tuningEnabled ? targets.tuningMix : 0)) < 0.00001f)
-                tuningMix = targets.tuningEnabled ? targets.tuningMix : 0;
-            tuningAmounts[i] = tuningMix;
-            leadTuningBlend = mix(leadTuningBlend, targets.leadSettings.tuneMix, parameterStep);
-            for (int channel = 0; channel < inChannels; ++channel) {
-                tuningCleanDelay[channel].push(leadInput[channel][i]);
-                cleanInput[channel][i] = tuningCleanDelay[channel].read(float(tuningLatencySamples));
-                leadInput[channel][i] = mix(cleanInput[channel][i], tunedInput[channel][i], tuningMix * leadTuningBlend);
-                levelDelay[channel].push(leadInput[channel][i]);
-                alignedLevel[channel][i] = levelDelay[channel].read(float(latencySamples));
-            }
-        }
     }
 
     const float* leadIn[] = {leadInput[0].data(), leadInput[1].data()};
@@ -455,8 +413,7 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         }
         if (!leadMusical && leadPitchBlend == 0) leadHarmonyRunning = false;
     }
-    Buffer blendedVoice{};
-    const float* voiceIn[] = {blendedVoice.data()};
+    const float* voiceIn[] = {monoInput.data()};
     const auto chunkTargets = targets.advanced ? targets.voiceSettings : basicVoiceSettings(controls.human);
     for (size_t index = 0; index < voices.size(); ++index) {
         auto& voice = voices[index];
@@ -476,16 +433,6 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
             voice.harmonyBlend = 0;
             voice.running = true;
         }
-        for (int i = 0; i < count; ++i) {
-            if (tuningLatencySamples) {
-                // Tune Mix is independent of Basic/Advanced voice geometry.
-                voice.tuningBlend = mix(voice.tuningBlend, bounded(targets.voiceSettings[index]).tuneMix, parameterStep);
-                const int right = inChannels == 2 ? 1 : 0;
-                const float clean = 0.5f * (cleanInput[0][i] + cleanInput[right][i]);
-                const float tuned = 0.5f * (tunedInput[0][i] + tunedInput[right][i]);
-                blendedVoice[i] = mix(clean, tuned, tuningAmounts[i] * voice.tuningBlend);
-            } else blendedVoice[i] = monoInput[i];
-        }
         float* voiceOut[] = {voice.rendered.data()};
         voice.stretch.process(voiceIn, count, voiceOut, count);
         const bool musical = std::abs(voice.controls.pitchSemitones) > 0.00001f;
@@ -498,7 +445,7 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
             voice.harmony.setSemitones(voice.appliedPitch + voice.appliedDetune * 0.01f,
                                       voice.appliedFormant);
             for (int i = 0; i < count; ++i) {
-                const float shifted = voice.harmony.process(blendedVoice[i]);
+                const float shifted = voice.harmony.process(monoInput[i]);
                 if (voice.harmonyWarmup) --voice.harmonyWarmup;
                 else voice.harmonyBlend = mix(voice.harmonyBlend, musical ? 1.0f : 0.0f, parameterStep);
                 if (std::abs(voice.harmonyBlend - (musical ? 1.0f : 0.0f)) < 0.00001f)
@@ -618,7 +565,7 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
             const float voiceGain = matchedGain(voice.levelMatch, referenceMono * referenceMono,
                                                 voice.rendered[i] * voice.rendered[i]);
             voice.delay.push(voice.rendered[i] * voiceGain);
-            const float consonants = articulationDelay.read(static_cast<float>(latencySamples + tuningLatencySamples) + delaySamples);
+            const float consonants = articulationDelay.read(static_cast<float>(latencySamples) + delaySamples);
             const float sample = voice.delay.read(delaySamples) * consonants * voice.amplitude;
             const float pan = v.pan * controls.width;
             // Linear pan preserves each voice's contribution in mono. The

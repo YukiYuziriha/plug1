@@ -99,9 +99,10 @@ inline void run() {
                         require(slider->getTextBoxPosition() == juce::Slider::TextBoxAbove,
                                 "Creative values must retain the native textbox configuration");
                         if (slider != mix) {
-                            require(row->getWidth() >= 68 && row->getWidth() <= 110 && row->getHeight() >= 100,
+                            require(row->getWidth() >= 82 && row->getWidth() <= 110 && row->getHeight() >= 100,
                                     "Creative knob must use bounded face-sized cells");
                             const auto dial = slider->getLookAndFeel().getSliderLayout(*slider);
+                            require(dial.textBoxBounds.getHeight() == 22, "Creative rotary must reserve the enlarged 22px value lane");
                             require(!dial.textBoxBounds.intersects(dial.sliderBounds)
                                 && slider->getLocalBounds().contains(dial.sliderBounds), "Creative value/dial overlap");
                             const float face = (float(std::min(dial.sliderBounds.getWidth(), dial.sliderBounds.getHeight())) * .5f - 8.f) * 1.55f;

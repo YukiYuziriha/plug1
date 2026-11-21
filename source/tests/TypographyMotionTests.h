@@ -3,8 +3,12 @@
 
 namespace vocalstack::typographyMotionTests {
 namespace ui = toneUiTests;
-inline void fits(const juce::String& text, float width, float height, float size = 12.f) {
-    const juce::Font font(pixelFontOptions(size));
+inline void fits(const juce::String& text, float width, float height, float size = 12.f,
+                 int styleFlags = juce::Font::plain) {
+    const juce::Font font(pixelFontOptions(size, styleFlags));
+    ui::require(std::abs(font.getHeight() - (size + 2.f)) < .001f,
+                "Technical label missed exact +2 height: " + text);
+    ui::require(font.getHorizontalScale() == 1.f, "Technical label squeezed horizontally: " + text);
     ui::require(juce::GlyphArrangement::getStringWidth(font, text) <= width,
                 "Technical label overflow: " + text + " / width " + juce::String(width));
     ui::require(font.getAscent() + font.getDescent() <= height, "Technical label baseline clipped: " + text);
@@ -24,23 +28,61 @@ inline void layout(bool capture) {
                 const auto axes = SpectralMorphPanel::axisLabels(plot.getWidth(), rate);
                 fits(axes.first, float(plot.getWidth()), 16); fits(axes.second, float(plot.getWidth()), 16);
             }
-            const float cell = float(std::min(145, plot.getWidth() / 3));
-            for (const auto* text : {"MAIN", "DONOR", "RESULT"}) fits(text, cell, 16);
+            const int cell = std::min(145, plot.getWidth() / 3);
+            fits("MAIN", float(cell), 16); fits("DONOR", float(cell), 16);
+            fits(plot.getWidth() < 320 ? "RESULT" : "RESULT / pre Mix", float(plot.getWidth() - 2 * cell), 16);
+            const juce::Rectangle<int> legend(plot.getX(), plot.getY() - 17, plot.getWidth(), 16);
+            const juce::Rectangle<int> levelAxis(plot.getX(), plot.getBottom(), plot.getWidth(), 16);
+            const auto frequencyAxis = levelAxis.translated(0, 16);
+            ui::require(morph.getLocalBounds().contains(legend) && morph.getLocalBounds().contains(frequencyAxis)
+                && !legend.intersects(plot) && !levelAxis.intersects(plot) && !levelAxis.intersects(frequencyAxis),
+                "Morph legend/axis lanes overlap the plot or each other");
             if (capture) ui::screenshot(morph, "typography-morph-" + updateUiTests::themeName(theme) + "-" + juce::String(width) + ".png");
             morph.setLookAndFeel(nullptr);
         }
-        for (int width : {158, 174, 190, 220, 360, 700}) {
-            const juce::Rectangle<float> bounds(0, 0, float(width), 190);
+        for (int width : {158, 174, 179, 180, 190, 220, 245, 246, 289, 290, 360, 700}) {
+            const juce::Rectangle<float> bounds(7, 9, float(width), 190);
             const auto plot = CompressorPlot::plotBounds(bounds);
-            for (const auto* text : {"In", "Wet", "Curve", "GR"}) fits(text, width / 4.f - 9, 13);
-            fits(width < 290 ? "dBFS / RMS" : "Output dBFS / RMS", float(width - 105), 13);
-            fits("GR dB", 45, 13);
-            fits(plot.getWidth() < 180 ? "-72  In dBFS" : "-72     Input dBFS", plot.getWidth() - 9, 13);
-            fits("-4 s  History", plot.getWidth() - juce::GlyphArrangement::getStringWidth(juce::Font(pixelFontOptions(12.f)), "now") - 3, 13);
-            for (const auto* text : {"-72", "-36", "0", "18", "36"}) fits(text, 25, 12);
+            ui::require(plot == bounds.withTrimmedTop(32).withTrimmedBottom(36).withTrimmedLeft(34).withTrimmedRight(32),
+                        "Compressor plot no longer reserves its enlarged typography lanes");
+            const auto laneFits = [&](const juce::String& text, juce::Rectangle<float> lane) {
+                ui::require(bounds.contains(lane) && !lane.intersects(plot),
+                            "Compressor text lane clips its frame or overlaps the plot: " + text);
+                fits(text, lane.getWidth(), lane.getHeight());
+            };
+            const juce::Rectangle<float> heading(bounds.getX(), bounds.getY(), float(width - 52), 15);
+            const juce::Rectangle<float> grHeading(bounds.getRight() - 48, bounds.getY(), 48, 15);
+            ui::require(!heading.intersects(grHeading), "Compressor axis headings overlap");
+            laneFits(width < 290 ? "dBFS / RMS" : "Output dBFS / RMS", heading);
+            laneFits("GR dB", grHeading);
+            const float cell = float(width) / 4.f;
+            for (int i = 0; i < 4; ++i)
+                laneFits(i == 0 ? "In" : i == 1 ? "Wet" : i == 2 ? (cell < 45 ? "Crv" : "Curve") : "GR",
+                         {bounds.getX() + float(i) * cell + 9, bounds.getY() + 16, cell - 9, 15});
+            for (int db : {-72, -36, 0}) {
+                const float y = std::clamp(CompressorPlot::levelY(float(db), plot) - 7.f, plot.getY(), plot.getBottom() - 14.f);
+                laneFits(juce::String(db), {bounds.getX(), y, 31, 14});
+            }
+            laneFits("0", {plot.getRight() + 3, plot.getY(), 29, 14});
+            laneFits("18", {plot.getRight() + 3, plot.getCentreY() - 7, 29, 14});
+            laneFits("36", {plot.getRight() + 3, plot.getBottom() - 14, 29, 14});
+            const juce::Font font(pixelFontOptions(12.f));
+            const float zeroWidth = juce::GlyphArrangement::getStringWidth(font, "0");
+            const float nowWidth = juce::GlyphArrangement::getStringWidth(font, "now");
+            const juce::Rectangle<float> inputAxis(plot.getX(), plot.getBottom() + 2, plot.getWidth(), 15);
+            const juce::Rectangle<float> historyAxis(plot.getX(), plot.getBottom() + 19, plot.getWidth(), 15);
+            ui::require(!inputAxis.intersects(historyAxis), "Compressor input/history axis rows overlap");
+            const auto inputText = plot.getWidth() < 180 ? "-72 In dBFS" : "-72     Input dBFS";
+            const auto historyText = plot.getWidth() < 180 ? "-4 s" : "-4 s  History";
+            laneFits(inputText, inputAxis); laneFits("0", inputAxis);
+            laneFits(historyText, historyAxis); laneFits("now", historyAxis);
+            fits(inputText, plot.getWidth() - zeroWidth - 3, 15);
+            fits(historyText, plot.getWidth() - nowWidth - 3, 15);
         }
         fits("Bypassed", 80, 15);
-        fits("FINAL GAIN", 88, 23); fits("TRUE MIX", 124, 23);
+        const int headingStyle = theme == 2 ? juce::Font::plain : juce::Font::bold;
+        fits("FINAL GAIN", 88, 23, 12.f, headingStyle);
+        fits("TRUE MIX", 124, 23, 12.f, headingStyle);
     }
 }
 inline void capture() {

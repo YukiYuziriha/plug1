@@ -7,6 +7,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_data_structures/juce_data_structures.h>
 #include <filesystem>
+#include <cmath>
 #include <set>
 #include <cstdlib>
 #include <string_view>
@@ -17,7 +18,7 @@ namespace vocalstack {
 
 // Message/control thread only; never call from processBlock. Header-only integration:
 // Editor owns PresetBar presets{owner}; addAndMakeVisible(presets), allocate a NEW
-// 48px row (recommended width >= 620), and optionally handle onPatchLoaded to sync
+// preferredHeight row (recommended width >= 620), and optionally handle onPatchLoaded to sync
 // routing/voice panels. Existing 940px editor has no unused full-width toolbar row.
 // Nothing here changes programs, host-state format, or machine preferences in APVTS.
 class PresetManager {
@@ -190,6 +191,9 @@ public:
             if (p) setRaw(patch, p->paramID, p->convertFrom0to1(p->getDefaultValue()));
         }
         stripPreferences(patch);
+        patch.removeProperty("fxSlotLineage", nullptr);
+        for (int slot = 1; slot <= 15; ++slot)
+            patch.removeProperty(juce::Identifier("fxSlotOwner" + juce::String(slot)), nullptr);
         patch.setProperty("advancedInitialized", true, nullptr);
         patch.addChild(juce::ValueTree("Modulation"), -1, nullptr);
         patch.addChild(juce::ValueTree("RoutingLayout"), -1, nullptr);
@@ -469,6 +473,8 @@ class PresetBar final : public juce::Component {
         }
     };
 public:
+    static constexpr int controlRowHeight = 30, statusRowHeight = 22;
+    static constexpr int preferredHeight = controlRowHeight + 2 + statusRowHeight;
     explicit PresetBar(Processor& processor, juce::File preferencesFile = {}) : manager(processor, preferencesFile) {
         setWantsKeyboardFocus(false);
         for (auto* button : {&refreshButton, &folderButton, &saveButton, &undoButton}) {
@@ -478,6 +484,7 @@ public:
         browser.getProperties().set("vocalstackPresetSelector", true);
         browser.setEditableText(false); browser.setWantsKeyboardFocus(false); browser.setMouseClickGrabsKeyboardFocus(false);
         status.setInterceptsMouseClicks(false, false);
+        status.setMinimumHorizontalScale(1.f);
         status.setFont(pixelFontOptions(11.0f));
         browser.setTooltip("Factory and user presets. Loading replaces the whole patch; Undo load restores the previous patch.");
         undoButton.setTooltip("Restore the entire patch from before the last successful preset load (one step, not parameter undo).");
@@ -534,12 +541,19 @@ public:
     }
     void resized() override {
         auto area = getLocalBounds();
-        auto row = area.removeFromTop(26);
-        undoButton.setBounds(row.removeFromRight(90).reduced(2, 0));
-        saveButton.setBounds(row.removeFromRight(56).reduced(2, 0));
-        folderButton.setBounds(row.removeFromRight(66).reduced(2, 0));
-        refreshButton.setBounds(row.removeFromRight(68).reduced(2, 0));
+        auto row = area.removeFromTop(controlRowHeight);
+        const auto placeButton = [&](juce::TextButton& button, int minimumWidth) {
+            const auto font = getLookAndFeel().getTextButtonFont(button, controlRowHeight);
+            const int width = juce::jmax(minimumWidth,
+                int(std::ceil(juce::GlyphArrangement::getStringWidth(font, button.getButtonText()))) + 16);
+            button.setBounds(row.removeFromRight(width + 4).reduced(2, 0));
+        };
+        placeButton(undoButton, 90);
+        placeButton(saveButton, 56);
+        placeButton(folderButton, 66);
+        placeButton(refreshButton, 68);
         browser.setBounds(row.reduced(2, 0));
+        area.removeFromTop(2);
         status.setBounds(area.reduced(3, 0));
     }
 private:
@@ -564,7 +578,7 @@ private:
         if (choosing) return;
         choosing = true;
         report(juce::Result::ok(), saving ? "Choose a new preset filename..." : "Choose the user preset folder...");
-        chooser = std::make_unique<juce::FileChooser>(saving ? "Save new HEAVEN preset (no overwrite)" : "Choose HEAVEN preset folder",
+        chooser = std::make_unique<juce::FileChooser>(saving ? "Save new Vocal Stack preset (no overwrite)" : "Choose Vocal Stack preset folder",
             saving ? manager.getFolder().getChildFile("Untitled" + juce::String(PresetManager::extension)) : manager.getFolder(),
             saving ? "*" + juce::String(PresetManager::extension) : juce::String());
         const int flags = saving ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles

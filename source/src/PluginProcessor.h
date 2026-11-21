@@ -3,11 +3,11 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <clap-juce-extensions/clap-juce-extensions.h>
 #include "VocalEngine.h"
-#include "AutomaticTuner.h"
 #include "MeterBridge.h"
 #include "VoiceBridge.h"
 #include "FxMonitor.h"
 #include "Modulation.h"
+#include <map>
 #include <mutex>
 #include <string_view>
 #include <string>
@@ -217,15 +217,8 @@ inline const auto stereoMonoIdStorage = [] {
 inline juce::String stereoMonoParameterId(size_t slot) {
     return slot > 0 && slot < 16 ? juce::String(stereoMonoIdStorage[slot - 1]) : juce::String();
 }
-inline constexpr size_t tuningParameterStart = stereoMonoParameterStart + 15;
-static_assert(tuningParameterStart == 2357);
-inline constexpr std::array<const char*, 21> tuningParameterIds{
-    "tuningEnabled", "tuningMix", "tuningRoot", "tuningScale", "tuningNotes",
-    "tuningReference", "tuningRange", "tuningAmount", "tuningRetune", "tuningTransition",
-    "tuningStability", "tuningFormants", "leadTuneMix", "voice1TuneMix", "voice2TuneMix",
-    "voice3TuneMix", "voice4TuneMix", "voice5TuneMix", "voice6TuneMix", "voice7TuneMix", "voice8TuneMix"};
 inline const auto parameterIds = [] {
-    std::array<const char*, tuningParameterStart + tuningParameterIds.size()> ids{};
+    std::array<const char*, stereoMonoParameterStart + 15> ids{};
         static_assert(utilityParameterStart + 15 * utilityParameterCount == newCreativeParameterStart);
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
@@ -249,7 +242,6 @@ inline const auto parameterIds = [] {
         ids[utilityParameterStart + i] = utilityParameterIdStorage[i].c_str();
     for (size_t i = 0; i < spectralMorphIdStorage.size(); ++i) ids[spectralMorphParameterStart + i] = spectralMorphIdStorage[i].c_str();
     for (size_t i = 0; i < stereoMonoIdStorage.size(); ++i) ids[stereoMonoParameterStart + i] = stereoMonoIdStorage[i].c_str();
-    for (size_t i = 0; i < tuningParameterIds.size(); ++i) ids[tuningParameterStart + i] = tuningParameterIds[i];
     return ids;
 }();
 static_assert(parameterIds.size() <= ModulationBackend::maxTargets);
@@ -338,8 +330,6 @@ public:
     Settings settings() const;
 
     // Control-thread API. Setters validate the entire bounded state before publication.
-    TuningTelemetry getTuningTelemetry() const noexcept;
-    bool tuningActivationPending() const;
     ModulationState getModulationState() const;
     bool setModulationState(const ModulationState& state, juce::String& error);
     void beginModulationAssignment(uint32_t id);
@@ -350,6 +340,8 @@ public:
 
     Graph getRoutingGraph() const;
     bool setRoutingGraph(const Graph&, juce::String& error);
+    // Bit n is unavailable for new allocation in disposable FX slot n (1..15).
+    unsigned spentFxSlots() const;
     juce::String getRoutingError() const;
     bool routingRestartPending() const;
     juce::ValueTree getRoutingLayout() const;
@@ -396,13 +388,18 @@ private:
     juce::ValueTree copyState();
     bool restoreState(const juce::XmlElement&);
     void render(juce::AudioBuffer<float>&, juce::MidiBuffer&, bool hostBypass);
-    void publishTuningTelemetry() noexcept;
-    Settings renderSettings(Settings) const noexcept;
     Settings settingsFromValues(const std::array<float, parameterIds.size()>&) const;
     Graph qualitySnapshot(Graph) const;
     void updateModulationValues();
     void timerCallback() override;
-    bool setRoutingGraphLocked(const Graph&, juce::String& error);
+    friend class RoutingPanel;
+    struct FxSlotOwner {
+        juce::String identity;
+        NodeType type{};
+    };
+    using FxSlotOwners = std::array<FxSlotOwner, 16>;
+    bool setRoutingGraphImpl(const Graph&, juce::String& error, const uint64_t* historyRevision);
+    bool setRoutingGraphLocked(const Graph&, juce::String& error, bool restoreHistory = false);
     void reconnectVoiceLocked(size_t slot);
     void disconnectVoiceLocked(size_t slot);
 
@@ -434,7 +431,15 @@ private:
     // Never acquired by render/settings/parameterChanged. Hosts may restore state
     // on a non-message control thread; all engine control calls are serialized.
     mutable std::recursive_mutex controlMutex;
-    Graph routingDraft = defaultGraph(), routingActive = routingDraft;
+    Graph routingDraft = defaultGraph(false), routingActive = routingDraft;
+    // Retain owners even when their nodes are absent. Graph history may restore
+    // an owner but can never roll these records back.
+    FxSlotOwners fxSlotOwners{};
+    juce::String fxSlotLineage = juce::Uuid().toString();
+    // Returning to an older preset in this instance must not forget allocations
+    // made before switching away. Save files carry their own lineage only.
+    std::map<juce::String, FxSlotOwners> previousFxLineages;
+    uint64_t routingStateRevision = 0;
     juce::ValueTree routingLayout{"RoutingLayout"};
     juce::String routingError;
     // FxMonitor's large windows live on its heap, not the Processor/test stack.
@@ -445,13 +450,6 @@ private:
     SpectralMorphBridge spectralBridge;
     VocalEngine engine;
     std::atomic<int> sidechainChannels{0};
-    // Atomic payload plus sequence: readers never race plain DSP-owned fields.
-    static_assert(std::atomic<float>::is_always_lock_free && std::atomic<unsigned>::is_always_lock_free);
-    std::atomic<unsigned> tuningTelemetrySequence{0};
-    std::array<std::atomic<float>, 5> tuningTelemetryValues{};
-    std::atomic<unsigned> tuningTelemetryFlags{0};
-    bool preparedTuningEnabled = false; // Latency reservation, retained through Off.
-    bool tuningRestartRequested = false; // Control thread; coalesced until reactivation.
     int preparedRoutingLatency = 0;
     bool restartPending = false;
     bool prepared = false;

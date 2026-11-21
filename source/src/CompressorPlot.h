@@ -10,7 +10,7 @@ public:
     struct Colours { juce::Colour background, border, input, output, transfer, gr, text; };
     struct Model { float threshold, ratio, knee, makeup, mix; bool enabled; };
     static juce::Rectangle<float> plotBounds(juce::Rectangle<float> bounds) {
-        return bounds.withTrimmedTop(28).withTrimmedBottom(32).withTrimmedLeft(30).withTrimmedRight(28);
+        return bounds.withTrimmedTop(32).withTrimmedBottom(36).withTrimmedLeft(34).withTrimmedRight(32);
     }
     static float levelY(float db, juce::Rectangle<float> r) {
         return r.getBottom() - std::clamp((db + 72.f) / 72.f, 0.f, 1.f) * r.getHeight();
@@ -33,15 +33,15 @@ public:
         const auto r = plotBounds(bounds);
         if (r.isEmpty()) return;
         g.setColour(c.background); g.fillRect(r);
-        label(g, {r.getX(), bounds.getY(), bounds.getWidth()-75, 13},
+        label(g, {bounds.getX(), bounds.getY(), bounds.getWidth()-52, 15},
                       bounds.getWidth()<290 ? "dBFS / RMS" : "Output dBFS / RMS", c.text);
-                label(g, {bounds.getRight()-45, bounds.getY(), 45, 13}, "GR dB", c.gr, juce::Justification::centredRight);
+                label(g, {bounds.getRight()-48, bounds.getY(), 48, 15}, "GR dB", c.gr, juce::Justification::centredRight);
         const float cell = bounds.getWidth() / 4.f;
         for (int i = 0; i < 4; ++i) {
             const auto colour = i == 0 ? c.input : i == 1 ? c.output : i == 2 ? c.transfer : c.gr;
             const float x = bounds.getX() + i * cell;
-            g.setColour(colour); g.drawLine(x, bounds.getY()+21, x+6, bounds.getY()+21, 1.f);
-            label(g, {x+9, bounds.getY()+14, cell-9, 13}, i==0 ? "In" : i==1 ? "Wet" : i==2 ? "Curve" : "GR", colour);
+            g.setColour(colour); g.drawLine(x, bounds.getY()+23, x+6, bounds.getY()+23, 1.f);
+            label(g, {x+9, bounds.getY()+16, cell-9, 15}, i==0 ? "In" : i==1 ? "Wet" : i==2 ? (cell < 45 ? "Crv" : "Curve") : "GR", colour);
         }
         {
             juce::Graphics::ScopedSaveState saved(g);
@@ -106,16 +106,16 @@ public:
         }
         g.setColour(c.border); g.drawRect(r,.7f);
         for(int db : {-72,-36,0}) {
-            const float y=std::clamp(levelY(float(db),r)-6.f,r.getY(),r.getBottom()-12.f);
-            label(g,{bounds.getX(),y,27,12},juce::String(db),c.text,juce::Justification::centredRight);
+            const float y=std::clamp(levelY(float(db),r)-7.f,r.getY(),r.getBottom()-14.f);
+            label(g,{bounds.getX(),y,31,14},juce::String(db),c.text,juce::Justification::centredRight);
         }
-        label(g,{r.getRight()+3,r.getY(),25,12},"0",c.gr);
-        label(g,{r.getRight()+3,r.getCentreY()-6,25,12},"18",c.gr);
-        label(g,{r.getRight()+3,r.getBottom()-12,25,12},"36",c.gr);
-        label(g,{r.getX(),r.getBottom()+2,r.getWidth(),13},r.getWidth()<180 ? "-72  In dBFS" : "-72     Input dBFS",c.transfer);
-        label(g,{r.getX(),r.getBottom()+2,r.getWidth(),13},"0",c.transfer,juce::Justification::centredRight);
-        label(g,{r.getX(),r.getBottom()+16,r.getWidth(),13},"-4 s  History",c.gr);
-        label(g,{r.getX(),r.getBottom()+16,r.getWidth(),13},"now",c.gr,juce::Justification::centredRight);
+        label(g,{r.getRight()+3,r.getY(),29,14},"0",c.gr);
+        label(g,{r.getRight()+3,r.getCentreY()-7,29,14},"18",c.gr);
+        label(g,{r.getRight()+3,r.getBottom()-14,29,14},"36",c.gr);
+        label(g,{r.getX(),r.getBottom()+2,r.getWidth(),15},r.getWidth()<180 ? "-72 In dBFS" : "-72     Input dBFS",c.transfer);
+        label(g,{r.getX(),r.getBottom()+2,r.getWidth(),15},"0",c.transfer,juce::Justification::centredRight);
+        label(g,{r.getX(),r.getBottom()+19,r.getWidth(),15},r.getWidth()<180 ? "-4 s" : "-4 s  History",c.gr);
+        label(g,{r.getX(),r.getBottom()+19,r.getWidth(),15},"now",c.gr,juce::Justification::centredRight);
     }
 };
 }

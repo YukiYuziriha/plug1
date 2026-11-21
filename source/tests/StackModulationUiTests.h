@@ -176,6 +176,9 @@ void resizeTabs() {
         expect(editor->isShowing() && editor->getPeer(), "Resize fixture has no showing native peer");
         auto& canvas = *ui::slider(*editor, "outputGain").getParentComponent();
         auto& routing = component<vocalstack::RoutingPanel>(*editor);
+        auto& rack = component<vocalstack::MainBusFxRackPanel>(*editor);
+        auto& stack = component<vocalstack::DoublerPanel>(*editor);
+        const auto stackHeight = [&] { return rack.getBottom() + vocalstack::editorLayout::stackBottomPadding; };
         auto* viewport = canvas.findParentComponentOfClass<juce::Viewport>();
         expect(viewport != nullptr && viewport->getComponentID() == "stackViewport", "Stack requires a viewport");
         for (const auto size : {juce::Point<int>(940, 560), juce::Point<int>(1480, 1040), juce::Point<int>(1480, 1400)}) {
@@ -183,19 +186,18 @@ void resizeTabs() {
             viewport->setViewPosition(0, 0);
             const int contentHeight = size.y - vocalstack::editorLayout::presetFooterHeight;
             expect(canvas.getWidth() == vocalstack::editorLayout::editorWidth &&
-                               canvas.getHeight() == vocalstack::editorLayout::stackCanvasHeight && canvas.getTransform().isIdentity(),
+                               canvas.getHeight() == stackHeight() && canvas.getTransform().isIdentity(),
                    "Stack retains native-size controls rather than shrinking to fit height");
             expect(viewport->getHeight() == contentHeight, "Stack scrolling excludes fixed preset footer");
             expect(viewport->getVerticalScrollBar().isVisible() == (contentHeight < canvas.getHeight()),
                    "Stack vertical scrollbar follows overflow");
-            auto& rack = component<vocalstack::MainBusFxRackPanel>(*editor);
-            auto& stack = component<vocalstack::DoublerPanel>(*editor);
-            expect(rack.getBounds() == juce::Rectangle<int>(18, 344, 904, vocalstack::MainBusFxRackPanel::preferredHeight)
+            expect(rack.getBounds() == juce::Rectangle<int>(18, vocalstack::editorLayout::stackRackY, 904,
+                                                            rack.preferredHeightForWidth(904))
                        && stack.getBounds() == juce::Rectangle<int>(18, vocalstack::editorLayout::stackPanelY, 904,
                                                                                        vocalstack::editorLayout::stackPanelHeight)
-                       && canvas.getLocalBounds().contains(stack.getBounds())
-                       && !rack.getBounds().intersects(stack.getBounds()),
-                   "Full FX row and voice cards retain non-overlapping native layout");
+                       && canvas.getLocalBounds().contains(rack.getBounds())
+                       && rack.getY() > stack.getBottom(),
+                   "FX follows the full voice section in the native layout");
             if (contentHeight < canvas.getHeight()) {
                 auto& output = ui::slider(*editor, "outputGain");
                 const auto point = editor->getLocalPoint(&output, output.getLocalBounds().getCentre());
@@ -212,7 +214,7 @@ void resizeTabs() {
                 expect(viewport->getViewPositionY() > 0, "Hover wheel over main knob scrolls Stack without clicking");
                 expect(juce::Component::getCurrentlyFocusedComponent() == focus, "Stack wheel must not steal host focus");
                 viewport->setViewPosition(0, canvas.getHeight());
-                expect(viewport->getViewArea().contains(stack.getBounds().getBottomLeft()), "Stack bottom remains reachable");
+                expect(viewport->getViewArea().contains(rack.getBounds().getBottomLeft()), "FX rack bottom remains reachable");
             }
             action(*editor, "Routing");
             expect(canvas.getTransform().isIdentity() && canvas.getWidth() == size.x && canvas.getHeight() == contentHeight,
@@ -221,7 +223,7 @@ void resizeTabs() {
                    "Routing grows with available space");
             action(*editor, "Stack");
             owner.setAdvancedVisible(false); pumpTimers();
-            expect(canvas.getHeight() == vocalstack::editorLayout::stackCanvasHeight && stack.isShowing() && editor->getWidth() == size.x && editor->getHeight() == size.y,
+            expect(canvas.getHeight() == stackHeight() && stack.isShowing() && editor->getWidth() == size.x && editor->getHeight() == size.y,
                    "Legacy drawer state cannot change Stack layout or window dimensions");
         }
         editor.reset();
@@ -293,7 +295,35 @@ void sharedInspectors() {
     }
 }
 
+void fxAssignmentLabels() {
+    using vocalstack::NodeType;
+    auto owner = std::make_unique<Processor>();
+    const vocalstack::Graph graph{{{1, NodeType::lead}, {12, NodeType::chorale},
+        {100, NodeType::reverb}, {111, NodeType::stereo}, {13, NodeType::output}},
+        {{1, 12, 0}, {12, 100, 0}, {100, 111, 0}, {111, 13, 0}}};
+    juce::String error;
+    expect(owner->setRoutingGraph(graph, error), "Assignment label graph rejected: " + error);
+    vocalstack::ModulationState state;
+    state.modulators.push_back({1});
+    state.assignments = {{1, "choraleMix", .2f, true}, {1, "fx1Mix", .2f, true},
+        {1, "fx1reverb_decay", .2f, true}, {1, "fx12On", .2f, true},
+        {1, "fx12stereo_width", .2f, true}};
+    expect(owner->setModulationState(state, error), "Assignment label fixture rejected: " + error);
+
+    vocalstack::ModulationPanel panel(*owner);
+    panel.setSize(400, 600);
+    panel.select(1);
+    auto* tab = findButton(panel, "Assignments");
+    expect(tab && bool(tab->onClick), "Missing Assignments tab");
+    tab->onClick();
+    for (const auto* text : {"Chorale / Mix", "Reverb 1 / Mix", "Reverb 1 / Midband RT60",
+                             "Stereo 12 / Active", "Stereo 12 / Width"})
+        expect(ui::find<juce::Label>(panel, [&](auto& label) { return label.getText() == text; }) != nullptr,
+               "Missing FX assignment label: " + juce::String(text));
+}
+
 void modulationInspector() {
+    fxAssignmentLabels();
     for (const bool neon : {false, true}) {
         std::unique_ptr<Processor> ownerStorage = std::make_unique<Processor>();
         Processor& owner = *ownerStorage;
@@ -488,8 +518,6 @@ void compactCards() {
         std::unique_ptr<juce::AudioProcessorEditor> editor(owner.createEditor());
         editor->setSize(1280, 800);
         vocalstack::guiTestDisplay::attach(*editor);
-        // Native hit-testing must target our fixture, not an overlapping host/editor window.
-        editor->toFront(false);
         auto& stack = component<vocalstack::DoublerPanel>(*editor);
         for (const auto* prefix : {"lead", "voice1", "voice2"}) {
             auto* card = ui::find<vocalstack::VoiceControls>(stack, [&](auto& c) {
@@ -503,12 +531,9 @@ void compactCards() {
                 expect(slider.getSliderStyle() == juce::Slider::LinearHorizontal,
                        "Compact Lead/voice cards must use horizontal sliders");
                 auto& control = *slider.getParentComponent();
-                expect(control.getBounds() == juce::Rectangle<int>(8 + int(i % 2) * 78, 52 + int(i / 2) * 43, 78, 43),
-                       "Compact card must reserve a full-width Tune Mix below four two-column rows");
+                expect(control.getBounds() == juce::Rectangle<int>(8 + int(i % 2) * 78, 52 + int(i / 2) * 54, 78, 54),
+                       "Compact card must use two columns and four fixed-height rows");
             }
-            auto& tuneMix = ui::slider(*card, juce::String(prefix) + "TuneMix");
-            expect(tuneMix.getParentComponent()->getBounds() == juce::Rectangle<int>(8, 224, 156, 44),
-                   "Compact Tune Mix must fit below the existing voice controls");
         }
         auto& lead = ui::slider(stack, "leadPitch");
         peerClick(*editor, *lead.getParentComponent()->getParentComponent(), {20, 15});

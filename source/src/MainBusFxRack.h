@@ -80,13 +80,13 @@ inline Segment discover(const Graph& graph) {
     }
     return fail();
 }
-inline std::string capacityProblem(const Graph& graph) {
+inline std::string capacityProblem(const Graph& graph, unsigned spent = 0) {
     if (graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return "Routing node capacity reached (48).";
     int effects = 0;
     for (const auto& node : graph.nodes) if (eligible(node.type) || node.type == NodeType::crossover) ++effects;
     if (effects >= RoutingExecutor::maxEffects) return "Shared routing FX capacity reached (16).";
-    for (uint32_t id = 100; id <= 114; ++id) if (!find(graph, id)) return {};
-    return "All 15 independent routing FX slots are occupied.";
+    for (uint32_t id = 100; id <= 114; ++id) if (!(spent & (1u << (id - 99))) && !find(graph, id)) return {};
+    return "All 15 FX automation slots have been used. Undo can restore deleted FX.";
 }
 
 inline void wire(Graph& graph, const Segment& segment, const std::vector<uint32_t>& ordered) {
@@ -103,14 +103,14 @@ struct Edit {
     std::string error;
     bool changed = false;
 };
-inline Edit add(const Graph& original, NodeType type) {
+inline Edit add(const Graph& original, NodeType type, unsigned spent = 0) {
     Edit edit{original}; const auto segment = discover(original);
     if (!segment.editable()) { edit.error = segment.unavailable; return edit; }
     if (!eligible(type)) { edit.error = "Structural nodes are only available in Routing."; return edit; }
-    if (auto problem = capacityProblem(original); !problem.empty()) { edit.error = problem; return edit; }
+    if (auto problem = capacityProblem(original, spent); !problem.empty()) { edit.error = problem; return edit; }
     RoutingNode node;
     node.type = type; node.mix = type == NodeType::chorale || type == NodeType::convolution ? .25f : 1.0f;
-    for (uint32_t id = 100; id <= 114; ++id) if (!find(original, id)) { node.id = id; break; }
+    for (uint32_t id = 100; id <= 114; ++id) if (!(spent & (1u << (id - 99))) && !find(original, id)) { node.id = id; break; }
     edit.graph.nodes.push_back(node);
     auto ordered = segment.effects; ordered.push_back(node.id); wire(edit.graph, segment, ordered);
     const auto valid = RoutingExecutor::validate(edit.graph);

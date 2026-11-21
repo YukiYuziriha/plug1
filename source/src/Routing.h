@@ -88,15 +88,19 @@ struct RoutingValidation {
     explicit operator bool() const noexcept { return valid; }
 };
 
-inline Graph defaultGraph() {
+inline Graph defaultGraph(bool legacyChorale = true) {
     Graph g;
     g.nodes.push_back({1, NodeType::lead});
     for (int i = 0; i < 8; ++i) g.nodes.push_back({std::uint32_t(i + 2), NodeType::voice, i});
     RoutingNode mix{11, NodeType::mix}; mix.mainControls = true;
     RoutingNode fx{12, NodeType::chorale}; fx.mainControls = true;
-    g.nodes.insert(g.nodes.end(), {mix, fx, {13, NodeType::output}});
+    g.nodes.push_back(mix);
+    if (legacyChorale) g.nodes.push_back(fx);
+    g.nodes.push_back({13, NodeType::output});
     for (int i = 0; i < 8; ++i) g.links.push_back({std::uint32_t(i + 2), 11, 1});
-    g.links.insert(g.links.end(), {{1, 11, 0}, {11, 12, 0}, {12, 13, 0}});
+    g.links.push_back({1, 11, 0});
+    if (legacyChorale) g.links.insert(g.links.end(), {{11, 12, 0}, {12, 13, 0}});
+    else g.links.push_back({11, 13, 0});
     return g;
 }
 

@@ -58,7 +58,6 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                         label.setMinimumHorizontalScale(1.f);
             label.setInterceptsMouseClicks(false, false); addAndMakeVisible(label);
             if (mode) {
-                combo.setModulationOwner(panel.owner);
                 combo.setComponentID(id); combo.setName(name);
                 if (panel.kind == UtilityKind::xpFilter)
                     for (size_t i = 0; i < xpFilterConfigurations.size(); ++i) combo.addItem(xpFilterConfigurations[i], int(i + 1));
@@ -134,10 +133,16 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
                 && bool(slider.getProperties()["vocalstackTexturedBar"]);
             label.setVisible(!toggle.isVisible() && !textured);
             if (combo.isVisible()) {
-                label.setBounds(b.removeFromTop(17));
+                label.setBounds(b.removeFromTop(19));
                 combo.setBounds(b.withHeight(24));
             } else {
-                if (!textured) label.setBounds(b.removeFromBottom(28));
+                if (!textured) {
+                    juce::AttributedString caption;
+                    caption.append(label.getText(), label.getFont());
+                    juce::TextLayout layout;
+                    layout.createLayout(caption, float(juce::jmax(1, b.getWidth() - 10)));
+                    label.setBounds(b.removeFromBottom(juce::jmax(30, int(std::ceil(layout.getHeight())) + 2)));
+                }
                 slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, juce::jmin(76, b.getWidth()), 21);
                 slider.setBounds(b);
             }
@@ -166,7 +171,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         juce::Label label;
         EditSlider slider;
         modulationui::Button toggle;
-        modulationui::ComboBox combo;
+        juce::ComboBox combo;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> link;
     };
     class Visual final : public toneui::FxMonitorView, public juce::SettableTooltipClient {
@@ -727,14 +732,16 @@ public:
         int y = 8;
         const int visualHeight = isFilter() ? 238 : kind == UtilityKind::gate ? 292 : kind == UtilityKind::stereo ? 188 : 84;
         visual.setBounds(8, y, visualWidth, visualHeight); y += visualHeight + 6;
-        const int overviewHeight = juce::jmax(54, int(std::ceil(
-            juce::GlyphArrangement::getStringWidth(overview.getFont(), overview.getText())
-                / double(juce::jmax(1, visualWidth - 8)))) * 16 + 8);
+        juce::AttributedString descriptionText;
+        descriptionText.append(overview.getText(), overview.getFont());
+        juce::TextLayout descriptionLayout;
+        descriptionLayout.createLayout(descriptionText, float(juce::jmax(1, visualWidth - 10)));
+        const int overviewHeight = juce::jmax(54, int(std::ceil(descriptionLayout.getHeight())) + 8);
         overview.setBounds(8, y, visualWidth, overviewHeight); y += overviewHeight + 6;
         const int visualBottom = y;
         if (wide) y = 8;
         if (kind == UtilityKind::stereo) { monoAudition.setBounds(controlX, y, controlWidth, 28); y += 34; }
-        constexpr int knobWidth = 68, knobHeight = 100, knobGap = 2;
+        constexpr int knobWidth = 82, knobHeight = 102, knobGap = 2;
         int x = controlX, rowHeight = 0;
         const auto flush = [&] {
             if (rowHeight != 0) { y += rowHeight + knobGap; x = controlX; rowHeight = 0; }
@@ -745,7 +752,7 @@ public:
                             && row->slider.getSliderStyle() == juce::Slider::LinearHorizontal)) {
                 flush();
                 // Mix's editable value and name are overlaid inside the track.
-                const int height = row->combo.isVisible() ? 46 : 44;
+                const int height = row->combo.isVisible() ? 48 : 44;
                 row->setBounds(controlX, y, controlWidth, height); y += height + knobGap;
             } else {
                 const bool toggle = row->toggle.isVisible();

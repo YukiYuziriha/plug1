@@ -14,7 +14,6 @@ struct VoiceSettings {
     float gainDb, pan, delayMs, detuneCents, formantSemitones, depth, rateHz;
     float pitchSemitones = 0.0f;
     bool present = true; // Removal is distinct from enabled/mute; stable slot identity.
-    float tuneMix = 1.0f; // Appended for aggregate compatibility; clean/tuned source blend.
 };
 
 // Stored offsets already include the chosen Human value. In advanced mode Human

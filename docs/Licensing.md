@@ -20,12 +20,6 @@ and is not offered as GPLv3-only software.
   requirements apply to the combination as described in those texts. This is
   not a blanket relicensing of Vital, MIT/BSD libraries, fonts, or JUCE's embedded
   third-party code.
-- The shared Tuning detector embedded in `source/src/AutomaticTuner.h` is an
-  **MXTune/Autotalent adaptation under GPL-3.0-or-later**. Preserve the Liu An Lin
-  and Thomas A. Baran provenance, original donor files and license texts in
-  `ThirdParty/MXTune`. The linked stereo shifter and envelope formant mechanism
-  use the already pinned MIT Signalsmith libraries, not MXTune's shifter or FFTW.
-  [Current integration notice](../ThirdParty/Tuning.md) explains the changes.
 - The adapted [Vital filters](../ThirdParty/Vital/README.md) and retained Vital
   reference code remain **GPL-3.0-or-later**, with their copyright, modification
   notices and upstream license. CLAP, CLAP Helpers, CLAP JUCE Extensions,
@@ -49,26 +43,9 @@ Primary references: [GNU GPLv3, sections 1, 6 and 13](https://www.gnu.org/licens
 The bundled AGPL text was downloaded verbatim from
 <https://www.gnu.org/licenses/agpl-3.0.txt>.
 
-## Upcoming v1.12.0 source delivery
+## Current binaries and source provenance
 
-The upcoming Tuning release must not reuse an earlier binary-producing commit
-or call the v1.11.1 ZIP its complete source. Its algorithm, engine/UI integration,
-settings and retained `ThirdParty/MXTune` donor sources must accompany the pinned
-external dependencies. [1.12.0 delivery status](Release-1.12.0-Validation.md)
-records what has actually been built and packaged. Until a successful 1.12.0
-build is version-verified, do not refresh the tracked binaries or claim that
-1.12.0 release downloads exist.
-
-For an explicitly uncommitted release, `--working-tree` on the source bundler
-exports tracked and non-ignored untracked source inputs, records the base Git
-commit **as a base, not the producing revision**, and hashes the exported files.
-The default committed-revision mode retains its strict clean-source check.
-Do not commit merely to satisfy packaging. A local snapshot is not public source
-access: publish the matching complete source ZIP alongside any published binary.
-
-## Historical binaries and source provenance
-
-The historical **v1.11.1** release binaries correspond to source commit
+The current **v1.11.1** binaries correspond to source commit
 [`e6bd0ff28b3d103c4045cf141680e51286e4d0f3`](https://github.com/YukiYuziriha/plug1/tree/e6bd0ff28b3d103c4045cf141680e51286e4d0f3).
 Download their [complete corresponding source](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/VocalStack-1.11.1-corresponding-source.zip).
 Dependency pins below are unchanged. For source bundling, pass this revision and
@@ -97,7 +74,6 @@ binaries and identifies this source revision. The exact dependency inputs are:
 | Signalsmith Stretch | `https://github.com/Signalsmith-Audio/signalsmith-stretch.git` at `88061fd4eda56a2353c5d65c74aa3f4ccf76f9da` |
 | Signalsmith Linear | `https://github.com/Signalsmith-Audio/linear.git` at `7bb1c8f36794d6980080ce817c91f8da8fe56a66` |
 | Vital subset and adapter | Retained editable sources and modifications in this repository; upstream `636ca0ef517a4db087a6a08a6a8a5e704e21f836`, as documented in `ThirdParty/Vital` |
-| MXTune detector / Autotalent provenance | Vendored `ThirdParty/MXTune`, pinned MXTune `ea73804baff9e483d70b0056ebc91523402210eb`; full adaptation in `source/src/AutomaticTuner.h`, GPL-3.0-or-later |
 | Embedded font | `source/assets/PixelifySans.ttf`, with `ThirdParty/PixelifySans-OFL.txt` |
 
 Use the **entire JUCE archive**, not just its module headers or notice file.
@@ -135,9 +111,9 @@ archive hash is wrong. It refuses to overwrite an existing bundle. A sibling
 `.zip.sha256` is produced. Review the manifest and test extraction before upload;
 a generated bundle is not automatically published or a legal compliance verdict.
 
-## Historical release assets and redistribution
+## Release assets and redistribution
 
-The historical packaging target described here is **`v1.11.0`**. README and the binary package's
+The prepared release tag is **`v1.11.0`**. README and the binary package's
 `SOURCE.md` link directly to these asset URLs:
 
 - [Windows x64 CLAP/VST3 package](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.0/VocalStack-1.11.0-Windows-x64.zip)
@@ -163,9 +139,9 @@ carried forward. Adding notices/source packages now does not certify past
 compliance or alter third-party rights.
 
 `tools/Bundle-Release-Assets.py` prepares the three ZIPs, individual checksums and
-`SHA256SUMS.txt` under `source/build/publication` by default for its historical v1.11.0 mode. See the historical
+`SHA256SUMS.txt` under `source/build/publication` by default. See the historical
 source guide for its half-CPU-wrapped command. It verifies the history bundle by
-restoring it and comparing every audited commit/source tree. That historical source
+restoring it and comparing every audited commit/source tree. The current source
 ZIP includes final publication documentation as separately identified overlays.
 The Windows ZIP contains the entire `Windows-x64` tree, GPLv3/AGPLv3 texts, font
 license, complete retained third-party notices, source URLs and accompanying

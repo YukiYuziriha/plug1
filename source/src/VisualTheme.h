@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <BinaryData.h>
+#include <cmath>
+#include <utility>
 #include "FluidBackground.h"
 
 namespace vocalstack {
@@ -12,8 +14,24 @@ inline juce::Typeface::Ptr pixelTypeface() {
         BinaryData::PixelifySans_ttf, BinaryData::PixelifySans_ttfSize);
     return face;
 }
+namespace typography {
+// Callers supply the original design height, never an already-enlarged font.
+// Add to every size (including 12/12.5 labels), rather than clamping a minimum.
+constexpr float heightIncrease = 2.f;
+constexpr float readableHeight(float baseline) noexcept { return baseline + heightIncrease; }
+}
+template <typename... Args> inline juce::FontOptions readableFontOptions(Args&&... args) {
+    const juce::FontOptions options{std::forward<Args>(args)...};
+    return options.getHeight() > 0
+        ? options.withHeight(typography::readableHeight(options.getHeight()))
+        : options.withPointHeight(typography::readableHeight(options.getPointHeight()));
+}
 template <typename... Args> inline juce::FontOptions pixelFontOptions(Args&&... args) {
-    return juce::FontOptions(std::forward<Args>(args)...).withTypeface(pixelTypeface());
+    // A direct face already overrides lookup name/style. JUCE requires those
+    // fields empty before assignment; retain the existing face styling and all
+    // other options (including underline), rather than changing font selection.
+    return readableFontOptions(std::forward<Args>(args)...).withTypeface(nullptr)
+        .withName({}).withStyle({}).withTypeface(pixelTypeface());
 }
 // Stable logical-pixel metrics, rounded once from the pre-preview baselines.
 // Never scale the current viewport width during layout or theme changes.
@@ -26,6 +44,47 @@ public:
     int getDefaultScrollbarWidth() override { return scrollbarMetrics::standard; }
     void setDecorativePhase(double seconds) noexcept { decorativePhase = seconds; }
     juce::Typeface::Ptr getTypefaceForFont(const juce::Font&) override { return pixelTypeface(); }
+    juce::Font getTextButtonFont(juce::TextButton&, int height) override {
+        return juce::Font(pixelFontOptions(juce::jmin(16.f, float(height) * .6f)));
+    }
+    juce::Font getComboBoxFont(juce::ComboBox& box) override {
+        return juce::Font(pixelFontOptions(juce::jmin(16.f, float(box.getHeight()) * .85f)));
+    }
+    juce::Font getLabelFont(juce::Label& label) override {
+        const auto font = label.getFont();
+        // Explicit pixel fonts already passed through the policy. JUCE's default
+        // Label/slider fonts have a generic family and still need the increase.
+        return font.getTypefaceName() == pixelTypeface()->getName() ? font
+            : juce::Font(pixelFontOptions(font.getHeight(), font.getStyleFlags()));
+    }
+    juce::Font getSliderPopupFont(juce::Slider&) override {
+        return juce::Font(pixelFontOptions(15.f, juce::Font::bold));
+    }
+    void positionComboBoxText(juce::ComboBox& box, juce::Label& label) override {
+        juce::LookAndFeel_V4::positionComboBoxText(box, label);
+        label.setMinimumHorizontalScale(1.f);
+    }
+    void drawLabel(juce::Graphics& g, juce::Label& label) override {
+        g.fillAll(label.findColour(juce::Label::backgroundColourId));
+        const float alpha = label.isEnabled() ? 1.f : .5f;
+        if (!label.isBeingEdited()) {
+            const auto font = getLabelFont(label);
+            const auto area = getLabelBorderSize(label).subtractedFrom(label.getLocalBounds());
+            g.setFont(font);
+            g.setColour(label.findColour(juce::Label::textColourId).withMultipliedAlpha(alpha));
+            g.drawFittedText(label.getText(), area, label.getJustificationType(),
+                juce::jmax(1, int(float(area.getHeight()) / font.getHeight())), 1.f);
+        }
+        g.setColour(label.findColour(juce::Label::outlineColourId).withMultipliedAlpha(alpha));
+        g.drawRect(label.getLocalBounds());
+    }
+    void drawButtonText(juce::Graphics& g, juce::TextButton& button, bool, bool) override {
+        g.setFont(getTextButtonFont(button, button.getHeight()));
+        g.setColour(button.findColour(button.getToggleState() ? juce::TextButton::textColourOnId
+            : juce::TextButton::textColourOffId).withMultipliedAlpha(button.isEnabled() ? 1.f : .5f));
+        g.drawText(button.getButtonText(), button.getLocalBounds().reduced(4, 0),
+                   juce::Justification::centred, true);
+    }
     void drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour& background,
                               bool hover, bool down) override {
         auto colour = background.withMultipliedSaturation(button.hasKeyboardFocus(true) ? 1.3f : 0.9f)
@@ -50,7 +109,7 @@ public:
         g.setColour(box.findColour(juce::ComboBox::textColourId).withAlpha(.75f));
         g.setFont(label.getFont());
         g.drawFittedText(box.getTextWhenNothingSelected(), label.getBounds().reduced(2, 0),
-                         label.getJustificationType(), 1);
+                         label.getJustificationType(), 1, 1.f);
     }
     void drawComboBox(juce::Graphics& g, int width, int height, bool,
                       int, int, int, int, juce::ComboBox& box) override {
@@ -81,13 +140,22 @@ public:
         controlMaterials.paint(g, bar, thumb.reduced(1),
                     hover ? colour.brighter(0.25f) : colour, colour);
     }
+    juce::Rectangle<int> getTooltipBounds(const juce::String& text, juce::Point<int> position,
+                                         juce::Rectangle<int> parentArea) override {
+        const auto layout = tooltipLayout(text, float(juce::jmax(1, juce::jmin(400, parentArea.getWidth() - 14))));
+        const int width = int(std::ceil(layout.getWidth())) + 14;
+        const int height = int(std::ceil(layout.getHeight())) + 8;
+        return juce::Rectangle<int>(position.x > parentArea.getCentreX() ? position.x - width - 12 : position.x + 24,
+            position.y > parentArea.getCentreY() ? position.y - height - 6 : position.y + 6, width, height)
+            .constrainedWithin(parentArea);
+    }
     void drawTooltip(juce::Graphics& g, const juce::String& text, int width, int height) override {
         tooltipMaterial.paint(g, {0, 0, width, height}, findColour(juce::TooltipWindow::backgroundColourId),
                                       findColour(juce::TooltipWindow::textColourId), decorativePhase, .35f);
                 g.setColour(findColour(juce::TooltipWindow::outlineColourId)); g.drawRect(0, 0, width, height);
                 g.setColour(findColour(juce::TooltipWindow::textColourId));
-                g.setFont(juce::Font(pixelFontOptions(13.f)));
-                g.drawFittedText(text, juce::Rectangle<int>(width, height).reduced(7, 4), juce::Justification::centredLeft, 20);
+                auto layout = tooltipLayout(text, float(juce::jmax(1, width - 14)));
+                layout.draw(g, juce::Rectangle<float>(7, 4, float(width - 14), float(height - 8)));
     }
     void drawBubble(juce::Graphics& g, juce::BubbleComponent& component,
                     const juce::Point<float>& tip, const juce::Rectangle<float>& body) override {
@@ -111,6 +179,13 @@ public:
     }
     void drawToggleButton(juce::Graphics&, juce::ToggleButton&, bool, bool) override;
 private:
+    juce::TextLayout tooltipLayout(const juce::String& text, float width) {
+        juce::AttributedString attributed;
+        attributed.append(text, juce::Font(pixelFontOptions(13.f)), findColour(juce::TooltipWindow::textColourId));
+        juce::TextLayout layout;
+        layout.createLayout(attributed, width);
+        return layout;
+    }
     double decorativePhase = 0;
     ButtonFluidBackground controlMaterials, scrollTracks;
     FluidBackground selectorMaterial, menuMaterial;
@@ -169,7 +244,7 @@ inline void PixelLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleBu
     g.drawRect(mark);
     if (button.getToggleState()) g.fillRect(mark.reduced(3));
     g.setFont(juce::Font(pixelFontOptions(13.f)));
-    g.drawFittedText(button.getButtonText(), area.withTrimmedLeft(24), juce::Justification::centredLeft, 1);
+    g.drawFittedText(button.getButtonText(), area.withTrimmedLeft(24), juce::Justification::centredLeft, 1, 1.f);
 }
 inline void PixelLookAndFeel::drawPresetSelector(juce::Graphics& g, juce::Rectangle<int> bounds, juce::ComboBox& box) {
     const auto p = themePalette(box);
@@ -203,12 +278,12 @@ inline void PixelLookAndFeel::drawPopupMenuItemWithOptions(juce::Graphics& g, co
     if (item.subMenu) g.drawText(">", text.removeFromRight(16), juce::Justification::centred);
     if (item.shortcutKeyDescription.isNotEmpty())
         g.drawText(item.shortcutKeyDescription, text.removeFromRight(text.getWidth() / 3), juce::Justification::centredRight);
-    g.drawFittedText(item.text, text, juce::Justification::centredLeft, 1);
+    g.drawFittedText(item.text, text, juce::Justification::centredLeft, 1, 1.f);
 }
 inline void PixelLookAndFeel::drawPopupMenuSectionHeaderWithOptions(juce::Graphics& g, const juce::Rectangle<int>& area,
     const juce::String& text, const juce::PopupMenu::Options& options) {
     g.setColour(popupPalette(options).muted); g.setFont(getPopupMenuFont().boldened());
-    g.drawFittedText(text, area.reduced(12, 0), juce::Justification::centredLeft, 1);
+    g.drawFittedText(text, area.reduced(12, 0), juce::Justification::centredLeft, 1, 1.f);
 }
 
 } // namespace vocalstack

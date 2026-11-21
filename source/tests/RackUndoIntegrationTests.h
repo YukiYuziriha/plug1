@@ -122,6 +122,7 @@ inline void addRemoveReorder() {
     f.commit(mainBusFx::add(f.graph(), NodeType::granular));
     const auto added = f.graph(); f.card(100, true);
     f.action("Undo"); f.expectGraph(initial, "Add must undo in one step"); f.card(100, false);
+    require((f.owner.spentFxSlots() & (1u << 1)) != 0, "Undoing an add released an exposed slot");
     require(!button(f.routing, "Undo").isEnabled(), "Add recorded multiple undo steps");
     f.action("Redo"); f.expectGraph(added, "Add must redo in one step"); f.card(100, true);
     require(!button(f.routing, "Redo").isEnabled(), "Add recorded multiple redo steps");
@@ -138,7 +139,9 @@ inline void addRemoveReorder() {
     const auto first = snapshot(f.owner, 1), second = snapshot(f.owner, 2);
     f.commit(staleMove);
     const auto moved = f.graph();
-    require(mainBusFx::discover(moved).effects == std::vector<uint32_t>({101, 12, 100}), "Reorder changed IDs or order");
+    auto expectedOrder = mainBusFx::discover(beforeMove).effects;
+    expectedOrder.pop_back(); expectedOrder.insert(expectedOrder.begin(), 101);
+    require(mainBusFx::discover(moved).effects == expectedOrder, "Reorder changed IDs or order");
     unchanged(f.owner, first, "Stale candidate replayed surviving bases");
     unchanged(f.owner, second, "Reorder changed duplicate bases");
     require(find(f.rack, "mainBusFx100") == firstCard && find(f.rack, "mainBusFx101") == secondCard,
@@ -179,7 +182,7 @@ inline void crossViewHistory() {
     require(!button(f.routing, "Redo").isEnabled(), "Cross-view redo left extra steps");
 }
 
-inline void duplicateSlotReuse() {
+inline void duplicateSlotsStaySpent() {
     Fixture f;
     f.commit(mainBusFx::add(f.graph(), NodeType::granular));
     f.commit(mainBusFx::add(f.graph(), NodeType::granular));
@@ -194,27 +197,21 @@ inline void duplicateSlotReuse() {
     const auto old = snapshot(f.owner, 1), survivor = snapshot(f.owner, 2);
     const auto original = f.graph();
     f.commit(mainBusFx::remove(f.graph(), 100));
-    f.commit(mainBusFx::add(f.graph(), NodeType::waveshaper));
-    const auto reallocated = f.graph();
-    const auto* reused = mainBusFx::find(reallocated, 100);
-    require(reused && reused->type == NodeType::waveshaper && mainBusFx::find(reallocated, 101), "Slot reuse changed duplicate identity");
-    write(f.owner, toneParameterId(1, "WaveDrive"), 17);
-    write(f.owner, toneParameterId(1, "WaveShapeAmount"), 81);
-    write(f.owner, fxParameterId(1, "Mix"), 72);
-    const auto replacement = snapshot(f.owner, 1); const auto replacedGraph = f.graph();
-    f.action("Undo"); require(!mainBusFx::find(f.graph(), 100), "Undo replacement must remove just its allocation");
-    unchanged(f.owner, old, "Undo replacement did not restore dormant slot banks");
+    require((f.owner.spentFxSlots() & (1u << 1)) != 0, "Deleting FX released its automation slot");
+    juce::String error;
+    require(!f.owner.setRoutingGraph(original, error), "Normal graph edit restored a retired slot");
     f.action("Undo"); f.expectGraph(original, "Undo removal failed to restore original duplicate ID/type");
-    unchanged(f.owner, old, "Reallocated slot overwrote removed instance"); unchanged(f.owner, survivor, "Slot reuse touched surviving duplicate");
+    unchanged(f.owner, old, "Undo lost original parameter banks");
+    unchanged(f.owner, survivor, "Undo touched surviving duplicate");
     f.action("Redo"); require(!mainBusFx::find(f.graph(), 100), "Redo removal must be one step");
-    f.action("Redo"); f.expectGraph(replacedGraph, "Redo replacement failed to restore stable ID/type");
-    unchanged(f.owner, replacement, "Redo replacement lost its parameter banks"); unchanged(f.owner, survivor, "Redo reuse touched survivor");
+    require((f.owner.spentFxSlots() & (1u << 1)) != 0, "Redo released the original slot");
+    unchanged(f.owner, survivor, "Redo touched surviving duplicate");
 }
 
 inline void hiddenRefreshValidationAndCustomGraph() {
     Fixture f;
     f.commit(mainBusFx::add(f.graph(), NodeType::delay)); // History invalidated by the external graph below.
-    auto custom = defaultGraph();
+    auto custom = f.graph();
     custom.nodes.push_back({114, NodeType::gain});
     for (auto& link : custom.links) if (link.source == 1 && link.destination == 11) link.source = 114;
     custom.links.push_back({1, 114, 0, 0});
@@ -327,32 +324,22 @@ inline void modulationRemovalHistory() {
         assignmentsEqual(f.owner, latestRestored, "Repeated Undo lost latest removed-node snapshot");
     }
 }
-inline void modulationReplacementAndFreshSlots() {
+inline void modulationRejectsReplacement() {
     Fixture f;
     f.commit(mainBusFx::add(f.graph(), NodeType::granular));
     const auto pitch = creativeParameterId(1, size_t(CreativeParameter::granularPitch));
     ModulationState state; Modulator source; source.id = 1; state.modulators.push_back(source);
     state.assignments = {{1, pitch, -.31f, true}, {1, "leadPan", .18f, true}};
     modulationState(f.owner, state);
-    // Direct replacement exercises a single lifecycle change, not two separate edits.
     auto replacement = f.graph();
     for (auto& n : replacement.nodes) if (n.id == 100) n.type = NodeType::waveshaper;
     juce::String error;
-    require(f.rack.commitGraph(replacement, error), "Replacement bridge rejected: " + error);
-    assignmentsEqual(f.owner, {{1, "leadPan", .18f, true}}, "Replacement inherited outgoing map");
-    auto wave = f.owner.getModulationState();
-    const auto drive = toneParameterId(1, "WaveDrive");
-    wave.assignments = {{1, drive, .43f, false}, {1, "leadPan", -.26f, true}};
-    modulationState(f.owner, wave);
-    f.action("Undo");
-    assignmentsEqual(f.owner, {{1, pitch, -.31f, true}, {1, "leadPan", -.26f, true}}, "Replacement Undo merged wrong identity");
-    f.action("Redo");
-    assignmentsEqual(f.owner, wave.assignments, "Replacement Redo failed to restore its own mappings");
+    require(!f.rack.commitGraph(replacement, error) && error.isNotEmpty(), "In-place replacement retargeted FX automation");
+    assignmentsEqual(f.owner, state.assignments, "Rejected edit mutated mappings");
     f.commit(mainBusFx::remove(f.graph(), 100));
-    f.commit(mainBusFx::add(f.graph(), NodeType::waveshaper));
-    assignmentsEqual(f.owner, {{1, "leadPan", -.26f, true}}, "Fresh reused slot inherited retired mappings");
-    f.action("Undo"); f.action("Undo");
-    assignmentsEqual(f.owner, wave.assignments, "Slot reuse overwrote removed-node mapping snapshot");
+    assignmentsEqual(f.owner, {{1, "leadPan", .18f, true}}, "Delete did not retire the outgoing map");
+    f.action("Undo");
+    assignmentsEqual(f.owner, state.assignments, "Undo did not restore the original owner's mappings");
 }
 inline void modulationNonLifecycleAndDeletedSource() {
     Fixture f;
@@ -376,10 +363,10 @@ inline bool run() {
     struct Test { const char* name; void (*call)(); };
     const Test tests[]{{"add/remove/reorder one-step history and live parameters", addRemoveReorder},
                        {"Routing/rack cross-view shared history", crossViewHistory},
-                       {"duplicate reuse lifecycle parameter banks", duplicateSlotReuse},
+                       {"retired slots and original lifecycle parameter banks", duplicateSlotsStaySpent},
                        {"hidden refresh, validation, redo and custom graph", hiddenRefreshValidationAndCustomGraph},
                        {"assigned rack/Routing removal merges lifecycle mappings", modulationRemovalHistory},
-                       {"replacement and fresh-slot modulation identity", modulationReplacementAndFreshSlots},
+                       {"reject in-place replacement without changing modulation", modulationRejectsReplacement},
                        {"non-lifecycle maps and deleted sources stay live", modulationNonLifecycleAndDeletedSource}};
     bool passed = true;
     for (const auto& test : tests) {

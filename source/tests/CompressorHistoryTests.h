@@ -142,6 +142,8 @@ inline void unifiedPlot() {
         const juce::Rectangle<float> bounds(7,9,float(width),190);
         const auto plot=CompressorPlot::plotBounds(bounds);
         require(bounds.contains(plot) && plot.getHeight()>100, "Unified plot split into lanes or escaped frame");
+        require(plot == bounds.withTrimmedTop(32).withTrimmedBottom(36).withTrimmedLeft(34).withTrimmedRight(32),
+                "Unified plot lost its enlarged axis/legend reservations");
         require(CompressorPlot::levelY(-72,plot)==plot.getBottom() && CompressorPlot::levelY(0,plot)==plot.getY(), "Level scale is not fixed -72..0 dBFS");
         require(CompressorPlot::timeX(4,plot)==plot.getX() && CompressorPlot::timeX(0,plot)==plot.getRight(), "History is not fixed four seconds");
         require(CompressorPlot::timeX(2.56f,plot)>plot.getX()+plot.getWidth()*.35f, "PCM history stretched to four seconds");

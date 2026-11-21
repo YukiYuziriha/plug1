@@ -54,8 +54,12 @@ inline void run(bool render = false) {
                         ui::require(content->getLocalBounds().contains(knob->getBounds()), "Morph knob outside scroll content");
                         for (auto previous : cells) ui::require(!previous.intersects(knob->getBounds()), "Morph knob cells overlap");
                         cells.push_back(knob->getBounds());
-                        ui::require(knob->getHeight() == 138 && layout.sliderBounds.getHeight() >= 90,
-                            "Morph knob lost useful dial row height");
+                        ui::require(knob->getHeight() >= 142 && layout.sliderBounds.getHeight() >= 90,
+                            "Morph knob must retain a 90px dial after enlarged text lanes");
+                        ui::require(layout.textBoxBounds.getHeight() == 22
+                            && knob->getHeight() == layout.sliderBounds.getHeight() + layout.textBoxBounds.getHeight()
+                                + knob->captionHeightForWidth(knob->getWidth()),
+                            "Morph knob height does not account for its actual caption/value lanes");
                         ui::require(!layout.textBoxBounds.intersects(layout.sliderBounds), "Morph value overlaps dial");
                         const float face = (float(std::min(layout.sliderBounds.getWidth(), layout.sliderBounds.getHeight())) * .5f - 8.f) * 1.55f;
                         ui::require(face >= 45.f, "Morph face is unreadably small");
@@ -75,7 +79,7 @@ inline void run(bool render = false) {
                         const auto afterLayout=afterKnob->slider.getLookAndFeel().getSliderLayout(afterKnob->slider);
                         const float afterFace=(float(std::min(afterLayout.sliderBounds.getWidth(),afterLayout.sliderBounds.getHeight()))*.5f-8.f)*1.55f;
                         std::cout << "MORPH GEOMETRY before row=74 face=" << beforeFace << " dial=" << beforeLayout.sliderBounds.toString()
-                            << "; after row=138 face=" << afterFace << " dial=" << afterLayout.sliderBounds.toString() << '\n';
+                            << "; after row=" << afterKnob->getHeight() << " face=" << afterFace << " dial=" << afterLayout.sliderBounds.toString() << '\n';
                         double snapshotMilliseconds=0;
         if (render) { ui::action(*editor, "Stack"); ui::action(*editor, "Spectral Morph #100"); }
                 const juce::String stem="spectral-morph-" + juce::String(external ? "external-" : "internal-") + updateUiTests::themeName(theme);

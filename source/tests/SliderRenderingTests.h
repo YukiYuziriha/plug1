@@ -218,9 +218,9 @@ inline void controlModes() {
                         && row->getLocalBounds().contains(title->getBounds())),
                     "Only rotary FX controls should have an external caption");
                 auto* value = toneUiTests::find<juce::Label>(*slider, [](auto&) { return true; });
-                toneUiTests::require(value && std::abs(value->getFont().getHeight() - ParameterKnob::controlFontSize) < .01f
+                toneUiTests::require(value && std::abs(value->getFont().getHeight() - (ParameterKnob::controlFontSize + 2.f)) < .01f
                         && (merged || std::abs(title->getFont().getHeight() - value->getFont().getHeight()) < .01f),
-                    "FX text must retain its consistent intermediate 12.5px font size");
+                    "FX text must use the consistent 14.5px height (12.5px baseline +2)");
             }
             if (auto* button = dynamic_cast<juce::Button*>(&component);
                 button && button->isVisible() && button->getComponentID().startsWith("fx1")) {

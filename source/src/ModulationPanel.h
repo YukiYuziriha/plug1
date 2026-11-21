@@ -1,9 +1,10 @@
 #include "VisualTheme.h"
 #pragma once
 
+#include "CreativeEffectPanel.h"
 #include "DoublerPanel.h"
 #include "ModulationUI.h"
-#include "UiControlPolicy.h"
+#include "UtilityEffectPanel.h"
 #include <functional>
 
 namespace vocalstack {
@@ -52,8 +53,9 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             rotary.drawRotarySlider(g, x, y, w, h, value, start, end, slider);
         }
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
-            auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
+            auto* label = juce::LookAndFeel_V4::createSliderTextBox(slider);
             label->setFont(modulationFont(10.0f));
+            label->setMinimumHorizontalScale(1.f);
             return label;
         }
     private:
@@ -62,7 +64,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
     struct Numeric final : juce::Component {
         juce::Label label;
         NumericStyle style;
-        PassiveNumericSlider slider;
+        juce::Slider slider;
         Numeric(const juce::String& name, double lo, double hi, double step) {
             label.setText(name, juce::dontSendNotification); label.setJustificationType(juce::Justification::centred);
             label.setFont(modulationFont(10.0f));
@@ -77,16 +79,16 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             if (name == "Random smoothing") label.setText("Smooth", juce::dontSendNotification);
                         slider.setName(name); slider.setRange(lo, hi, step);
             slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-            slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 46, 16);
+            slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 58, 18);
             slider.setScrollWheelEnabled(false);
             slider.textFromValueFunction = [](double value) { return juce::String(value, 3); };
             slider.valueFromTextFunction = [](const juce::String& text) { return text.getDoubleValue(); };
             slider.setVelocityModeParameters(1.0, 1, 0.0, true, static_cast<juce::ModifierKeys::Flags>(juce::ModifierKeys::shiftModifier | juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::commandModifier));
             addAndMakeVisible(slider);
-            applyPassiveFocusPolicy(*this);
+            detail::passiveControl(*this);
         }
         ~Numeric() override { slider.setLookAndFeel(nullptr); }
-                void resized() override { auto a = getLocalBounds(); label.setBounds(a.removeFromBottom(16)); slider.setBounds(a); }
+                void resized() override { auto a = getLocalBounds(); label.setBounds(a.removeFromBottom(18)); slider.setBounds(a); }
     } rate{"Rate / Hz", .001, 100, .001}, division{"Beats / cycle", .015625, 256, 0},
       phase{"Phase / turns", 0, .999, .001}, depth{"Output amount", 0, 1, .001},
       shape{"Phase skew", 0, 1, .001}, smooth{"Random smoothing", 0, 1, .001};
@@ -131,7 +133,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             remove.onClick = [this] { parent.editAssignment(target, true, false); };
             reveal.setButtonText("Reveal"); addAndMakeVisible(reveal);
             reveal.onClick = [this] { if (parent.onReveal) parent.onReveal(target); };
-            applyPassiveFocusPolicy(*this);
+            detail::passiveControl(*this);
         }
         ~AssignmentRow() override { amount.setLookAndFeel(nullptr); }
         void setNeon(bool neon) {
@@ -158,7 +160,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
         juce::String target;
         juce::Label name;
         modulationui::RotaryStyle style;
-        PassiveNumericSlider amount;
+        juce::Slider amount;
         juce::TextButton enabled, remove, reveal;
     };
 public:
@@ -207,7 +209,7 @@ public:
         contentViewport.setViewedComponent(&content, false);
         contentViewport.setScrollBarsShown(true, true);
         juce::Component::addAndMakeVisible(contentViewport);
-        applyPassiveFocusPolicy(*this); startTimerHz(20);
+        detail::passiveControl(*this); startTimerHz(20);
     }
     ~ModulationPanel() override {
         setLookAndFeel(nullptr);
@@ -234,7 +236,7 @@ public:
         for (auto* c : {&rate, &division, &phase, &depth, &shape, &smooth}) {
             c->label.setColour(juce::Label::textColourId, p.text);
             modulationui::styleRotary(c->slider, neon);
-            applyPassiveFocusPolicy(c->slider);
+            detail::passiveControl(c->slider);
         }
         for (auto& row : rows) row->setNeon(neon);
         for (auto* b : {&controlsTab, &assignmentsTab, &assign, &remove, &sync, &bipolar})
@@ -291,18 +293,48 @@ private:
         }
     }
 private:
+    static juce::String effectDisplayName(NodeType type) {
+        if (isCreativeEffect(type)) return CreativeEffectPanel::effectName(creativeKind(type));
+        if (isUtilityEffect(type)) return UtilityEffectPanel::effectName(utilityKind(type));
+        switch (type) {
+            case NodeType::chorale: return "Chorale";
+            case NodeType::waveshaper: return "Waveshaper";
+            case NodeType::equalizer: return "EQ8";
+            case NodeType::crossover: return "Multiband";
+            case NodeType::spectralMorph: return "Spectral Morph";
+            default: return {};
+        }
+    }
     juce::String targetName(const juce::String& id) const {
+        const auto* p = owner.parameters.getParameter(id);
+        auto control = p ? p->getName(80) : id;
         juce::String machine = "Main";
         if (id.startsWith("lead")) machine = "Lead";
         else if (id.startsWith("voice")) machine = "Voice " + id.substring(5).retainCharacters("0123456789");
-        else if (id.startsWith("fx")) {
-            const int slot = id.substring(2).getIntValue(); machine = "FX " + juce::String(slot);
-            for (const auto& n : owner.getRoutingGraph().nodes) if (routingFxSlot(n.id) == slot) {
-                machine = (n.type == NodeType::waveshaper ? "Waveshaper " : n.type == NodeType::equalizer ? "EQ8 " : n.type == NodeType::crossover ? "Multiband " : "Chorale ") + juce::String(slot); break;
+        else if (id.startsWith("chorale")) {
+            machine = "Chorale";
+            if (control.startsWith("Chorale ")) control = control.substring(8);
+        } else if (id.startsWith("fx")) {
+            const int slot = id.substring(2).getIntValue();
+            const auto slotLabel = "FX " + juce::String(slot);
+            machine = slotLabel;
+            const auto slotPrefix = slotLabel + " ";
+            if (control.startsWith(slotPrefix)) control = control.substring(slotPrefix.length());
+            for (const auto& n : owner.getRoutingGraph().nodes) {
+                if (routingFxSlot(n.id) != slot) continue;
+                const auto effect = effectDisplayName(n.type);
+                if (effect.isEmpty()) continue;
+                machine = effect + " " + juce::String(slot);
+                const juce::String controlPrefix = n.type == NodeType::chorale ? "Chorale "
+                    : n.type == NodeType::waveshaper ? "Wave "
+                    : n.type == NodeType::equalizer ? "EQ "
+                    : n.type == NodeType::spectralMorph ? "Spectral " : "";
+                if (controlPrefix.isNotEmpty() && control.startsWith(controlPrefix))
+                    control = control.substring(controlPrefix.length());
+                break;
             }
         }
-        auto* p = owner.parameters.getParameter(id);
-        return machine + " / " + (p ? p->getName(80) : id);
+        return machine + " / " + control;
     }
     bool commit(const ModulationState& state) {
         juce::String error; const bool ok = owner.setModulationState(state, error);
@@ -385,15 +417,15 @@ private:
                             juce::ComboBox::lookAndFeelChanged();
                             for (auto* child : getChildren())
                                 if (auto* label = dynamic_cast<juce::Label*>(child)) label->setFont(modulationFont(10.0f));
-                            applyPassiveFocusPolicy(*this);
+                            detail::passiveControl(*this);
                         }
         };
         PassiveCombo waveform, retrigger, divisions;
     juce::Component content;
-    PassiveViewport contentViewport;
+    juce::Viewport contentViewport;
     juce::Label title, message;
     juce::Component rowsArea;
-    PassiveViewport rowsViewport;
+    juce::Viewport rowsViewport;
     std::vector<std::unique_ptr<AssignmentRow>> rows;
 };
 } // namespace vocalstack

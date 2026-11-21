@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 LEGAL_OVERLAYS = (
     "COPYING.AGPLv3", "README.md", "docs/Building.md", "docs/Licensing.md",
     "Windows-x64/SOURCE.md", "tools/Bundle-Corresponding-Source.py",
-    "tools/Bundle-Release-Assets.py", "docs/Historical-Source.md",
-    "docs/Historical-Source-Manifest.json",
+    "tools/Bundle-Release-Assets.py", "tools/Refresh-Windows-Package.py",
+    "tools/Verify-Release-Assets.py", "tools/Test-Release-Bundles.py",
 )
 
 
@@ -44,6 +44,16 @@ def export_git(repo, revision, destination, include_submodules=True):
             if not child.exists():
                 raise RuntimeError(f"Missing submodule cache: {child}; initialize recursively first")
             export_git(child, commit, destination / path)
+
+
+def source_path(name):
+    path = Path(name)
+    return (name.startswith(("source/", "ThirdParty/", "tools/", "docs/"))
+            or name in ("LICENSE", "COPYING.AGPLv3", "README.md", "AGENTS.md", ".gitignore", ".gitattributes")) \
+        and not any(part in ("build", "_deps", "__pycache__", "CMakeFiles")
+                    or part.startswith("build-") for part in path.parts) \
+        and path.suffix.lower() not in (".exe", ".dll", ".clap", ".vst3", ".obj", ".o",
+                                       ".lib", ".a", ".pdb", ".pyc", ".zip", ".gitbundle")
 
 
 def main():
@@ -81,8 +91,7 @@ def main():
         stage.mkdir()
         tracked = (git(ROOT, "ls-files", "-z", "--cached", "--others", "--exclude-standard").decode().split("\0")
                    if args.working_tree else git(ROOT, "ls-tree", "-r", "--name-only", revision).decode().splitlines())
-        paths = sorted({p for p in tracked if p.startswith(("source/", "ThirdParty/", "tools/", "docs/"))
-                        or p in ("LICENSE", "COPYING.AGPLv3", "README.md", "AGENTS.md", ".gitignore", ".gitattributes")})
+        paths = sorted({p for p in tracked if source_path(p)})
         snapshot = {}
         if args.working_tree:
             for name in paths:
@@ -100,7 +109,12 @@ def main():
         else:
             with zipfile.ZipFile(io.BytesIO(git(ROOT, "archive", "--format=zip", revision, "--", *paths))) as archive:
                 archive.extractall(stage)
-        for name in LEGAL_OVERLAYS:
+        overlays = LEGAL_OVERLAYS
+        if args.working_tree and (ROOT / "Windows-x64/BUILD-PROVENANCE.json").is_file():
+            overlays += ("Windows-x64/BUILD-PROVENANCE.json",)
+        for name in overlays:
+            # Working snapshots already contain the current tooling/docs. Revision
+            # exports overlay delivery guidance only, never source configuration.
             data = (ROOT / name).read_bytes()
             target = stage / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -140,19 +154,18 @@ def main():
                 manifest["dependencies"][name] = {"url": url, "sha256": digest}
         if args.working_tree:
             current = set(git(ROOT, "ls-files", "-z", "--cached", "--others", "--exclude-standard").decode().split("\0"))
-            current = {p for p in current if (p.startswith(("source/", "ThirdParty/", "tools/", "docs/"))
-                       or p in ("LICENSE", "COPYING.AGPLv3", "README.md", "AGENTS.md", ".gitignore", ".gitattributes"))
-                       and (ROOT / p).exists()}
+            current = {p for p in current if source_path(p) and (ROOT / p).exists()}
             if current != set(snapshot) or any(sha256(ROOT / p) != h for p, h in snapshot.items()):
                 raise RuntimeError("Working tree changed during source export; wait for edits to finish")
-            for required in ("source/src/AutomaticTuner.h", "ThirdParty/Tuning.md",
-                             "ThirdParty/MXTune/README.md", "ThirdParty/MXTune/LICENSE",
-                             "ThirdParty/MXTune/COPYING-autotalent",
-                             "ThirdParty/MXTune/autotalent-0.2-notice.txt",
-                             "ThirdParty/MXTune/pitch_detector_talent.cpp",
-                             "ThirdParty/MXTune/pitch_detector_talent.h"):
-                if required not in snapshot:
-                    raise RuntimeError(f"Missing Tuning corresponding source: {required}")
+        if any(sha256(ROOT / name) != checksum for name, checksum in manifest["packaging_overlays"].items()):
+            raise RuntimeError("Packaging guidance/provenance changed during source export")
+        for required in ("LICENSE", "COPYING.AGPLv3", "ThirdParty/PixelifySans-OFL.txt",
+                         "ThirdParty/JUCE.md", "ThirdParty/CLAP.txt",
+                         "ThirdParty/CLAP-Helpers.txt", "ThirdParty/CLAP-JUCE-Extensions.txt",
+                         "ThirdParty/VST3-SDK.txt", "ThirdParty/Signalsmith-Linear.txt",
+                         "ThirdParty/Signalsmith-Stretch.txt", "ThirdParty/Vital/LICENSE"):
+            if not (stage / required).is_file():
+                raise RuntimeError(f"Missing corresponding-source notice: {required}")
         manifest["files_sha256"] = {
             p.relative_to(stage).as_posix(): sha256(p)
             for p in sorted(stage.rglob("*")) if p.is_file()

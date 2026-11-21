@@ -1,6 +1,6 @@
 #pragma once
 
-#include "FluidBackground.h"
+#include "VisualTheme.h"
 #include "ReactiveFxVisualModels.h"
 
 namespace vocalstack::reactiveVisual {
@@ -41,14 +41,14 @@ public:
         }
         g.setColour(colours.background); g.fillRect(bounds);
         g.setColour(colours.grid); g.drawRect(bounds.reduced(.5f), 1.f);
-        g.setFont(juce::Font(juce::FontOptions(9.f)));
+        g.setFont(juce::Font(readableFontOptions(9.f)));
         g.setColour(colours.text);
         g.drawText("GR dB | 20 ms peak", bounds.withHeight(15), juce::Justification::centredLeft);
         for (int db : {0, 12, 24, 36}) {
             const float y = yFor(float(db), plot);
             g.setColour(colours.grid.withAlpha(.45f)); g.drawHorizontalLine(int(y), plot.getX(), plot.getRight());
             g.setColour(colours.text);
-            g.drawText(juce::String(db), juce::Rectangle<float>(bounds.getX(), y - 5, 24, 10), juce::Justification::centredRight);
+            g.drawText(juce::String(db), juce::Rectangle<float>(bounds.getX(), y - 6, 24, 12), juce::Justification::centredRight);
         }
         const auto labels = bounds.withY(plot.getBottom() + 2).withHeight(14);
         g.drawText("-4 s", labels.withX(plot.getX()).withWidth(32), juce::Justification::centredLeft);

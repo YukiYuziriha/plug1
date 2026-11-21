@@ -118,12 +118,13 @@ inline void routingModulatorRail() {
 }
 
 inline void routingWaveformPreviews() {
+    guiTestDisplay::enumerate();
     for (int skin = 0; skin < 3; ++skin) {
         auto owner = std::make_unique<Processor>(); owner->setSkin(skin);
         ModulationState state; state.modulators = {{1}, {2, ModulatorType::random}};
         juce::String error; ui::require(owner->setModulationState(state, error), error);
         RoutingPanel panel(*owner); inheritTheme(panel, skin); panel.setNeon(skin == 1);
-        panel.addToDesktop(0); panel.setVisible(true);
+        guiTestDisplay::attach(panel);
         auto& tile = routingButton(panel, "LFO 1");
         for (auto waveform : {ModulationWaveform::sine, ModulationWaveform::triangle, ModulationWaveform::saw, ModulationWaveform::square})
             for (bool bipolar : {false, true}) for (float amount : {0.0f, .65f}) for (bool shifted : {false, true}) {
@@ -140,8 +141,12 @@ inline void routingWaveformPreviews() {
                 plan.modulators[0].rateHz = 1; plan.modulators[0].sync = false;
                 ui::require(evaluator->publish(plan), "Preview reference plan rejected"); evaluator->prepare(48000);
                 std::array<float, ModulationBackend::maxTargets> contributions{};
-                auto area = tile.getLocalBounds().toFloat().reduced(1); area.removeFromTop(15);
+                auto area = tile.getLocalBounds().toFloat().reduced(1);
+                const auto caption = area.removeFromTop(17);
                 const auto plot = area.reduced(3, 2);
+                ui::require(plot.getHeight() >= 18 && !plot.intersects(caption)
+                        && tile.getLocalBounds().toFloat().contains(plot),
+                            "Rail must reserve separate enlarged caption and useful waveform lanes");
                 juce::Path curve;
                 for (int i = 0; i <= 64; ++i) {
                     evaluator->tick(contributions);
@@ -254,11 +259,14 @@ inline void themeState() {
 }
 
 inline void utilityInspectors() {
+    guiTestDisplay::enumerate();
     constexpr std::array<NodeType, 5> types{NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter};
     for (int theme = 0; theme < 3; ++theme) for (size_t kind = 0; kind < types.size(); ++kind) {
         auto owner = std::make_unique<Processor>(); owner->setSkin(theme); install(*owner, types[kind]);
         std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor());
-        editor->addToDesktop(0); editor->setVisible(true); ui::action(*editor, "Routing");
+        const auto work = guiTestDisplay::selected().userArea;
+        editor->setSize(std::min(editor->getWidth(), work.getWidth()), std::min(editor->getHeight(), work.getHeight()));
+        guiTestDisplay::attach(*editor); ui::action(*editor, "Routing");
         auto* routing = ui::find<RoutingPanel>(*editor, [](auto&) { return true; });
         ui::require(routing != nullptr, "Missing embedded routing");
         auto* panel = ui::find<UtilityEffectPanel>(*routing, [](auto&) { return true; });
@@ -295,8 +303,18 @@ inline void utilityInspectors() {
                 auto& slider = ui::slider(*panel, id); auto& parameter = ui::parameter(*owner, id);
                 const bool sparse = d.kind == UtilityKind::gain;
                 ui::require(slider.getWidth() >= 64 && (sparse ? slider.getParentComponent()->getHeight() == 44
-                    : slider.getParentComponent()->getWidth() == 68 && slider.getParentComponent()->getHeight() == 100),
-                            "Utility rotary must retain a readable compact 68x100 cell: " + id);
+                    : slider.getParentComponent()->getWidth() == 82 && slider.getParentComponent()->getHeight() == 102),
+                            "Utility rotary must retain its enlarged compact 82x102 cell: " + id);
+                for (auto* child : slider.getChildren()) if (auto* value = dynamic_cast<juce::Label*>(child)) {
+                    const auto font = value->getFont();
+                    ui::require(std::abs(font.getHeight() - 14.5f) < .001f && value->getMinimumHorizontalScale() == 1.f,
+                                "Utility numeric font lost exact +2 height or is squeezed: " + id);
+                    const auto textArea = slider.getLookAndFeel().getLabelBorderSize(*value).subtractedFrom(value->getLocalBounds());
+                    ui::require(font.getAscent() + font.getDescent() <= float(textArea.getHeight()), "Utility numeric font clips vertically: " + id);
+                    for (double number : {slider.getMinimum(), slider.getMaximum(), slider.getValue()})
+                        ui::require(juce::GlyphArrangement::getStringWidth(font, slider.getTextFromValue(number)) <= float(textArea.getWidth()),
+                                    "Utility enlarged value does not fit: " + id + " " + slider.getTextFromValue(number));
+                }
                 ui::require(bool(slider.getProperties()["vocalstackTexturedBar"]) == sparse, "Utility sparse-group styling: " + id);
                 ui::require(slider.isDoubleClickReturnEnabled() && slider.isTextBoxEditable() == !sparse, "Utility reset/passive fat caption: " + id);
                 ui::near(slider.getMinimum(), d.min, "Utility UI minimum"); ui::near(slider.getMaximum(), d.max, "Utility UI maximum");

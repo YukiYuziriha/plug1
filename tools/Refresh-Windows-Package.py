@@ -32,7 +32,7 @@ def main():
     parser.add_argument('--build-log', type=Path, required=True)
     parser.add_argument('--build-exit-file', type=Path, required=True,
                         help='Build runner exit-code record; must contain 0')
-    parser.add_argument('--version', default='1.12.0')
+    parser.add_argument('--version', default='1.12.2')
     args = parser.parse_args()
     if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', args.version):
         parser.error('Expected major.minor.patch version')
@@ -54,8 +54,10 @@ def main():
             artifacts / f'VST3/{PRODUCT_NAME}.vst3/Contents/x86_64-win/{PRODUCT_NAME}.vst3',
     }
     inputs = [ROOT / 'source/CMakeLists.txt']
-    for directory in ('source/src', 'source/assets', 'source/cmake'):
+    for directory in ('source/src', 'source/assets', 'source/cmake', 'ThirdParty'):
         inputs += [p for p in (ROOT / directory).rglob('*') if p.is_file()]
+    if f'PRODUCT_NAME "{PRODUCT_NAME}"' not in cmake:
+        raise RuntimeError('Source product name differs from HEAVEN delivery')
     newest_input = max(p.stat().st_mtime_ns for p in inputs)
     hashes = {}
     for name, binary in binaries.items():
@@ -97,7 +99,11 @@ def main():
         if target.exists():
             shutil.rmtree(target)
         shutil.copytree(stage / f'{PRODUCT_NAME}.vst3', target)
-        shutil.copytree(stage / 'ThirdParty', destination / 'ThirdParty', dirs_exist_ok=True)
+        # Replace the notice/source tree, rather than merging removed dependencies
+        # back into a new release from an older delivery.
+        if (destination / 'ThirdParty').exists():
+            shutil.rmtree(destination / 'ThirdParty')
+        shutil.copytree(stage / 'ThirdParty', destination / 'ThirdParty')
         for source, target_name in (('LICENSE', 'LICENSE.txt'), ('COPYING.AGPLv3', 'COPYING.AGPLv3'),
                                     ('ThirdParty/PixelifySans-OFL.txt', 'PixelifySans-OFL.txt')):
             shutil.copy2(ROOT / source, destination / target_name)

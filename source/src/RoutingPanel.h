@@ -40,6 +40,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         bool parameterEdit = false;
         bool layoutOnly = false;
         std::vector<Assignment> modulationAssignments;
+        uint64_t routingStateRevision = 0;
     };
     class Canvas final : public juce::Component {
     public:
@@ -278,7 +279,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             g.drawRect(bounds, getToggleState() ? 2.0f : 1.0f);
             g.setColour(findColour(juce::TextButton::textColourOffId));
             g.setFont(juce::Font(pixelFontOptions(12.0f)));
-            g.drawFittedText(getButtonText(), bounds.removeFromTop(15).toNearestInt(), juce::Justification::centred, 1);
+            g.drawFittedText(getButtonText(), bounds.removeFromTop(17).toNearestInt(), juce::Justification::centred, 1, 1.f);
             const auto plot = bounds.reduced(3, 2);
             g.setColour(accent.withAlpha(.2f));
             g.drawHorizontalLine(int(plot.getCentreY()), plot.getX(), plot.getRight());
@@ -330,7 +331,8 @@ public:
                 addChildComponent(assignmentBanner);
                 assignmentBanner.onClick = [this] { owner.endModulationAssignment(); refreshAssignmentBanner(); };
                 modulationPanel.onDeleted = [this] {
-                            if (!selectedModulationId()) modulationui::selectModulator(owner, 0);
+                            selectedModulator = 0;
+                            if (!modulationui::selectedModulator(owner)) modulationui::selectModulator(owner, 0);
                             rebuildModulatorStrip(); updateModulationPanel(); saveLayout();
                         };
                 modulationPanel.onReveal = [this](const juce::String& id) { revealTarget(id); };
@@ -382,25 +384,44 @@ public:
         rebuildInspector();
         lastSignature = signature(graph);
         lastPortSignature = portSignature();
-        observeLayout(owner.getRoutingLayout());
+        lastLayoutSignature = owner.getRoutingLayout().toXmlString();
+        lastStateRevision = stateRevision();
         setNeon(owner.isFlash());
         detail::passiveControl(*this);
         refreshAssignmentBanner();
         // setSize invokes resized(); wait until the viewports and saved layout are ready.
         setSize(1280, 800);
-
         startTimerHz(15);
     }
     ~RoutingPanel() override {
-        stopTimer(); mainChoraleOnLink.reset(); nodeCards.clear();
-        cancelInspectorGestures();
+        stopTimer(); nodeCards.clear();
+        cancelControlGestures(inspector);
+        if (inspectorDragging) {
+            if (creativePanel && creativePanel->onEndEdit) creativePanel->onEndEdit();
+            if (utilityPanel && utilityPanel->onEndEdit) utilityPanel->onEndEdit();
+            inspectorDragging = false;
+        }
         toneViewport.setViewedComponent(nullptr, false);
         modulatorViewport.setViewedComponent(nullptr, false); nodeValue.setLookAndFeel(nullptr);
         setLookAndFeel(nullptr);
     }
     // Rack topology edits share Routing's history, including lifecycle parameter snapshots.
     bool commitExternalGraphEdit(const Graph& candidate, juce::String& rejectionReason) {
-        synchronizeRoutingState();
+        auto latest = owner.getRoutingGraph();
+        const auto next = signature(latest);
+        const auto savedLayout = owner.getRoutingLayout();
+        const auto layoutSignature = savedLayout.toXmlString();
+        const auto revision = stateRevision();
+        if (next != lastSignature || layoutSignature != lastLayoutSignature || revision != lastStateRevision) {
+            lastStateRevision = revision;
+            // Hidden panels may not have observed a preset/host graph or layout change.
+            undoStates.clear(); redoStates.clear(); selectedLink = -1;
+            graph = std::move(latest);
+            loadLayout(savedLayout); lastLayoutSignature = layoutSignature;
+        } else graph = std::move(latest);
+        lastSignature = next;
+        lastPortSignature = portSignature();
+        ensurePositions(); validateSelection();
 
         const auto validation = RoutingExecutor::validate(candidate);
         if (!validation) {
@@ -485,7 +506,7 @@ public:
         const int railWidth = 66;
         const int bottom = getHeight() - 40;
         const int modulationHeight = constrainedModulationHeight(desiredModulationHeight);
-        const bool showModulation = modulationVisible && selectedModulationId() != 0;
+        const bool showModulation = modulationVisible && selectedModulator != 0;
         const int stripTop = showModulation ? bottom - modulationHeight : bottom;
         const int x = getWidth() - inspectorWidth - 12;
         canvas.setBounds(railWidth + 24, 70, juce::jmax(100, x - railWidth - 44), juce::jmax(0, stripTop - 78));
@@ -540,7 +561,7 @@ private:
         saved.setProperty("inspectorWidth", desiredInspectorWidth, nullptr);
         owner.setRoutingLayout(saved);
         // Do not hide a pending external layout change from the timer.
-        if (currentLayout) observeLayout(saved);
+        if (currentLayout) lastLayoutSignature = saved.toXmlString();
     }
     int constrainedModulationHeight(int desired) const {
         // Canvas starts at 70; reserve the 8px divider and 40px status area.
@@ -555,7 +576,7 @@ private:
         saved.setProperty("modulationHeight", desiredModulationHeight, nullptr);
         owner.setRoutingLayout(saved);
         // Do not hide a pending external layout change from the timer.
-        if (currentLayout) observeLayout(saved);
+        if (currentLayout) lastLayoutSignature = saved.toXmlString();
     }
     void refreshAssignmentBanner() {
         if (isShowing() && juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::escapeKey)) owner.endModulationAssignment();
@@ -574,7 +595,7 @@ private:
             m.type = result == 1 ? ModulatorType::lfo : ModulatorType::random;
             state.modulators.push_back(m); juce::String error;
             if (!safe->owner.setModulationState(state, error)) { safe->error = error; safe->showStatus(); return; }
-            modulationui::selectModulator(safe->owner, m.id);
+            safe->selectedModulator = m.id;
             safe->rebuildModulatorStrip(); safe->updateModulationPanel(); safe->saveLayout();
         });
     }
@@ -583,7 +604,10 @@ private:
         for (const auto& m : owner.getModulationState().modulators) signature += juce::String(m.id) + ":" + juce::String(int(m.type)) + ";";
         if (signature == modulatorSignature) return;
         modulatorSignature = signature; rebuildModulatorStrip();
-        updateModulationPanel();
+        if (selectedModulator) {
+            bool found = false; for (const auto& m : owner.getModulationState().modulators) found |= m.id == selectedModulator;
+            if (!found) { selectedModulator = 0; updateModulationPanel(); saveLayout(); }
+        }
     }
     void rebuildModulatorStrip() {
         auto previous = std::move(modulatorButtons);
@@ -596,7 +620,7 @@ private:
             button->setTooltip(modulatorName(m) + ": select controls / assignments; audio routing selection never cancels Assign");
 
             button->onClick = [this, id = m.id] {
-                modulationui::selectModulator(owner, id);
+                selectedModulator = id;
                 updateModulationPanel(); saveLayout();
             };
             detail::passiveControl(*button); modulatorStrip.addAndMakeVisible(*button); modulatorButtons.push_back(std::move(button));
@@ -604,9 +628,13 @@ private:
         resized(); setNeon(neon);
     }
     void updateModulationPanel() {
-        const auto selected = selectedModulationId();
-        if (modulationPanel.selectedId() != selected) modulationPanel.select(selected);
-        modulationPanel.setVisible(modulationVisible && selected != 0);
+        const auto state = owner.getModulationState();
+        bool found = false;
+        for (const auto& m : state.modulators) found |= m.id == selectedModulator;
+        if (!found) selectedModulator = 0;
+        if (selectedModulator) modulationui::selectModulator(owner, selectedModulator);
+        if (modulationPanel.selectedId() != selectedModulator) modulationPanel.select(selectedModulator);
+        modulationPanel.setVisible(modulationVisible && selectedModulator != 0);
         for (auto& tile : modulatorButtons)
             tile->setToggleState(tile->model.id == selectedModulationId(), juce::dontSendNotification);
         resized(); repaint();
@@ -712,11 +740,6 @@ private:
     }
     bool effectEnabled(const RoutingNode& n) const {
         const int slot = fxSlot(n);
-        // ParameterAttachment may run before APVTS updates its raw-value mirror.
-        // Folding must use the parameter's current value inside that callback.
-        if (slot == 0)
-            if (const auto* parameter = owner.parameters.getParameter(fxParameterId(0, "On")))
-                return parameter->convertFrom0to1(parameter->getValue()) >= 0.5f;
         return slot >= 0 ? toneui::value(owner, fxParameterId(size_t(slot), "On"), n.enabled ? 1.0f : 0.0f) >= 0.5f : n.enabled;
     }
     bool inactiveSource(const RoutingLink& link) const {
@@ -1363,7 +1386,7 @@ private:
         tree.setProperty("modulationVisible", modulationVisible, nullptr);
 
         tree.setProperty("selectedNode", int(selectedNode), nullptr);
-        tree.removeProperty("selectedModulator", nullptr);
+        tree.setProperty("selectedModulator", int(selectedModulator), nullptr);
         if (const auto* n = node(selectedNode); n && (n->type == NodeType::voice || n->type == NodeType::lead))
             tree.setProperty("selectedVoiceSlot", n->type == NodeType::lead ? -1 : int(n->voiceSlot), nullptr);
         tree.setProperty("zoom", zoom, nullptr); tree.setProperty("panX", pan.x, nullptr); tree.setProperty("panY", pan.y, nullptr);
@@ -1399,10 +1422,8 @@ private:
         inspectorVisible = bool(tree.getProperty("inspectorVisible", true));
         modulationVisible = bool(tree.getProperty("modulationVisible", true));
         selectedNode = uint32_t(int(tree.getProperty("selectedNode", 0)));
-        // Migrate legacy selection once; history must not rewind live feedback selection.
-        if (restorePanelSizes && !tree.hasProperty("selectedModulationId") && tree.hasProperty("selectedModulator"))
-            modulationui::selectModulator(owner, uint32_t(int(tree.getProperty("selectedModulator"))));
-        const int voice = int((restorePanelSizes ? tree : owner.getRoutingLayout()).getProperty("selectedVoiceSlot", -2));
+        selectedModulator = uint32_t(int(tree.getProperty("selectedModulator", 0)));
+        const int voice = int(tree.getProperty("selectedVoiceSlot", -2));
         if (voice != lastSelectedVoiceSlot && voice >= -1 && voice < 8) {
             // On reopen retain a saved FX/mixer selection alongside the modulator.
             // A subsequent Stack-card selection still reveals that voice here.
@@ -1481,53 +1502,19 @@ private:
             positions[n.id] = p; compactPositions[n.id] = p; ++extra;
         }
     }
-    static juce::String documentLayoutSignature(const juce::ValueTree& layout) {
-        juce::ValueTree document("RoutingDocumentLayout");
-        for (const auto& child : layout)
-            if (child.hasType("NODE")) document.addChild(child.createCopy(), -1, nullptr);
-        return document.toXmlString();
-    }
-    bool synchronizeRoutingState(bool preserveLayoutHistory = false) {
-        const auto previousNode = selectedNode;
-        const auto previousLink = selectedLink;
-        const auto previousPorts = lastPortSignature;
-        auto latest = owner.getRoutingGraph();
-        const auto next = signature(latest);
-        const auto saved = owner.getRoutingLayout();
-        const bool changed = next != lastSignature || saved.toXmlString() != lastLayoutSignature;
-        if (changed) {
-            const bool layoutReplaced = documentLayoutSignature(saved) != lastDocumentLayoutSignature;
-            const bool replaced = next != lastSignature || layoutReplaced;
-            cancelInspectorGestures();
-            if (replaced) {
-                // Explicit layout Undo can safely follow a newer graph, but no
-                // graph/parameter snapshot may cross that document boundary.
-                const auto retire = [&](auto& history) {
-                    if (!preserveLayoutHistory || layoutReplaced) history.clear();
-                    else history.erase(std::remove_if(history.begin(), history.end(),
-                        [](const EditState& edit) { return !edit.layoutOnly; }), history.end());
-                };
-                retire(undoStates); retire(redoStates); selectedLink = -1;
-            }
-            graph = std::move(latest);
-            loadLayout(saved); observeLayout(owner.getRoutingLayout());
-        } else graph = std::move(latest);
-        lastSignature = next;
-        ensurePositions(); validateSelection();
-        lastPortSignature = portSignature();
-        return changed || selectedNode != previousNode || selectedLink != previousLink || lastPortSignature != previousPorts;
-    }
-    void observeLayout(const juce::ValueTree& saved) {
-        lastLayoutSignature = saved.toXmlString();
-        lastDocumentLayoutSignature = documentLayoutSignature(saved);
-    }
     void saveLayout() {
         const auto saved = layout();
         owner.setRoutingLayout(saved);
-        observeLayout(saved);
+        lastLayoutSignature = saved.toXmlString();
+    }
+    uint64_t stateRevision() const {
+        const std::lock_guard<std::recursive_mutex> lock(owner.controlMutex);
+        return owner.routingStateRevision;
     }
     EditState state() const {
+        const std::lock_guard<std::recursive_mutex> lock(owner.controlMutex);
         EditState result{owner.getRoutingGraph(), layout(), {}};
+        result.routingStateRevision = owner.routingStateRevision;
         result.modulationAssignments = owner.getModulationState().assignments;
         for (size_t slot = 0; slot < 16; ++slot)
             for (size_t field = 0; field < 3; ++field)
@@ -1575,13 +1562,14 @@ private:
         return !suffix.isEmpty() && !juce::CharacterFunctions::isDigit(suffix[0]);
     }
     void stepHistory(std::vector<EditState>& from, std::vector<EditState>& to) {
-        // Synchronize preferences before replay. Layout-only actions may follow
-        // a newer graph without publishing it or replaying its automation.
-        const bool layoutOnly = !from.empty() && from.back().layoutOnly;
-        if (synchronizeRoutingState(layoutOnly)) { rebuildInspector(); updateButtons(); }
         if (from.empty()) return;
         auto current = state();
         const auto s = from.back();
+        if (s.routingStateRevision != current.routingStateRevision) {
+            undoStates.clear(); redoStates.clear();
+            error = "The patch has been reloaded; its previous Routing history cannot be applied.";
+            showStatus(); return;
+        }
         auto modulation = owner.getModulationState();
         bool restoreModulation = false;
         if (!s.layoutOnly && !s.parameterEdit) {
@@ -1635,11 +1623,7 @@ private:
         }
         if (!s.parameterEdit) {
             graph = s.graph; loadLayout(s.layout, false); selectedNode = 0; selectedLink = -1;
-            if (!publish(false)) {
-                from.push_back(s); to.pop_back();
-                loadLayout(current.layout, false); ensurePositions(); saveLayout();
-                rebuildInspector(); return;
-            }
+            if (!publish(false, &s.routingStateRevision)) { from.push_back(s); to.pop_back(); rebuildInspector(); return; }
         }
         for (size_t slot = 0; slot < 16; ++slot) {
             const auto id = slot == 0 ? 12u : unsigned(slot + 99);
@@ -1694,7 +1678,7 @@ private:
         status.setColour(juce::Label::textColourId, error.isEmpty() ? themePalette(*this, neon).secondary : themePalette(*this, neon).accent);
         updateButtons();
     }
-    bool publish(bool discardUndoOnReject = true) {
+    bool publish(bool discardUndoOnReject = true, const uint64_t* historyRevision = nullptr) {
         ensurePositions();
         // Parameter-bound mixers follow current base automation on cable edits;
         // stale node copies must never rewind a knob or rebuild while dragging.
@@ -1712,7 +1696,7 @@ private:
                 break;
             }
         juce::String problem;
-        const bool accepted = owner.setRoutingGraph(graph, problem);
+        const bool accepted = owner.setRoutingGraphImpl(graph, problem, historyRevision);
         error = problem;
         graph = owner.getRoutingGraph();
         if (!accepted) {
@@ -1801,10 +1785,10 @@ private:
         juce::PopupMenu menu; menu.setLookAndFeel(&getLookAndFeel());
         int effects = 0; for (const auto& n : graph.nodes) if (isEffect(n.type)) ++effects;
         const bool room = graph.nodes.size() < size_t(RoutingExecutor::maxNodes);
-        bool freeFxSlot = false;
-        for (std::uint32_t id = 100; id <= 114; ++id) if (!node(id)) freeFxSlot = true;
+        const bool freeFxSlot = nextFxNodeId() != 0;
         const bool effectRoom = room && effects < 16 && freeFxSlot;
-        menu.addSectionHeader("Independent FX | shared automation slots");
+        menu.addSectionHeader(freeFxSlot ? "Independent FX | 15 automation slots"
+                                        : "No unused FX slots | deleted slots cannot be reused");
         menu.addItem(1, "Chorale", effectRoom);
         menu.addItem(4, "Waveshaper", effectRoom);
         menu.addItem(5, "EQ8", effectRoom);
@@ -1835,13 +1819,22 @@ private:
             menu.addItem(20 + i, "Restore Voice " + juce::String(i + 1) + " source", room && !hasSource(i));
         menu.addItem(40, "Restore main Chorale", room && !node(12) && effects < 16);
         juce::Component::SafePointer<RoutingPanel> safe(this);
+        const auto revision = stateRevision();
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(atCursor ? static_cast<juce::Component*>(&canvas) : &add).withMousePosition(),
-                    [safe, insertion](int result) { if (safe && result) safe->addNode(result, insertion); });
+                    [safe, insertion, revision](int result) {
+                        if (safe && result && safe->stateRevision() == revision) safe->addNode(result, insertion);
+                    });
     }
     bool hasSource(int slot) const {
         for (const auto& n : graph.nodes)
             if ((slot < 0 && n.type == NodeType::lead) || (slot >= 0 && n.type == NodeType::voice && n.voiceSlot == slot)) return true;
         return false;
+    }
+    std::uint32_t nextFxNodeId() const {
+        const auto spent = owner.spentFxSlots();
+        for (unsigned slot = 1; slot <= 15; ++slot)
+            if (!(spent & (1u << slot)) && !node(slot + 99)) return slot + 99;
+        return 0;
     }
     void addNode(int kind, juce::Point<float> insertion) {
         if (graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
@@ -1866,8 +1859,11 @@ private:
                                 case 63: n.type = NodeType::xpFilter; break;
                                 case 64: n.type = NodeType::synthFilter; break;
             }
-            for (std::uint32_t id = 100; id <= 114; ++id) if (!node(id)) { n.id = id; break; }
-            if (!n.id) return;
+            n.id = nextFxNodeId();
+            if (!n.id) {
+                error = "No unused FX automation slots remain. Deleting FX does not free their slots; Undo can restore an original FX.";
+                showStatus(); return;
+            }
             int effects = 0;
             for (const auto& existing : graph.nodes) if (isEffect(existing.type)) ++effects;
             if (effects >= 16) return;
@@ -1901,7 +1897,7 @@ private:
         expandedPositions.erase(n.id); expanded.erase(n.id);
         graph.nodes.push_back(n); selectedNode = n.id; selectedLink = -1;
         if (publish() && isEffect(n.type) && n.id >= 100 && n.id <= 114) {
-            // Reset a newly allocated/reused machine only after its graph is accepted.
+            // Initialize a new machine only after its graph is accepted.
             const auto slot = size_t(routingFxSlot(n.id));
             setParameter(fxParameterId(slot, "On"), 1);
             setParameter(fxParameterId(slot, "Mix"), n.type == NodeType::chorale ? 25.0f : 100.0f);
@@ -1918,32 +1914,8 @@ private:
         }
         rebuildInspector();
     }
-    void cancelInspectorGestures() {
-        // Keep controls, attachments and end-edit callbacks alive until release.
-        cancelControlGestures(inspector);
-        // A detached, idle shared slider cannot own a capture. In particular,
-        // do not synthesize mouse input for it during initial construction.
-        if (nodeValue.getParentComponent() != &inspector && inspectorDragging) cancelControlGestures(nodeValue);
-        if (inspectorDragging) {
-            if (creativePanel && creativePanel->onEndEdit) creativePanel->onEndEdit();
-            if (utilityPanel && utilityPanel->onEndEdit) utilityPanel->onEndEdit();
-        }
-        inspectorDragging = false;
-    }
     void rebuildInspector() {
-        cancelInspectorGestures();
         validateSelection();
-        // Subscribe when a topology-dependent selection first needs it, not for
-        // dormant panels. Subsequent host changes must retire this inspector
-        // without waiting for a polling timer. JUCE marshals audio-thread changes.
-        if (!mainChoraleOnLink && (selectedNode == 12 || selectedLink >= 0))
-            if (auto* parameter = owner.parameters.getParameter(fxParameterId(0, "On"))) {
-                mainChoraleOnLink = std::make_unique<juce::ParameterAttachment>(*parameter,
-                    [this](float) { refreshPortSelection(); });
-                lastPortSignature = portSignature();
-            }
-        // The initial inspector below already reads the current host value;
-        // do not recursively invalidate it while it is being constructed.
         updateModulationPanel();
         inspectorTitle.setEditable(false, node(selectedNode) != nullptr, false);
         toneViewport.setViewedComponent(nullptr, false);
@@ -1962,7 +1934,7 @@ private:
             if (slot != lastSelectedVoiceSlot) {
                 lastSelectedVoiceSlot = slot;
                 auto saved = owner.getRoutingLayout().createCopy(); saved.setProperty("selectedVoiceSlot", slot, nullptr);
-                owner.setRoutingLayout(saved); observeLayout(saved);
+                owner.setRoutingLayout(saved); lastLayoutSignature = saved.toXmlString();
                 if (onSelectVoice) onSelectVoice(slot);
             }
         }
@@ -2187,25 +2159,9 @@ private:
         result += "fold:" + juce::String(foldedChain().first);
         return result;
     }
-    void refreshPortSelection() {
-        // Read live host bases: a bypass can hide the selected canonical
-        // Chorale even when the saved graph/layout signatures have not changed.
-        const auto ports = portSignature();
-        if (ports == lastPortSignature) return;
-        lastPortSignature = ports;
-        connecting = 0; rewiringLink = -1; rewiringSource = false;
-        const auto previousNode = selectedNode;
-        const int previousLink = selectedLink;
-        validateSelection();
-        if (draggingNode && (!node(draggingNode) || !nodeVisible(*node(draggingNode)))) draggingNode = 0;
-        if (previousNode != selectedNode || previousLink != selectedLink || selectedLink >= 0)
-            rebuildInspector();
-        updateButtons(); canvas.repaint();
-    }
     void timerCallback() override {
         ++workCounters.timerTicks;
         if (!isShowing()) return;
-
         const auto materialFrame = std::floor(fluidAnimationSeconds(canvas) * 10.0);
         if (materialFrame != lastMaterialFrame) {
             lastMaterialFrame = materialFrame;
@@ -2236,11 +2192,33 @@ private:
         modulationui::refreshWithSelection(inspector, owner, owner.getModulationSnapshot(), owner.getModulationState(), owner.modulationAssignmentId());
         // Host presence, bank, band-count and On changes apply even during a
         // cable gesture. Cancel it rather than dropping onto a now-hidden pin.
-        refreshPortSelection();
+        const auto ports = portSignature();
+        if (ports != lastPortSignature) {
+            lastPortSignature = ports;
+            connecting = 0; rewiringLink = -1; rewiringSource = false;
+            const auto previousNode = selectedNode;
+            const int previousLink = selectedLink;
+            validateSelection();
+            if (draggingNode && (!node(draggingNode) || !nodeVisible(*node(draggingNode)))) draggingNode = 0;
+            if (previousNode != selectedNode || previousLink != selectedLink || selectedLink >= 0)
+                rebuildInspector();
+            updateButtons(); canvas.repaint();
+        }
         modulationui::refreshWithSelection(canvas, owner, snapshot, owner.getModulationState(), owner.modulationAssignmentId());
         if (draggingNode || connecting || rewiringLink >= 0 || inspectorDragging) { syncNodeCards(); return; }
-        if (synchronizeRoutingState()) {
-            error.clear(); showStatus(); rebuildInspector(); canvas.repaint();
+        auto latest = owner.getRoutingGraph();
+        const auto next = signature(latest);
+        const auto savedLayout = owner.getRoutingLayout();
+        const auto layoutSignature = savedLayout.toXmlString();
+        const auto revision = stateRevision();
+        if (next != lastSignature || layoutSignature != lastLayoutSignature || revision != lastStateRevision) {
+            lastStateRevision = revision;
+            graph = std::move(latest); lastSignature = next;
+            undoStates.clear(); redoStates.clear(); selectedLink = -1;
+            loadLayout(savedLayout); lastLayoutSignature = layoutSignature;
+            ensurePositions(); error.clear(); showStatus(); rebuildInspector();
+            lastPortSignature = portSignature();
+            canvas.repaint();
         }
         if (const auto* n = node(selectedNode); n && isEffect(n->type) && fxSlot(*n) >= 0) {
             const auto* on = owner.parameters.getRawParameterValue(fxParameterId(size_t(fxSlot(*n)), size_t(0)));
@@ -2282,7 +2260,8 @@ private:
     int selectedLink = -1, rewiringLink = -1, connectingPin = 0;
     bool rewiringSource = false;
     bool neon = false, panning = false, inspectorDragging = false;
-    juce::String error, lastSignature, lastLayoutSignature, lastDocumentLayoutSignature, lastPortSignature;
+    juce::String error, lastSignature, lastLayoutSignature, lastPortSignature;
+    uint64_t lastStateRevision = 0;
     std::vector<EditState> undoStates, redoStates;
     EditState dragBefore;
     juce::TextButton add, undo, redo, remove, bypass, fit, zoomOut, zoomIn, disconnect, expandAll, collapseAll, inspectorToggle;
@@ -2295,7 +2274,6 @@ private:
     ParameterKnob::Style nodeStyle;
     juce::Slider nodeValue;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> nodeValueLink;
-    std::unique_ptr<juce::ParameterAttachment> mainChoraleOnLink;
 
     std::vector<std::unique_ptr<ParameterKnob>> fields;
         std::unique_ptr<ParameterKnob> mixControl;
@@ -2304,7 +2282,7 @@ private:
         ModulationDivider modulationDivider;
         int desiredModulationHeight = ModulationPanel::preferredHeight;
         bool resizingModulation = false;
-
+        uint32_t selectedModulator = 0;
             int lastSelectedVoiceSlot = -2;
         juce::String modulatorSignature;
         juce::Component modulatorStrip;
@@ -2322,7 +2300,7 @@ private:
 class RoutingWindow final : public juce::DocumentWindow {
 public:
     explicit RoutingWindow(Processor& owner)
-        : DocumentWindow(owner.getName() + " / Routing", juce::Colour(0xff171d25), juce::DocumentWindow::closeButton), panel(owner) {
+        : DocumentWindow("Vocal Stack / Routing", juce::Colour(0xff171d25), juce::DocumentWindow::closeButton), panel(owner) {
         setUsingNativeTitleBar(true);
         setContentNonOwned(&panel, true);
         setResizable(true, false);

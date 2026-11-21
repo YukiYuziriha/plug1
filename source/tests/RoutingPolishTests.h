@@ -342,7 +342,8 @@ void embeddedTabs() {
                                && !routing->isOnDesktop() && routing->getPeer() == editor->getPeer(),
                            "Routing opened outside its editor");
                     expect(editor->getLocalBounds() == windowBounds
-                               && routing->getBounds() == editor->getLocalBounds().withTrimmedBottom(52).reduced(18).withTrimmedTop(82),
+                               && routing->getBounds() == editor->getLocalBounds()
+                                   .withTrimmedBottom(vocalstack::editorLayout::presetFooterHeight).reduced(18).withTrimmedTop(82),
                            "Embedded routing must use available space above the preset footer without resizing the window");
                     if (repeat == 0) firstLayout = owner.getRoutingLayout().toXmlString();
                     else expect(firstLayout == owner.getRoutingLayout().toXmlString(), "Tab switch refitted saved routing layout");
@@ -366,6 +367,31 @@ void embeddedTabs() {
                     expect(graphText(owner.getRoutingGraph()) == before, "Tabs changed routing graph");
                     expectPassiveControls(*editor);
                 }
+                editor->setSize(940, 560);
+                const auto minimumBounds = editor->getLocalBounds();
+                const auto footerBounds = juce::Rectangle<int>(18,
+                    560 - vocalstack::editorLayout::presetFooterHeight + 4, 904,
+                    vocalstack::PresetBar::preferredHeight);
+                auto* presets = vocalstack::toneUiTests::find<vocalstack::PresetBar>(*editor, [](auto&) { return true; });
+                expect(presets && presets->getBounds() == footerBounds,
+                       "Minimum editor must reserve the full preset control and status rows");
+                for (auto* child : presets->getChildren())
+                    expect(presets->getLocalBounds().contains(child->getBounds()),
+                           "Preset controls or status text extend outside the minimum footer");
+                action(*editor, "Routing");
+                pumpTimers();
+                expect(editor->getLocalBounds() == minimumBounds
+                           && routing->getBounds() == minimumBounds
+                               .withTrimmedBottom(vocalstack::editorLayout::presetFooterHeight).reduced(18).withTrimmedTop(82)
+                           && routing->getBottom() < presets->getY()
+                           && presets->getBottom() == 556,
+                       "Minimum Routing must fit above the complete footer without resizing the window");
+                action(*editor, "Stack");
+                pumpTimers();
+                expect(editor->getLocalBounds() == minimumBounds && presets->getBounds() == footerBounds
+                           && !routing->isVisible() && advanced->isVisible(),
+                       "Minimum Stack tab must retain the footer and host window dimensions");
+                editor->setSize(windowBounds.getWidth(), windowBounds.getHeight());
             }
         }
     }

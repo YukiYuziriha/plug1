@@ -3,7 +3,6 @@
 #include "PluginProcessor.h"
 #include "VisualTheme.h"
 #include "FluidBackground.h"
-#include "UiControlPolicy.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 #include <cstdint>
@@ -118,40 +117,9 @@ inline juce::Label* createPassiveSliderTextBox(juce::Label* originalTextBox) {
     return label.release();
 }
 
-// Numeric entry and wheel policy only: local controls must not become
-// modulation-assignment targets just to share the passive slider lifecycle.
-class PassiveNumericSlider : public juce::Slider {
-public:
-    PassiveNumericSlider() {
-        setScrollWheelEnabled(false);
-        restoreIdleFocusPolicy();
-    }
-    void setTextBoxStyle(juce::Slider::TextEntryBoxPosition position, bool readOnly, int width, int height) {
-        juce::Slider::setTextBoxStyle(position, readOnly, width, height);
-        restoreIdleFocusPolicy();
-    }
-    void setTextBoxIsEditable(bool editable) {
-        juce::Slider::setTextBoxIsEditable(editable);
-        restoreIdleFocusPolicy();
-    }
-    void lookAndFeelChanged() override {
-        juce::Slider::lookAndFeelChanged();
-        restoreIdleFocusPolicy();
-    }
-    void enablementChanged() override {
-        juce::Slider::enablementChanged();
-        restoreIdleFocusPolicy();
-    }
-    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
-        forwardPassiveWheel(*this, event, wheel);
-    }
-protected:
-    void restoreIdleFocusPolicy() { applyPassiveFocusPolicy(*this); }
-};
-
 // Refresh from a single message-thread snapshot for the complete editor tree.
 // Ordinary gestures never take keyboard focus; only explicit numeric entry does.
-class ModulationSlider : public PassiveNumericSlider {
+class ModulationSlider : public juce::Slider {
 public:
     void bindModulation(Processor& processor, const juce::String& parameterId) {
         owner = &processor; id = parameterId;
@@ -164,10 +132,20 @@ public:
                                  | juce::ModifierKeys::commandModifier));
     }
     void setTextBoxStyle(juce::Slider::TextEntryBoxPosition position, bool readOnly, int width, int height) {
-        PassiveNumericSlider::setTextBoxStyle(position, readOnly || (bool(getProperties()["vocalstackTexturedBar"]) && !bool(getProperties()["vocalstackSeparateBarValue"])), width, height);
+        juce::Slider::setTextBoxStyle(position, readOnly || (bool(getProperties()["vocalstackTexturedBar"]) && !bool(getProperties()["vocalstackSeparateBarValue"])), width, height);
+        restoreIdleFocusPolicy();
     }
     void setTextBoxIsEditable(bool editable) {
-        PassiveNumericSlider::setTextBoxIsEditable(editable && (!bool(getProperties()["vocalstackTexturedBar"]) || bool(getProperties()["vocalstackSeparateBarValue"])));
+        juce::Slider::setTextBoxIsEditable(editable && (!bool(getProperties()["vocalstackTexturedBar"]) || bool(getProperties()["vocalstackSeparateBarValue"])));
+        restoreIdleFocusPolicy();
+    }
+    void lookAndFeelChanged() override {
+        juce::Slider::lookAndFeelChanged();
+        restoreIdleFocusPolicy();
+    }
+    void enablementChanged() override {
+        juce::Slider::enablementChanged();
+        restoreIdleFocusPolicy();
     }
     // displayedSource may be selected without being in assignment mode.
     void refreshModulation(const ModulationSnapshot& snapshot, const ModulationState& state, uint32_t displayedSource) {
@@ -250,6 +228,9 @@ public:
     void mouseDoubleClick(const juce::MouseEvent& e) override {
         if (!owner || owner->modulationAssignmentId() == 0) juce::Slider::mouseDoubleClick(e);
     }
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
+        forwardPassiveWheel(*this, event, wheel);
+    }
     void drawLinearModulation(juce::Graphics& g, juce::Rectangle<float> track) {
         const auto x = [&](float value) { return track.getX() + juce::jlimit(0.0f, 1.0f, value) * track.getWidth(); };
         const float base = float(valueToProportionOfLength(getValue())), y = track.getCentreY();
@@ -297,6 +278,18 @@ public:
         }
     }
 private:
+    void restoreIdleFocusPolicy() {
+        // JUCE Label::setEditable restores keyboard focusability. Keep the idle
+        // label passive without touching the deliberate transient TextEditor.
+        const auto passive = [](auto&& self, juce::Component& component) -> void {
+            if (dynamic_cast<juce::TextEditor*>(&component)) return;
+            component.setWantsKeyboardFocus(false);
+            component.setMouseClickGrabsKeyboardFocus(false);
+            component.setFocusContainerType(juce::Component::FocusContainerType::none);
+            for (auto* child : component.getChildren()) self(self, *child);
+        };
+        passive(passive, *this);
+    }
     bool displayDirty = true;
     double displayedFrame = -1;
     Processor* owner = nullptr;
@@ -310,10 +303,12 @@ private:
 
 class ParameterKnob final : public juce::Component {
 public:
+    // Baseline input to pixelFontOptions; the shared policy adds 2 exactly once.
     static constexpr float controlFontSize = 12.5f;
     class Style final : public PixelLookAndFeel {
     public:
         static constexpr float linearPointerHeight = 10.f;
+        static constexpr int rotaryValueLaneHeight = 22;
         static float rotaryRingWidth(float outerRadius) { return juce::jmin(8.f, outerRadius * .38f); }
         static constexpr int texturedBarHeight = 25;
         static juce::Rectangle<float> texturedBarBounds(juce::Rectangle<float> area) {
@@ -324,28 +319,34 @@ public:
             if (bool(slider.getProperties()["vocalstackInspectorRotary"]) || bool(slider.getProperties()["vocalstackCellRotary"])) {
                 juce::Slider::SliderLayout layout;
                 auto area = slider.getLocalBounds();
-                layout.textBoxBounds = area.removeFromTop(20);
+                layout.textBoxBounds = area.removeFromTop(rotaryValueLaneHeight);
                 layout.sliderBounds = area;
                 return layout;
             }
-            if (!bool(slider.getProperties()["vocalstackTexturedBar"]))
-                return juce::LookAndFeel_V4::getSliderLayout(slider);
+            if (!bool(slider.getProperties()["vocalstackTexturedBar"])) {
+                auto layout = juce::LookAndFeel_V4::getSliderLayout(slider);
+                if (slider.getTextBoxPosition() == juce::Slider::TextBoxAbove
+                    || slider.getTextBoxPosition() == juce::Slider::TextBoxBelow)
+                    layout.textBoxBounds = layout.textBoxBounds.withSizeKeepingCentre(
+                        slider.getWidth(), layout.textBoxBounds.getHeight());
+                return layout;
+            }
             juce::Slider::SliderLayout layout;
             if (bool(slider.getProperties()["vocalstackSeparateBarValue"])) {
                 auto area = slider.getLocalBounds();
-                layout.textBoxBounds = area.removeFromTop(20);
+                layout.textBoxBounds = area.removeFromTop(22);
                 layout.sliderBounds = area.reduced(4, 0);
                 return layout;
             }
             layout.sliderBounds = slider.getLocalBounds().reduced(4, 0);
             const auto bar = texturedBarBounds(layout.sliderBounds.toFloat()).toNearestInt();
-            layout.textBoxBounds = bar.withSizeKeepingCentre(juce::jmin(juce::jmax(124, juce::roundToInt(float(slider.getName().length()) * 8.f + 75.f)), juce::jmax(1, bar.getWidth() - 8)), bar.getHeight());
+            layout.textBoxBounds = bar.reduced(4, 0);
             return layout;
         }
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
             auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
             label->setFont(juce::Font(pixelFontOptions(float(slider.getProperties().getWithDefault("vocalstackValueFontSize", controlFontSize)))));
-            if (bool(slider.getProperties()["vocalstackInspectorRotary"])) label->setMinimumHorizontalScale(1.f);
+            label->setMinimumHorizontalScale(1.f);
             if (bool(slider.getProperties()["vocalstackTexturedBar"]) && !bool(slider.getProperties()["vocalstackSeparateBarValue"]))
                 label->setInterceptsMouseClicks(false, false);
             return label;
@@ -519,7 +520,7 @@ public:
         slider.setTooltip(title + ": drag to change. Double-click to reset. Click the number to type a value.");
         slider.setLookAndFeel(&style);
         slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 68, 19);
+        slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 80, 21);
         addAndMakeVisible(slider);
         link = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner.parameters, id, slider);
         if (auto* parameter = owner.parameters.getParameter(id))
@@ -557,18 +558,25 @@ public:
             (slider.getComponentID() == "globalOutput" || slider.getComponentID() == "outputGain" || slider.getComponentID() == "globalMix" || slider.getComponentID() == "double"
                          || slider.getComponentID().startsWith("fx") || slider.getComponentID() == "choraleMix" || slider.getComponentID() == "choraleMotion"
                          || (slider.getComponentID().startsWith("mix") && slider.getComponentID().endsWith("Balance"))));
-        slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 68, value ? 18 : 19);
+        slider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 80, value ? 20 : 21);
         resized();
     }
     ~ParameterKnob() override { slider.setLookAndFeel(nullptr); }
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override {
         forwardPassiveWheel(*this, event, wheel);
     }
+    int captionHeightForWidth(int width) const {
+        juce::AttributedString caption;
+        caption.append(label.getText(), label.getFont());
+        juce::TextLayout layout;
+        layout.createLayout(caption, float(juce::jmax(1, width - 10)));
+        return juce::jmax(30, int(std::ceil(layout.getHeight())) + 2);
+    }
     void resized() override {
         auto area = getLocalBounds();
                 const bool merged = bool(slider.getProperties()["vocalstackTexturedBar"]);
                 label.setVisible(!merged);
-                if (!merged) label.setBounds(area.removeFromBottom(28));
+                if (!merged) label.setBounds(area.removeFromBottom(captionHeightForWidth(area.getWidth())));
                 slider.setBounds(area);
     }
     void setNeon(bool neon) {

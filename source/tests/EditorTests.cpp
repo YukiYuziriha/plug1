@@ -86,7 +86,7 @@ void advancedParameterContract() {
     Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 2378, "Expected 2357 preserved + 21 tuning parameters");
+    expect(owner.getParameters().size() == 2357, "Expected 2087 preserved + 165 new effect parameters");
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
             const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
@@ -731,14 +731,15 @@ void editorSkin(int theme) {
         expect(findButton(*editor, obsolete) == nullptr, "Obsolete Stack action remains: " + juce::String(obsolete));
     expect(!owner.settings().advanced, "Always-visible Stack changed legacy activation");
     // Stack preserves native control sizes and scrolls vertically below the FX row.
-    static_assert(vocalstack::editorLayout::defaultWindowHeight == 1104);
+    static_assert(vocalstack::editorLayout::defaultWindowHeight == 1114);
     static_assert(vocalstack::editorLayout::additionalVoiceScrollbarHeight == 10);
-    static_assert(vocalstack::editorLayout::stackCanvasHeight == 1148 + 10 + 48);
+    auto* measuredRack = vocalstack::toneUiTests::find<vocalstack::MainBusFxRackPanel>(*editor, [](auto&) { return true; });
+    expect(measuredRack != nullptr, "Stack FX rack missing");
     expect(editor->isResizable() && windowHeight == vocalstack::editorLayout::defaultWindowHeight
                && windowWidth == vocalstack::editorLayout::editorWidth,
-           "Fresh editor must remain resizable at 940x1104, including the 52px preset footer");
+           "Fresh editor must remain resizable at 940x1114, including the enlarged 62px preset footer");
     expect(canvas.getBounds() == juce::Rectangle<int>(0, 0, vocalstack::editorLayout::editorWidth,
-                                                      vocalstack::editorLayout::stackCanvasHeight)
+                                                      (measuredRack->getBottom() + vocalstack::editorLayout::stackBottomPadding))
                && canvas.getTransform().isIdentity(),
            "Fresh Stack must retain its unscaled design plus the voice scrollbar growth");
 
@@ -766,7 +767,7 @@ void editorSkin(int theme) {
         });
         expect(choraleTab != nullptr, "Main Bus Chorale node tab missing");
         checkDrawerControls(owner, *choraleTab, choraleSliders, choraleButtons);
-    expect(advancedSliders == 27 && advancedButtons == 3, "Fresh Stack must contain Lead and two complete nine-slider voice cards");
+    expect(advancedSliders == 24 && advancedButtons == 3, "Fresh Stack must contain Lead and two complete eight-slider voice cards");
     expect(choraleSliders == 2 && choraleButtons == 1, "Main Bus Chorale knobs or host-bound switch missing");
     auto* addVoice = findButton(*editor, "+ Add voice");
     expect(addVoice != nullptr, "Missing Add voice action");
@@ -776,7 +777,7 @@ void editorSkin(int theme) {
     for (auto* child : canvas.getChildren())
         if (dynamic_cast<vocalstack::DoublerPanel*>(child))
             checkDrawerControls(owner, *child, advancedSliders, advancedButtons, true);
-    expect(advancedSliders == 81 && advancedButtons == 9, "Lead and eight complete nine-slider voice cards missing");
+    expect(advancedSliders == 72 && advancedButtons == 9, "Lead and eight complete stable voice cards missing");
     expectPassiveControls(*editor);
     setParameter(owner, "advancedOn", 0);
     expect(!owner.settings().advanced, "Legacy host activation no longer disables Advanced");
@@ -803,7 +804,7 @@ void editorSkin(int theme) {
     owner.setAdvancedVisible(false);
     juce::Timer::callPendingTimersSynchronously();
     auto* stack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(*editor, [](auto&) { return true; });
-    expect(stack && stack->isVisible() && canvas.getHeight() == vocalstack::editorLayout::stackCanvasHeight && owner.settings().advanced,
+    expect(stack && stack->isVisible() && canvas.getHeight() == (measuredRack->getBottom() + vocalstack::editorLayout::stackBottomPadding) && owner.settings().advanced,
            "Legacy visibility state hid Stack or changed activation");
     editor.reset();
     const auto savedWindow = owner.getRoutingLayout();

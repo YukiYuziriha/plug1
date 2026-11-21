@@ -7,7 +7,6 @@
 #include "MeterPanel.h"
 #include "DoublerPanel.h"
 #include "RoutingPanel.h"
-#include "TuningPanel.h"
 #include "MainBusFxRackPanel.h"
 #include "PresetManager.h"
 
@@ -15,15 +14,17 @@ namespace vocalstack {
 
 namespace editorLayout {
 constexpr int editorWidth = 940, editorHeight = 610, baseDrawerHeight = 442;
-constexpr int presetFooterHeight = 52;
+constexpr int presetFooterHeight = PresetBar::preferredHeight + 8;
 // Reserve only the growth beyond the original 12px voice scrollbar in the
 // scrollable design; saved/default window dimensions must not grow with it.
 constexpr int additionalVoiceScrollbarHeight = scrollbarMetrics::voiceStrip - 12;
 constexpr int drawerHeight = baseDrawerHeight + additionalVoiceScrollbarHeight;
-constexpr int rackExtraHeight = MainBusFxRackPanel::preferredHeight - 244;
-constexpr int stackPanelY = editorHeight + rackExtraHeight;
+// Reserve an assignment row below the main controls, even when not assigning.
+constexpr int stackAssignmentY = 338, assignmentRowHeight = 26;
+constexpr int stackPanelY = stackAssignmentY + assignmentRowHeight + 8;
 constexpr int stackPanelHeight = drawerHeight - 12;
-constexpr int stackCanvasHeight = stackPanelY + stackPanelHeight + 12;
+constexpr int stackRackY = stackPanelY + stackPanelHeight + 12;
+constexpr int stackBottomPadding = 12;
 constexpr int defaultWindowHeight = editorHeight + baseDrawerHeight + presetFooterHeight;
 }
 
@@ -56,6 +57,7 @@ private:
     void applyTheme();
     void updateBypassControls(float bypassValue);
     void syncDrawer();
+    void layoutStackRack();
     void openRouting();
     void drawDevice(juce::Graphics&);
     void drawFlash(juce::Graphics&);
@@ -90,10 +92,8 @@ private:
     juce::TextButton endAssignment;
     std::array<juce::Label, knobParameterIds.size()> labels;
     std::array<modulationui::Button, switchParameterIds.size()> switches;
-    juce::TextButton theme, reset, copy, paste, stackTab, routingTab, tuningTab;
+    juce::TextButton theme, reset, copy, paste, stackTab, routingTab;
     RoutingPanel routingPanel;
-    TuningPanel tuningPanel;
-    bool tuningVisible = false;
     bool routingVisible = false;
     bool routingOpened = false;
     DoublerPanel advancedPanel;

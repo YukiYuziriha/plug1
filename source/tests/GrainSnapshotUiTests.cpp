@@ -302,22 +302,22 @@ void integration() {
     expect(hash(routing.createComponentSnapshot(routing.getLocalBounds())) == last, "offscreen refresh performs no snapshot/model work");
     routing.setBounds(0, 0, 440, 238); routing.refresh();
     const auto currentImage = hash(plotImage(routing));
+    const auto originalPatch = owner.settingsText();
     auto replacement = graph(NodeType::delay);
-    // Type replacement normally resets creative parameters. Keep them fixed in
-    // this fixture to isolate grain-publication failure from legitimate edits.
-    for (size_t field = 0; field < creativeParameterCount; ++field) {
-        auto* p = owner.parameters.getParameter(creativeParameterId(1, field));
-        replacement.nodes[1].creative.values[field] = p->convertFrom0to1(p->getValue());
-    }
-    expect(owner.setRoutingGraph(replacement, error), "replace granular while retaining parameter values");
+    // The replacement must use a fresh slot. Keep the retired slot as the
+    // inspector's parameter model to isolate missing grain publication.
+    replacement.nodes[1].id = 101;
+    replacement.links[0].destination = replacement.links[1].source = 101;
+    expect(owner.setRoutingGraph(replacement, error), "replace granular using fresh slot 2");
     expect(!owner.readGrainSnapshot(1, frame), "old granular data hidden immediately on request");
     expect(hash(plotImage(routing)) == currentImage,
            "failed/invalidated actual snapshot must not erase the stored parameter graph");
     save(routing, "grain-replaced");
     render(); expect(!owner.readGrainSnapshot(1, frame), "replacement has no grains");
     routing.refresh(); expect(hash(plotImage(routing)) == currentImage, "missing grain publication cannot reframe parameter graph");
-    expect(owner.setRoutingGraph(graph(), error), "reuse granular slot"); render();
-    expect(owner.readGrainSnapshot(1, frame) && frame.generation != generation, "slot reuse has fresh generation");
+    expect(!owner.setRoutingGraph(graph(), error), "retired granular slot must reject ordinary re-add");
+    expect(owner.pasteSettings(originalPatch), "recall original granular owner"); render();
+    expect(owner.readGrainSnapshot(1, frame) && frame.generation != generation, "restored effect has a fresh DSP generation");
     const auto beforeResetEpoch = frame.resetEpoch;
     routing.refresh(); const auto beforeReset = hash(plotImage(routing));
     owner.reset(); expect(owner.readGrainSnapshot(1, frame) && frame.grains.count == 0 && frame.grains.capturedFrames == 0, "reset publishes empty capture");

@@ -84,8 +84,12 @@ inline void morphResponsiveLayout() {
                     for (auto previous : cells) require(!previous.intersects(knob->getBounds()), "Morph cells overlap");
                     cells.push_back(knob->getBounds());
                     const auto lanes = knob->slider.getLookAndFeel().getSliderLayout(knob->slider);
-                    require(knob->getHeight() == 138 && lanes.sliderBounds.getHeight() >= 90,
-                            "Morph lost existing large knob/value/caption lanes");
+                    require(knob->getHeight() >= 142 && lanes.sliderBounds.getHeight() >= 90,
+                            "Morph must retain a 90px dial after enlarged value/caption lanes");
+                    require(lanes.textBoxBounds.getHeight() == 22
+                        && knob->getHeight() == lanes.sliderBounds.getHeight() + lanes.textBoxBounds.getHeight()
+                            + knob->captionHeightForWidth(knob->getWidth()),
+                        "Morph cell height must account for its actual caption and value lanes");
                     require(!lanes.sliderBounds.intersects(lanes.textBoxBounds), "Morph value overlaps rotary");
                     require(!bool(knob->slider.getProperties()["vocalstackSquarePrototype"]), "Square prototype deployed");
                     viewport->setViewPosition(0, knob->getY());

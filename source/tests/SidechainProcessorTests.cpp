@@ -90,7 +90,7 @@ void busMatrix() {
 
 void monoAuditionAndGateBridge() {
     auto owner = std::make_unique<Processor>();
-    check(stereoMonoParameterStart == 2342 && parameterIds.size() == 2378, "Mono Audition must append after every released index");
+    check(stereoMonoParameterStart == 2342 && parameterIds.size() == 2357, "Mono Audition must append after every released index");
     for (size_t slot = 1; slot < 16; ++slot) {
         auto* p = dynamic_cast<juce::RangedAudioParameter*>(owner->getParameters()[int(2342 + slot - 1)]);
         check(p && p->paramID == stereoMonoParameterId(slot) && p->getDefaultValue() == 0, "Mono Audition index/ID/default mismatch");
@@ -221,7 +221,7 @@ void activationLatencyPolicy() {
 
 void spectralContract() {
     auto owner=std::make_unique<Processor>();
-    check(spectralMorphParameterStart==2252 && owner->getParameters().size()==2378, "append-only Morph parameter count");
+    check(spectralMorphParameterStart==2252 && owner->getParameters().size()==2357, "append-only Morph parameter count");
     for(size_t i=0;i<parameterIds.size();++i) {
         auto* p=dynamic_cast<juce::RangedAudioParameter*>(owner->getParameters()[int(i)]);
         check(p && p->paramID==parameterIds[i], "host index differs from explicit parameter map");

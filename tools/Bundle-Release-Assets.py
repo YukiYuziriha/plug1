@@ -55,7 +55,7 @@ def audit():
     return {"scope": "All commits reachable from local refs at packaging time",
             "history_tip": git("rev-parse", "HEAD").decode().strip(),
             "provenance": "Binary hashes identify bytes co-delivered with each commit's source; no historical rebuild or exact producing-commit claim",
-            "dependency_result": "Identical FetchContent declarations in every audited commit; use the external directory from the v1.11.0 corresponding-source ZIP",
+            "dependency_result": "Identical FetchContent declarations in every audited commit; confirm these pins match the separately supplied corresponding-source dependencies",
             "commit_count": len(rows), "unique_binary_blobs": len(binary_hashes), "commits": rows}
 
 
@@ -73,27 +73,46 @@ def write_zip(path, files):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audit-only", action="store_true")
-    parser.add_argument("--version", default="1.11.0")
-    parser.add_argument("--revision", default="12534e87440ca33a41f12bde53956319bd06ebab")
-    parser.add_argument("--working-tree", action="store_true",
+    parser.add_argument("--version", default="1.12.2")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--revision", help="Exact binary-producing Git commit")
+    selection.add_argument("--working-tree", action="store_true",
                         help="Package an explicitly uncommitted source snapshot with BUILD-PROVENANCE.json")
-    parser.add_argument("--skip-history", action="store_true",
-                        help="Do not regenerate the separately published historical audit/archive")
+    history = parser.add_mutually_exclusive_group()
+    history.add_argument("--skip-history", dest="skip_history", action="store_true", default=True,
+                         help="Package only this release (default); do not export saved-work refs")
+    history.add_argument("--include-history", dest="skip_history", action="store_false",
+                         help="Opt in to a separate all-ref historical audit/archive")
+    parser.add_argument("--deps-cache", type=Path, default=ROOT / "source/build/_deps")
     parser.add_argument("--output-directory", type=Path, default=ROOT / "source/build/publication")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.version):
         raise RuntimeError("Expected a numeric major.minor.patch version")
-    if args.audit_only and args.skip_history:
-        parser.error("--audit-only cannot be combined with --skip-history")
-    cmake = ((ROOT / "source/CMakeLists.txt").read_text(encoding="utf-8") if args.working_tree
+    if args.audit_only:
+        args.skip_history = False
+    elif not (args.working_tree or args.revision):
+        parser.error("Select --working-tree or --revision explicitly")
+    cmake = ((ROOT / "source/CMakeLists.txt").read_text(encoding="utf-8") if args.working_tree or args.audit_only
              else git("show", args.revision + ":source/CMakeLists.txt").decode())
-    if not re.search(r"project\(VocalStack VERSION " + re.escape(args.version) + r"(?:\s|\))", cmake):
+    if not args.audit_only and not re.search(r"project\(VocalStack VERSION " + re.escape(args.version) + r"(?:\s|\))", cmake):
         raise RuntimeError("Selected source version differs from requested release")
     provenance = None
     if args.working_tree:
         provenance = json.loads((ROOT / "Windows-x64/BUILD-PROVENANCE.json").read_text(encoding="utf-8"))
-        if provenance["version"] != args.version:
-            raise RuntimeError("Build provenance version differs from requested release")
+        if provenance["version"] != args.version or provenance.get("build_exit_code") != 0:
+            raise RuntimeError("Build provenance version or successful-build evidence differs from requested release")
+        if provenance.get("source_mode") != "uncommitted-working-tree":
+            raise RuntimeError("Expected working-tree build provenance")
+        inputs = {"source/CMakeLists.txt"}
+        for directory in ("source/src", "source/assets", "source/cmake", "ThirdParty"):
+            inputs.update(p.relative_to(ROOT).as_posix() for p in (ROOT / directory).rglob("*") if p.is_file())
+        if inputs != set(provenance["source_inputs_sha256"]):
+            raise RuntimeError("Source input inventory changed since the observed build")
+        expected_binaries = {
+            "Windows-x64/CLAP/HEAVEN by lil grass block.clap",
+            "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3"}
+        if set(provenance["packaged_binaries_sha256"]) != expected_binaries:
+            raise RuntimeError("Expected exactly the HEAVEN CLAP and VST3 build hashes")
         for name, expected in provenance["source_inputs_sha256"].items():
             if file_digest(ROOT / name) != expected:
                 raise RuntimeError(f"Source changed since the observed build: {name}")
@@ -115,14 +134,21 @@ def main():
         raise RuntimeError("Output assets already exist; use a new output directory")
     subprocess.run([sys.executable, str(ROOT / "tools/Bundle-Corresponding-Source.py"),
                     *(["--working-tree"] if args.working_tree else ["--revision", args.revision]),
+                    "--deps-cache", str(args.deps_cache),
                     "--output", str(output / names[0])], check=True, cwd=ROOT)
     if not args.skip_history:
         bundle_history(output / names[1], manifest, manifest_path)
     files = {}
+    notices = {p.relative_to(ROOT / "ThirdParty").as_posix(): file_digest(p)
+               for p in (ROOT / "ThirdParty").rglob("*") if p.is_file()}
+    delivered_notices = {p.relative_to(ROOT / "Windows-x64/ThirdParty").as_posix(): file_digest(p)
+                         for p in (ROOT / "Windows-x64/ThirdParty").rglob("*") if p.is_file()}
+    if notices != delivered_notices:
+        raise RuntimeError("Delivery ThirdParty tree differs from source; refresh notices before packaging")
     for path in sorted((ROOT / "Windows-x64").rglob("*")):
         if path.is_file():
             relative = path.relative_to(ROOT).as_posix()
-            if path.suffix in (".clap", ".vst3"):
+            if path.suffix.lower() in (".clap", ".vst3", ".dll", ".exe"):
                 if provenance is not None:
                     if provenance["packaged_binaries_sha256"].get(relative) != file_digest(path):
                         raise RuntimeError(f"Unverified binary: {relative}")
@@ -132,8 +158,9 @@ def main():
     documents = ["LICENSE", "COPYING.AGPLv3", "README.md", "docs/Building.md", "docs/Licensing.md",
                  "docs/Historical-Source.md", "docs/Historical-Source-Manifest.json", "docs/Getting-Started.md",
                  "docs/Windows-Resource-Limits.md"]
-    if args.working_tree:
-        documents += ["docs/Tuning.md", "docs/UiArchitecture.md", f"docs/Release-{args.version}-Validation.md"]
+    validation = f"docs/Release-{args.version}-Validation.md"
+    if (ROOT / validation).is_file():
+        documents.append(validation)
     for name in documents:
         files[f"HEAVEN-{args.version}/" + name] = ROOT / name
     write_zip(output / names[2], files)

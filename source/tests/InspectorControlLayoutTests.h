@@ -51,12 +51,16 @@ inline void run() {
                 ui::require(dynamic_cast<juce::Label*>(slider.getComponentAt(layout.textBoxBounds.getCentre())) != nullptr
                     && slider.getComponentAt(layout.sliderBounds.getCentre()) == &slider,
                     "Numeric entry or dial hit target is obstructed");
-                ui::require(layout.textBoxBounds.getHeight() == 20 && layout.sliderBounds.getHeight() >= 80,
+                ui::require(layout.textBoxBounds.getHeight() == 22 && layout.sliderBounds.getHeight() >= 80,
                     "Inspector lost readable value lane or useful dial size");
                 for (auto* child : slider.getChildren()) if (auto* value = dynamic_cast<juce::Label*>(child); value && value->isVisible()) {
                     ui::require(slider.getLocalBounds().contains(value->getBounds()) && !value->getBounds().intersects(layout.sliderBounds),
                         "Actual numeric label clips or overlaps dial hitbox");
                     ui::require(value->getMinimumHorizontalScale() == 1.f, "Inspector value shrinks its pixel font");
+                    ui::require(std::abs(value->getFont().getHeight() - (ParameterKnob::controlFontSize + 2.f)) < .001f,
+                        "Inspector value did not receive exactly +2 font height");
+                    ui::require(value->getFont().getAscent() + value->getFont().getDescent() <= float(value->getHeight()),
+                        "Inspector value font clips its actual label lane");
                 }
                 ui::require(row->getWidth() >= 88 && row->getWidth() <= 110, "Inspector allocated arbitrary oversized/undersized knob cells");
                 for (auto* child : row->getChildren()) if (auto* caption = dynamic_cast<juce::Label*>(child); caption && caption->isVisible())

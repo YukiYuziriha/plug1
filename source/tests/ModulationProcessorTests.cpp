@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 using namespace vocalstack;
@@ -12,7 +13,7 @@ namespace {
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 void processorApiAndRecall() {
     Processor owner;
-    check(parameterIds.size() == 2378 && creativeParameterStart == 1007, "append-only creative parameter count/offset changed");
+    check(parameterIds.size() == 2357 && creativeParameterStart == 1007, "append-only creative parameter count/offset changed");
     for (size_t i = 0; i < parameterIds.size(); ++i)
         check(owner.getParameters()[int(i)] == owner.parameters.getParameter(parameterIds[i]), "parameter index changed");
     check(owner.settings().globalMix == 1 && owner.settings().leadSettings.enabled
@@ -87,6 +88,73 @@ void processorApiAndRecall() {
     owner.endModulationAssignment();
     check(owner.modulationAssignmentId() == 0, "assignment mode did not end");
 }
+void fxSlotsAreNeverRecycled() {
+    auto owner = std::make_unique<Processor>();
+    const auto initial = owner->getRoutingGraph();
+    check(initial.nodes.size() == 11 && std::none_of(initial.nodes.begin(), initial.nodes.end(), [](const auto& node) { return node.id == 12; }), "fresh patch contains legacy Chorale");
+    const auto beforeAdd = owner->settingsText();
+    check(owner->spentFxSlots() == 0, "fresh processor had spent disposable slots");
+    auto first = initial;
+    first.nodes.push_back({100, NodeType::chorale});
+    juce::String error;
+    check(owner->setRoutingGraph(first, error), "could not claim FX slot 1");
+    const auto withFirst = owner->settingsText();
+    auto inPlace = first;
+    inPlace.nodes.back().type = NodeType::gain;
+    check(!owner->setRoutingGraph(inPlace, error) && error.isNotEmpty(), "in-place replacement retargeted slot 1");
+    check(owner->setRoutingGraph(initial, error), "could not delete first FX");
+    check(!owner->setRoutingGraph(first, error), "same-type add reused a retired slot");
+    check(!owner->setRoutingGraph(inPlace, error), "different-type add reused a retired slot");
+    juce::MemoryBlock saved;
+    owner->getStateInformation(saved);
+    auto recalled = std::make_unique<Processor>();
+    recalled->setStateInformation(saved.getData(), int(saved.getSize()));
+    check(recalled->getRoutingError().isEmpty() && recalled->spentFxSlots() == (1u << 1), "binary recall forgot a retired slot");
+    check(!recalled->setRoutingGraph(first, error), "recalled instance reused retired slot");
+    auto otherPatch = std::make_unique<Processor>();
+    check(recalled->pasteSettings(otherPatch->settingsText()) && recalled->spentFxSlots() == 0, "different patch inherited another lineage's slots");
+    otherPatch.reset();
+    check(recalled->pasteSettings(beforeAdd) && (recalled->spentFxSlots() & (1u << 1)), "older snapshot released a spent slot");
+    check(!recalled->setRoutingGraph(first, error), "host undo made slot available to ordinary add");
+    check(recalled->pasteSettings(withFirst), "snapshot could not restore the original owner");
+    check(recalled->setRoutingGraph(initial, error), "could not delete recalled original owner");
+
+    auto fork = std::make_unique<Processor>();
+    check(fork->pasteSettings(beforeAdd) && fork->setRoutingGraph(first, error), "could not construct diverged snapshot");
+    check(!recalled->pasteSettings(fork->settingsText()), "same-type owner in diverged snapshot retargeted a spent slot");
+    auto next = initial;
+    next.nodes.push_back({101, NodeType::chorale});
+    check(recalled->setRoutingGraph(next, error), "unused slot was not allocatable");
+    auto* oldMix = recalled->parameters.getParameter(fxParameterId(1, "Mix"));
+    check(oldMix && oldMix == recalled->getParameters()[95], "retired automation ID/index changed");
+    const auto newMix = recalled->settings().fxSettings[2].mix;
+    oldMix->setValueNotifyingHost(oldMix->convertTo0to1(91));
+    check(recalled->settings().fxSettings[2].mix == newMix, "retired automation reached replacement");
+    check(recalled->setRoutingGraph(initial, error), "could not delete replacement");
+    for (uint32_t id = 102; id <= 114; ++id) {
+        auto edit = initial;
+        edit.nodes.push_back({id, NodeType::gain});
+        check(recalled->setRoutingGraph(edit, error) && recalled->setRoutingGraph(initial, error), "unused slot could not be spent");
+    }
+    check(recalled->spentFxSlots() == 0xfffeu, "an empty graph after exhaustion still advertised usable FX slots");
+    check(!recalled->setRoutingGraph(next, error), "exhausted patch accepted a recycled ID");
+
+    auto reserved = initial;
+    reserved.nodes.erase(std::remove_if(reserved.nodes.begin(), reserved.nodes.end(),
+        [](const auto& n) { return n.id == 12; }), reserved.nodes.end());
+    reserved.links.erase(std::remove_if(reserved.links.begin(), reserved.links.end(),
+        [](const auto& link) { return link.source == 12 || link.destination == 12; }), reserved.links.end());
+    reserved.nodes.push_back({12, NodeType::gain});
+    check(!recalled->setRoutingGraph(reserved, error), "disposable FX claimed the reserved Chorale ID");
+    reserved.nodes.back().type = NodeType::chorale;
+    reserved.nodes.back().mainControls = true;
+    auto* choraleMix = recalled->parameters.getParameter("choraleMix");
+    choraleMix->setValueNotifyingHost(choraleMix->convertTo0to1(83));
+    check(recalled->setRoutingGraph(reserved, error) && recalled->spentFxSlots() == 0xfffeu
+        && recalled->parameters.getRawParameterValue("choraleMix")->load() == 83,
+        "reserved Chorale must keep its dedicated live host target without spending a disposable slot");
+}
+
 void localMixTargets() {
     Processor owner;
     check(localMixParameterStart == 944 && localMixParameterId(200) == "mix1Balance"
@@ -130,7 +198,7 @@ void localMixTargets() {
 
 void qualityParametersAndRecall() {
     Processor owner;
-    check(waveQualityParameterStart == 914 && parameterIds.size() == 2378, "quality index or expanded parameter count changed");
+    check(waveQualityParameterStart == 914 && parameterIds.size() == 2357, "quality index or expanded parameter count changed");
     check(owner.getParameters()[913] == owner.parameters.getParameter("fx15WaveShapeAmount"),
         "quality moved an existing wave parameter");
     for (size_t slot = 1; slot < 16; ++slot) {
@@ -459,12 +527,14 @@ void discreteZeroCrossingAndIdle(double sampleRate, const char* parameterId = "l
         "idle fast path left stale source or effective target snapshots");
 }
 }
-int main() {
+int main(int argc, char**) {
     juce::ScopedJuceInitialiser_GUI initialiser;
     try {
+        if (argc > 1) { fxSlotsAreNeverRecycled(); std::cout << "FX automation ownership passed" << char(10); return 0; }
         processorApiAndRecall();
         qualityParametersAndRecall();
         localMixTargets();
+        fxSlotsAreNeverRecycled();
         finalCreativeTarget();
         populatedGraphStress();
         creativeFilterStress();

@@ -144,8 +144,8 @@ struct UtilityPanelTests {
                         require(row->slider.getSliderStyle() == (mix ? juce::Slider::LinearHorizontal
                                                                  : juce::Slider::RotaryHorizontalVerticalDrag),
                                 "Utility parameter changed control style");
-                        require(row->getWidth() == (mix ? controlWidth : 68)
-                                && row->getHeight() == (mix ? 44 : 100), "Utility control stretched with inspector");
+                        require(row->getWidth() == (mix ? controlWidth : 82)
+                                && row->getHeight() == (mix ? 44 : 102), "Utility control stretched beyond its enlarged text cell");
                         require(bool(row->slider.getProperties()["vocalstackTexturedBar"]) == mix,
                                 "Only Mix or a sparse gain group should use the textured FX bar");
                         if (mix) {
@@ -169,10 +169,31 @@ struct UtilityPanelTests {
                         if (!mix) {
                             require(row->label.isVisible() && row->label.getY() >= row->slider.getBottom(),
                                     "Utility name is not below its control");
-                            require((row->getX() - controlX) % 70 == 0,
+                            require((row->getX() - controlX) % 84 == 0,
                                     "Utility rotary columns must have a 2px gap");
-                            require(row->slider.getTextBoxWidth() == 64 && row->slider.getTextBoxHeight() == 21,
-                                    "Utility rotary value must fit the narrower cell");
+                            require(row->slider.getTextBoxWidth() == 76 && row->slider.getTextBoxHeight() == 21,
+                                    "Utility rotary value must fit the enlarged cell");
+                            const auto layout = row->style.getSliderLayout(row->slider);
+                            require(row->slider.getLocalBounds().contains(layout.textBoxBounds)
+                                    && !layout.textBoxBounds.intersects(layout.sliderBounds),
+                                    "Utility numeric lane clips or overlaps its dial");
+                            for (auto* child : row->slider.getChildren()) if (auto* value = dynamic_cast<juce::Label*>(child)) {
+                                const auto font = value->getFont();
+                                require(std::abs(font.getHeight() - 14.5f) < .001f && value->getMinimumHorizontalScale() == 1.f,
+                                        "Utility value must retain the enlarged font without squeezing");
+                                const auto textArea = row->style.getLabelBorderSize(*value).subtractedFrom(value->getLocalBounds());
+                                require(font.getAscent() + font.getDescent() <= float(textArea.getHeight()),
+                                        "Utility enlarged numeric font clips vertically");
+                                for (double number : {row->slider.getMinimum(), row->slider.getMaximum(), row->slider.getValue()})
+                                    require(juce::GlyphArrangement::getStringWidth(font, row->slider.getTextFromValue(number)) <= float(textArea.getWidth()),
+                                            ("Utility enlarged value does not fit: " + row->id + " " + row->slider.getTextFromValue(number)).toRawUTF8());
+                            }
+                            juce::AttributedString caption;
+                            caption.append(row->label.getText(), row->label.getFont());
+                            juce::TextLayout captionLayout;
+                            captionLayout.createLayout(caption, float(row->label.getWidth() - 10));
+                            require(captionLayout.getHeight() <= float(row->label.getHeight() - 2),
+                                    "Utility enlarged caption clips vertically");
                         }
                     }
                 }

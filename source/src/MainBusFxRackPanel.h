@@ -15,7 +15,7 @@ public:
     explicit MainBusFxRackPanel(Processor& processor) : owner(processor) {
         setName("Main Bus FX rack"); setComponentID("mainBusFxRack");
         setLookAndFeel(&panelStyle);
-        add.setButtonText("+ FX"); add.setComponentID("mainBusAddFx");
+        add.setButtonText("Add FX"); add.setComponentID("mainBusAddFx");
         add.onClick = [this] { showAddMenu(); };
         addAndMakeVisible(add); addAndMakeVisible(status); addAndMakeVisible(viewport);
         viewport.setComponentID("mainBusFxRowViewport");
@@ -27,7 +27,16 @@ public:
     ~MainBusFxRackPanel() override {
         stopTimer(); viewport.setViewedComponent(nullptr, false); setLookAndFeel(nullptr);
     }
-    static constexpr int tabGap = 2, preferredHeight = 388;
+    static constexpr int tabGap = 2, emptyHeight = 46;
+    // Only unusually tall inspectors keep an inner vertical scroll range.
+    static constexpr int maxInspectorHeight = 720;
+    int preferredHeightForWidth(int width) {
+        for (auto& card : cards) if (card->model.id == selectedId)
+            return 2 * rackInset + tabStripHeight + statusHeight
+                + juce::jmin(maxInspectorHeight, card->preferredHeightForWidth(width - 2 * rackInset));
+        return emptyHeight;
+    }
+    std::function<void()> onPreferredHeightChanged;
     // The editor supplies RoutingPanel's validated, one-step graph undo path.
     std::function<bool(const Graph&, juce::String&)> commitGraph;
     std::function<void()> onOpenRouting;
@@ -75,7 +84,7 @@ public:
             for (auto& old : previous) if (old) old->cancelEditing();
             cardSignature = signature; updateSelection(); resized(); setNeon(neon);
         }
-        const auto capacity = mainBusFx::capacityProblem(graph);
+        const auto capacity = mainBusFx::capacityProblem(graph, owner.spentFxSlots());
         const auto reason = !segment.editable() ? segment.unavailable : !commitGraph
             ? std::string("Shared Routing Undo bridge unavailable; parameter editing remains active.") : capacity;
         add.setEnabled(segment.editable() && capacity.empty() && bool(commitGraph));
@@ -94,12 +103,22 @@ public:
             : reason.empty() ? "MAIN BUS FX  /  same nodes as Routing  /  before Output trim"
             : juce::String(reason), juce::dontSendNotification);
         status.setTooltip(status.getText());
+        notifyPreferredHeightChanged();
     }
     void resized() override {
-        auto area = getLocalBounds().reduced(6);
-        status.setBounds(area.removeFromBottom(18));
-        auto header = area.removeFromTop(42);
-        add.setBounds(header.removeFromRight(64).reduced(2, 4));
+        auto area = getLocalBounds().reduced(rackInset);
+        viewport.setVisible(!cards.empty());
+        if (cards.empty()) {
+            add.setBounds(area.removeFromLeft(76).reduced(2, 2));
+            area.removeFromLeft(6);
+            status.setBounds(area);
+            viewport.setBounds(juce::Rectangle<int>{});
+            content.setSize(0, 0);
+            return;
+        }
+        status.setBounds(area.removeFromBottom(statusHeight));
+        auto header = area.removeFromTop(tabStripHeight);
+        add.setBounds(header.removeFromRight(76).reduced(2, 4));
         header.removeFromRight(4);
         viewport.setBounds(header);
         int total = 0;
@@ -122,19 +141,8 @@ public:
                 background.paint(g, getLocalBounds(), p.panel, p.accent, fluidAnimationSeconds(*this));
         g.setColour(p.border); g.drawRect(getLocalBounds());
     }
-    juce::Component* revealParameter(const juce::String& id) {
-        for (auto& card : cards) {
-            if (auto* target = card->parameterTarget(id)) {
-                select(card->model.id);
-                if (auto* tone = dynamic_cast<ToneEffectPanel*>(target->findParentComponentOfClass<ToneEffectPanel>()))
-                    tone->revealParameter(id);
-                revealThroughViewports(*target);
-                return target;
-            }
-        }
-        return nullptr;
-    }
 private:
+    static constexpr int rackInset = 6, tabStripHeight = 42, statusHeight = 18;
     static juce::String name(NodeType type) {
         if (type == NodeType::spectralMorph) return "Spectral Morph";
         if (isCreativeEffect(type)) return CreativeEffectPanel::effectName(creativeKind(type));
@@ -268,8 +276,43 @@ private:
                     const auto font = handle.getLookAndFeel().getTextButtonFont(handle, 28);
                     return int(std::ceil(juce::GlyphArrangement::getStringWidth(font, handle.getButtonText()))) + 62;
                 }
+        int preferredHeightForWidth(int cardWidth) {
+            const int width = juce::jmax(1, cardWidth - 2 * cardInset);
+            if (auto* tone = dynamic_cast<ToneEffectPanel*>(fullPanel.get()))
+                return 2 * cardInset + toneContentHeight(*tone, width);
+            if (!fullPanel)
+                return 2 * cardInset + (knobs.empty() ? 0 : 16 + 2 * mixHeight + controlGap);
+
+            // These panels compute their own wrapped rows and captions. Their
+            // laid-out content is floored at the viewport height, so measure
+            // with a short viewport and restore the live size and scroll position.
+            auto* body = firstViewport(*fullPanel);
+            if (!body || !body->getViewedComponent()) return 2 * cardInset;
+            auto& content = *body->getViewedComponent();
+            int visibleChildren = 0;
+            for (auto* child : content.getChildren()) if (child->isVisible()) ++visibleChildren;
+            if (measuredWidth != width || measuredVisibleChildren != visibleChildren) {
+                const auto size = fullPanel->getBounds();
+                const auto position = body->getViewPosition();
+                fullPanel->setSize(width, 1);
+                measuredContentHeight = content.getHeight();
+                if (auto* spectral = dynamic_cast<SpectralMorphPanel*>(fullPanel.get())) {
+                    // Preserve a readable spectrum and both axis lanes. The
+                    // remaining height is the measured rotary grid, not a guess.
+                    constexpr int frameHeight = 2 * 6 + 24 + 28, spectrumHeight = 220;
+                    measuredContentHeight = frameHeight + (spectral->usesSideBySideLayout()
+                        ? juce::jmax(spectrumHeight - 28, measuredContentHeight)
+                        : spectrumHeight + measuredContentHeight);
+                }
+                fullPanel->setBounds(size);
+                body->setViewPosition(position);
+                measuredWidth = width;
+                measuredVisibleChildren = visibleChildren;
+            }
+            return 2 * cardInset + measuredContentHeight;
+        }
         void resized() override {
-            auto area = getLocalBounds().reduced(4);
+            auto area = getLocalBounds().reduced(cardInset);
             auto header = tab.getLocalBounds().reduced(1);
             remove.setBounds(header.removeFromRight(22));
             enabled.setBounds(header.removeFromRight(30));
@@ -277,11 +320,14 @@ private:
             if (fullPanel && !dynamic_cast<ToneEffectPanel*>(fullPanel.get())) fullPanel->setBounds(area);
             else {
                 bodyViewport.setBounds(area);
-                const int width = juce::jmax(1, area.getWidth() - bodyViewport.getScrollBarThickness());
-                if (auto* tonePanel = dynamic_cast<ToneEffectPanel*>(fullPanel.get())) {
+                auto* tonePanel = dynamic_cast<ToneEffectPanel*>(fullPanel.get());
+                const int required = tonePanel ? toneContentHeight(*tonePanel, area.getWidth())
+                    : knobs.empty() ? 0 : 16 + 2 * mixHeight + controlGap;
+                const int width = juce::jmax(1, area.getWidth()
+                    - (required > area.getHeight() ? bodyViewport.getScrollBarThickness() : 0));
+                if (tonePanel) {
                     const int panelHeight = tonePanel->preferredContentHeight(width);
-                    const int extraHeight = knobs.empty() ? 0 : mixHeight + controlGap;
-                    controls.setSize(width, juce::jmax(area.getHeight(), panelHeight + extraHeight));
+                    controls.setSize(width, juce::jmax(area.getHeight(), toneContentHeight(*tonePanel, width)));
                     // Keep Tone's responsive graph-left/controls-right layout at the top.
                     // The rack-owned Mix is a compact footer with in-track text.
                     fullPanel->setBounds(0, 0, width, panelHeight);
@@ -299,6 +345,7 @@ private:
             }
         }
         void setNeon(bool value) {
+            measuredWidth = 0;
             neon = value; const auto p = themePalette(*this, neon);
             for (auto* button : std::initializer_list<juce::TextButton*>{&handle, &remove, &enabled}) {
                 button->setColour(juce::TextButton::buttonColourId, p.inset);
@@ -328,15 +375,6 @@ private:
             handle.setColour(juce::TextButton::textColourOnId,
                              active ? selectedText : selectedText.interpolatedWith(p.accent, .25f));
         }
-        juce::Component* parameterTarget(const juce::String& id) {
-            const auto find = [&](auto&& self, juce::Component& component) -> juce::Component* {
-                if (component.getComponentID() == id) return &component;
-                for (auto* child : component.getChildren())
-                    if (auto* target = self(self, *child)) return target;
-                return nullptr;
-            };
-            return find(find, *this);
-        }
         void cancelEditing() { cancelGestures(*this); }
         void showSelected(bool selected) {
             if (!selected && isVisible()) cancelEditing();
@@ -350,6 +388,14 @@ private:
         Handle handle;
         juce::TextButton remove;
     private:
+        static juce::Viewport* firstViewport(juce::Component& component) {
+            for (auto* child : component.getChildren())
+                if (auto* viewport = dynamic_cast<juce::Viewport*>(child)) return viewport;
+            return nullptr;
+        }
+        int toneContentHeight(const ToneEffectPanel& tone, int width) const {
+            return tone.preferredContentHeight(juce::jmax(1, width)) + (knobs.empty() ? 0 : mixHeight + controlGap);
+        }
         static void cancelGestures(juce::Component& component) {
             for (auto* child : component.getChildren()) cancelGestures(*child);
             if (auto* slider = dynamic_cast<juce::Slider*>(&component)) slider->hideTextBox(true);
@@ -370,7 +416,8 @@ private:
         FluidBackground background;
         bool neon = false;
         // Mix overlays its name and editable value inside the textured track.
-        static constexpr int mixHeight = 44, controlGap = 2;
+        static constexpr int mixHeight = 44, controlGap = 2, cardInset = 4;
+        int measuredWidth = 0, measuredVisibleChildren = -1, measuredContentHeight = 0;
         modulationui::Button enabled;
         std::atomic<float>* enabledValue = nullptr;
         juce::Component controls;
@@ -384,8 +431,13 @@ private:
         if (selectedId != id) {
             selectedId = id;
             updateSelection();
+            notifyPreferredHeightChanged();
         }
         revealSelection();
+    }
+    void notifyPreferredHeightChanged() {
+        if (onPreferredHeightChanged && getWidth() > 0 && preferredHeightForWidth(getWidth()) != getHeight())
+            onPreferredHeightChanged();
     }
     void updateSelection() {
         for (auto& card : cards) card->showSelected(card->model.id == selectedId);
@@ -404,7 +456,7 @@ private:
         for (auto type : types) menu.addItem(int(type) + 1, name(type));
         juce::Component::SafePointer<MainBusFxRackPanel> safe(this);
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(add), [safe](int choice) {
-            if (safe && choice) safe->apply(mainBusFx::add(safe->owner.getRoutingGraph(), NodeType(choice - 1)));
+            if (safe && choice) safe->apply(mainBusFx::add(safe->owner.getRoutingGraph(), NodeType(choice - 1), safe->owner.spentFxSlots()));
         });
     }
     void apply(const mainBusFx::Edit& edit) {

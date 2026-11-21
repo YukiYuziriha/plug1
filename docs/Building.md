@@ -1,19 +1,11 @@
-# Building HEAVEN by lil grass block
+# Building Vocal Stack
 
 [Overview](../README.md) · [Getting Started](Getting-Started.md) ·
 [Windows resource-limit policy](Windows-Resource-Limits.md)
 
-The upcoming release is **v1.12.0** (verify `source/CMakeLists.txt` and binary
-versions when packaging), C++20, with CLAP/VST3 plugin targets and
+The current source project is **v1.11.0**, C++20, with CLAP/VST3 plugin targets and
 DSP, processor, state, module-host and UI tests. These are reproducible commands
 for a fresh Windows checkout, not references to machine-local delivery scripts.
-
-The product was formerly named **VocalStack** (displayed as **Vocal Stack**).
-This is a product rename, not a new plugin ID. Internal IDs, preset folders and
-state extensions remain unchanged for compatibility. Internal CMake targets
-(`VocalStack`, `VocalStack_CLAP`, `VocalStack_VST3` and test targets), build
-options and the `VocalStack_artefacts` directory retain their existing names.
-Only the full product binary filenames change.
 
 ## Prerequisites
 
@@ -54,19 +46,9 @@ job-budget policy, not a guaranteed instantaneous CPU percentage cap.
 Artifacts appear under:
 
 ```text
-source/build-vs2022/VocalStack_artefacts/Release/CLAP/HEAVEN by lil grass block.clap
-source/build-vs2022/VocalStack_artefacts/Release/VST3/HEAVEN by lil grass block.vst3/
+source/build-vs2022/VocalStack_artefacts/Release/CLAP/Vocal Stack.clap
+source/build-vs2022/VocalStack_artefacts/Release/VST3/Vocal Stack.vst3/
 ```
-
-For the current delivery tree `source/build`, the renamed binary paths are:
-
-```text
-source/build/VocalStack_artefacts/Release/CLAP/HEAVEN by lil grass block.clap
-source/build/VocalStack_artefacts/Release/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3
-```
-
-The VST3 bundle and its inner module use the same full product-name stem.
-These are expected output paths, not a claim that a renamed build has passed.
 
 `COPY_PLUGIN_AFTER_BUILD` is false: a successful build does not install plugins or
 replace tracked `Windows-x64` packages. For local use, follow the
@@ -110,56 +92,16 @@ history. Ordinary builds and source archives do not require that baseline option
 
 The configure step fetches these sources and applies the repository's CLAP
 patches for host integration, including bus layouts, state, tails and sidechain.
-The shared tuner embeds the GPL-3.0-or-later MXTune/Autotalent detector
-adaptation in `source/src/AutomaticTuner.h`, using the existing Signalsmith FFT
-and linked stereo shifter with envelope formant compensation. Retained donor
-sources and licenses in `ThirdParty/MXTune` are required source-package inputs;
-see [Tuning provenance](../ThirdParty/Tuning.md). No external tuning plugin is needed.
 The DSP also contains an attributed GPL-covered scalar
 [Vital filter integration](../ThirdParty/Vital/README.md). Pixelify Sans is embedded
 from `source/assets` under its [OFL license](../ThirdParty/PixelifySans-OFL.txt).
 
 This distribution selects **JUCE's open-source AGPLv3 route**. The combined
 plugin uses the GPLv3/AGPLv3 section 13 combination permission, retaining GPLv3
-for project code, GPL-3.0-or-later notices for Vital and the tuner adaptation,
-and AGPLv3 for JUCE modules. Read [GPLv3](../LICENSE),
+for project/Vital code and AGPLv3 for JUCE modules. Read [GPLv3](../LICENSE),
 [AGPLv3](../COPYING.AGPLv3), [Licensing and corresponding source](Licensing.md)
 and all [third-party notices](../ThirdParty) before redistributing. No commercial
 JUCE entitlement is asserted.
-
-## Refresh a verified 1.12.0 delivery (no compilation)
-
-Do this only after the build owner has completed a successful Release build and
-recorded exit code `0` in the specified exit file. The refresh tool verifies the
-wrapper log, Release configuration, CMake version, both Windows PE file versions,
-source timestamps and staged hashes. It copies the complete VST3 bundle, CLAP
-and all notices **only into the repository**, never installed plugin folders.
-It records an uncommitted source-input fingerprint in `BUILD-PROVENANCE.json`;
-a base HEAD is not falsely labeled as the producing commit. Do not refresh from
-partial/interrupted builds. Example for a completed local build runner:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Refresh-Windows-Package.py --build-directory source/build --build-log source/build/integration-1120-build.log --build-exit-file source/build/integration-1120-build.exit --version 1.12.0
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Test-Release-Bundles.py
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Release-Assets.py --version 1.12.0 --working-tree --skip-history --output-directory source/build/publication-1.12.0-heaven
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Verify-Release-Assets.py --directory source/build/publication-1.12.0-heaven --version 1.12.0
-```
-
-The planned primary output directory is `source/build/publication-1.12.0-heaven`,
-containing `HEAVEN-1.12.0-Windows-x64.zip` and the matching
-`HEAVEN-1.12.0-corresponding-source.zip`, plus checksums. These are planned
-outputs, not a claim of successful packaging or publication.
-
-The build log/exit filenames are local evidence, not tracked build tools. Use the
-actual completed runner's files. Finish `Windows-x64/SOURCE.md` and release docs
-before bundling. The source snapshot includes non-ignored untracked inputs,
-including MXTune, plus pinned dependencies. It refuses source changes during
-export, and the release bundler checks the build provenance against current
-source and binary hashes. ZIPs refuse overwrite; use a fresh output directory.
-`--skip-history` retains the separately published historical archive rather than
-rewriting its audit for an uncommitted release. New ZIPs and checksums are local
-outputs, not uploaded releases. Source bundling uses Python 3.12+, Git, populated
-dependency caches and a verified JUCE archive download; no new plugin build occurs.
 
 ## Build from the complete corresponding-source ZIP
 
