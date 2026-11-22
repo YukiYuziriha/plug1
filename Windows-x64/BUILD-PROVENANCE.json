@@ -1,13 +1,13 @@
 {
-  "base_commit_not_producing_revision": "bfcdf1dcc907545151d011e9f16aecf88a345d46",
+  "base_commit_not_producing_revision": "f0bd9aafb072d2648a2dd31672936c10d6d4d5f7",
   "build_directory": "source/build",
   "build_exit_code": 0,
-  "build_log": "source/build/vocal-glitch-build.log",
-  "build_log_sha256": "3d1be9c1f0328748ba41c59cf9e8ea06cac068d029834b58bd3a4207d608f429",
-  "observed_utc": "2026-11-22T13:03:09.716349+00:00",
+  "build_log": "source/build/glitch-layout-build.log",
+  "build_log_sha256": "fc451c1a20da0cab2067477800b4f2437ed10c7f2beb4084586719110d3d75b0",
+  "observed_utc": "2026-11-22T13:18:54.434766+00:00",
   "packaged_binaries_sha256": {
-    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "4adcaadc8ccdea8cb7ca985cfdaa400676bf428037139796aa37dee43509477e",
-    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "6337118f2f1555ff31b87c04dc933de0299b8801df052a5798a28b9d2c3df1cc"
+    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "23d8a89258eb361c80446600675ad4185298bac2bd33658770fe639479354235",
+    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "10c7514e6eb634b1209810c269a89f0c679733f7a6906e2a13d3059afd8ca285"
   },
   "source_inputs_sha256": {
     "ThirdParty/CLAP-Helpers.txt": "ced49f9ef950277afdb56199369ea6e8165ebfdbfbb37ebfe1827e0de892088d",
@@ -50,7 +50,7 @@
     "ThirdParty/Vital/src/synthesis/framework/utils.h": "03ab20657db95414fe8f4710413921cd0af6bf9cc06dc081d9ec054c4c5ebd74",
     "ThirdParty/Vital/src/synthesis/lookups/lookup_table.h": "f9a517b8a4443722f3b48557ac2178a204cec1f4f910525e7e313d956e882de4",
     "ThirdParty/Vital/src/synthesis/lookups/memory.h": "a74ac243b4b1a6c2b114c203ef247eb018b9bef61eec7d30d28eaf4343935b97",
-    "source/CMakeLists.txt": "de544eb435020e77acc9cd26800e810042bcbac07b699941c8f0060759b22f87",
+    "source/CMakeLists.txt": "c3d8d71dd690c1a2454f74a93ee8002d12d23c893ec87753d820445144aca538",
     "source/assets/PixelifySans.ttf": "9ba86cd010a4de309d263ceff8e8044092c9db7efda869620cb9ff1c4389e8a5",
     "source/cmake/PatchClap.cmake": "58ea27a3d5cac8ea912378c0a4a3aa89fec17f69d3a0e570a5f3cdd48f214a32",
     "source/cmake/PatchClapGlitchClock.cmake": "8a4e082d6b5d5116cf620a89c7fc61ee12b6d8beddec56c7b34654e0f9417630",
@@ -59,7 +59,7 @@
     "source/cmake/clap-ports.patch": "310ae2744c552a796474e18563ee22e15cdd1fc193bfac1a9180f6c1345eea9a",
     "source/src/Chorale.h": "94f8aa65ec295c9283e2edff3e49c3b2496d02a2485bd1b6dffff86aa771c54c",
     "source/src/CompressorPlot.h": "2ddbbe1e25282eb57efaff21229a8256ed4646f55691cc236836f397cebaa979",
-    "source/src/CreativeEffectPanel.h": "b26a5d876f9f19792cf79ea0e58835d1eb1a53777d11ab2bf8bfc09be07159a2",
+    "source/src/CreativeEffectPanel.h": "dc56acdb1bbb5e82c1874ec865e3038082a35e94607d439a7a4f308476257916",
     "source/src/CreativeEffectVisual.h": "a61bd3aa5774bc71e251226e8f76b6bc7419ba324ed18890ae298095479ea582",
     "source/src/CreativeEffects.h": "5f8fe5cec021e8d7773aa639ce7ac338df8a692ce0ec1b783c83177f182a3c49",
     "source/src/DoublerPanel.h": "80fb9613443d858fad311ed971da34fa03f10ebef98241cd7e7ae34f0551ba04",
@@ -110,5 +110,5 @@
     "source/src/Waveshaper.h": "2e98576a2e9bb38864a7675629fce399b51cf3166daa840cb6fe385b17f47050"
   },
   "source_mode": "uncommitted-working-tree",
-  "version": "1.13.0"
+  "version": "1.13.1"
 }

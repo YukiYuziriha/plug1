@@ -139,6 +139,12 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
         }
         void resized() override {
             auto area = getLocalBounds().reduced(1, 0);
+            if (compactChoiceWidth > 0) {
+                label.setJustificationType(juce::Justification::centredLeft);
+                label.setBounds(area.removeFromTop(18));
+                choice.setBounds(area.removeFromTop(28));
+                return;
+            }
             label.setJustificationType(juce::Justification::centred);
             const bool textured = slider.getSliderStyle() == juce::Slider::LinearHorizontal
                 && bool(slider.getProperties()["vocalstackTexturedBar"]);
@@ -172,6 +178,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             return slider.getComponentID().endsWith("convolution_brightness") ? 100 : 82;
         }
         bool textEditing = false, inspectorLayout = false;
+        int compactChoiceWidth = 0;
         void setNeon(bool neon) {
             const auto palette = themePalette(*this, neon);
             const auto accent = palette.accent;
@@ -197,6 +204,8 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
         std::unique_ptr<juce::ParameterAttachment> choiceLink;
     };
     struct Group {
+        enum class Layout { standard, compactChoices, vertical };
+        Layout layout = Layout::standard;
         std::unique_ptr<juce::Label> heading;
         std::vector<std::unique_ptr<Row>> rows;
     };
@@ -242,7 +251,13 @@ public:
             if (d.kind != kind) continue;
             const auto field = static_cast<CreativeParameter>(i);
             const auto* section = groupFor(field);
-            if (juce::String(section) != previous) { addGroup(section); previous = section; }
+            if (juce::String(section) != previous) {
+                using Layout = Group::Layout;
+                using P = CreativeParameter;
+                addGroup(section, field == P::glitchPattern ? Layout::compactChoices
+                    : field == P::glitchLayer ? Layout::vertical : Layout::standard);
+                previous = section;
+            }
             const auto id = creativeParameterId(slot, i);
             auto tip = parameterTip(field);
             juce::StringArray choices;
@@ -255,7 +270,9 @@ public:
                         tip += "\n" + choices[index] + ": " + CreativeEffectVisual::glitchChoiceDescription(field, index);
                 }
             }
-            addRow(id, d.label, tip, d.unit, d.discrete, choices);
+            addRow(id, field == CreativeParameter::glitchGrid ? "Launch Grid" : d.label, tip, d.unit, d.discrete, choices);
+            if (groups.back().layout == Group::Layout::compactChoices)
+                groups.back().rows.back()->compactChoiceWidth = field == CreativeParameter::glitchPattern ? 152 : 124;
             if (i == size_t(CreativeParameter::delayTime)) timeRow = groups.back().rows.back().get();
             if (i == size_t(CreativeParameter::delayBeats)) beatsRow = groups.back().rows.back().get();
         }
@@ -374,6 +391,28 @@ public:
             }
             group.heading->setBounds(controlsX, y, controlsWidth, 20);
             y += 22;
+            if (group.layout == Group::Layout::compactChoices) {
+                constexpr int rowHeight = 46, gap = 8;
+                int x = 0;
+                for (auto& row : group.rows) if (row->isVisible()) {
+                    const int w = juce::jmin(controlsWidth, row->compactChoiceWidth);
+                    if (x != 0 && x + w > controlsWidth) { x = 0; y += rowHeight + gap; }
+                    row->setBounds(controlsX + x, y, w, rowHeight);
+                    x += w + gap;
+                }
+                if (x != 0) y += rowHeight + gap;
+                continue;
+            }
+            if (group.layout == Group::Layout::vertical) {
+                for (auto& row : group.rows) if (row->isVisible()) {
+                    const bool button = row->buttonLink != nullptr;
+                    const int w = juce::jmin(controlsWidth, button ? 60 : 88);
+                    const int h = button ? 28 : row->inspectorHeight(w);
+                    row->setBounds(controlsX, y, w, h);
+                    y += h + (button ? 6 : 4);
+                }
+                continue;
+            }
             if (sparse) {
                 // The style overlays the editable value and name inside the track.
                 constexpr int mixHeight = 44;
@@ -437,8 +476,9 @@ private:
         scrollOffset = scrollAnchor ? scrollY - scrollAnchor->getY() : 0;
     }
     juce::Colour accent() const { return themePalette(*this, neon).accent; }
-    void addGroup(const char* name) {
+    void addGroup(const char* name, Group::Layout layout = Group::Layout::standard) {
         Group group;
+        group.layout = layout;
         group.heading = std::make_unique<juce::Label>();
         group.heading->setText(name, juce::dontSendNotification);
         group.heading->setFont(juce::Font(pixelFontOptions(11.0f, juce::Font::bold)));

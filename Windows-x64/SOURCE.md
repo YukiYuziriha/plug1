@@ -1,9 +1,9 @@
 # HEAVEN: licenses, corresponding source and build provenance
 
-Current delivery: **HEAVEN by lil grass block 1.13.0**, with the Vocal Glitch
-slicer and opt-in phrase-tail triggering. Successful Release-build evidence and
+Current delivery: **HEAVEN by lil grass block 1.13.1**, with compact Vocal Glitch
+dropdowns and vertically grouped Auto controls. Successful Release-build evidence and
 exact binary/source-input hashes are in `BUILD-PROVENANCE.json`; see
-[the release record](../docs/Release-1.13.0-Validation.md).
+[the release record](../docs/Release-1.13.1-Validation.md).
 The historical restored `Vocal Stack` deliveries are not the current binaries.
 
 These CLAP/VST3 binaries combine GPLv3-covered Vocal Stack/Vital code with JUCE
@@ -21,11 +21,11 @@ repository and corresponding-source ZIP for build and license details.
 
 ## Release source and evidence
 
-Publish `HEAVEN-1.13.0-corresponding-source.zip` alongside
-`HEAVEN-1.13.0-Windows-x64.zip` and `SHA256SUMS.txt`, providing source access at no
+Publish `HEAVEN-1.13.1-corresponding-source.zip` alongside
+`HEAVEN-1.13.1-Windows-x64.zip` and `SHA256SUMS.txt`, providing source access at no
 extra charge under GPLv3/AGPLv3 section 6(d), not a future source-on-request offer.
 These are expected asset names, not a claim that the assets have been published.
-The archive root is `HEAVEN-1.13.0/`; other versions use their selected version.
+The archive root is `HEAVEN-1.13.1/`; other versions use their selected version.
 
 The source ZIP includes the editable project, build/patch scripts, retained
 Vital subset, font, licenses/notices, and complete pinned external sources for
@@ -58,12 +58,12 @@ containing `0`. Use the actual build/log locations for your build.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Test-Release-Bundles.py
 ```
 
-After the release owner has completed and validated the real 1.13.0 HEAVEN build:
+After the release owner has completed and validated the real 1.13.1 HEAVEN build:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Refresh-Windows-Package.py --build-directory source/build --build-log source/build/release-build.log --build-exit-file source/build/release-build.exit --version 1.13.0
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Release-Assets.py --working-tree --version 1.13.0 --deps-cache source/build/_deps --output-directory source/build/publication-1.13.0
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Verify-Release-Assets.py --directory source/build/publication-1.13.0 --version 1.13.0
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Refresh-Windows-Package.py --build-directory source/build --build-log source/build/release-build.log --build-exit-file source/build/release-build.exit --version 1.13.1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Release-Assets.py --working-tree --version 1.13.1 --deps-cache source/build/_deps --output-directory source/build/publication-1.13.1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Verify-Release-Assets.py --directory source/build/publication-1.13.1 --version 1.13.1
 ```
 
 Refresh changes repository delivery files only, never installed plugins. It
@@ -79,7 +79,7 @@ documents; it includes the selected release validation document if present.
 Use a new output directory; existing ZIPs are not overwritten. Source-only export:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Corresponding-Source.py --working-tree --deps-cache source/build/_deps --output source/build/HEAVEN-1.13.0-corresponding-source.zip
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Corresponding-Source.py --working-tree --deps-cache source/build/_deps --output source/build/HEAVEN-1.13.1-corresponding-source.zip
 ```
 
 `--revision COMMIT` is available for an exact, independently established
