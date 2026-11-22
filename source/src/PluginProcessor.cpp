@@ -138,7 +138,7 @@ State::ParameterLayout Processor::makeParameters() {
     const std::array<const char*, 4> names{"Leveler Active", "Doubler Active", "Formant Active", "Bypass"};
     for (size_t i = 0; i < names.size(); ++i)
         layout.add(std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{parameterIds[i + 5], 1}, names[i], i != 3));
+            juce::ParameterID{parameterIds[i + 5], 1}, names[i], false));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"outputGain", 1}, "Output",
         juce::NormalisableRange<float>{-24.0f, 12.0f, 0.1f}, 0.0f,
@@ -758,6 +758,9 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
             float initial = i >= 86 && i < 94 && legacyVoices
                 ? (i < 90 ? 1.0f : 0.0f)
                 : parameter->convertFrom0to1(parameter->getDefaultValue());
+            // An older partial session used enabled defaults for these three switches.
+            // This fallback is for restore only; a fresh instance starts clean.
+            if (i >= 5 && i <= 7) initial = 1.0f;
             // A graph-only state can predate fixed FX automation. Seed missing
             // controls from its runnable nodes rather than losing their edits.
             if (graphTree.isValid() && ((i >= 43 && i < 46) || (i >= 94 && i < 139))) {

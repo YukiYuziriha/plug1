@@ -1,13 +1,13 @@
 {
-  "base_commit_not_producing_revision": "22cdc1c4c8845b69aac48ea6efec359fc936e915",
+  "base_commit_not_producing_revision": "47f7cf382298c1bfbf091e200d88f4020aae63ac",
   "build_directory": "source/build",
   "build_exit_code": 0,
-  "build_log": "source/build/no-tuning-build.log",
-  "build_log_sha256": "2279f313a219b9985471855c039deec5f43aa0175e6d13e1bdc6bc1bab218d1c",
-  "observed_utc": "2026-11-21T16:30:55.344568+00:00",
+  "build_log": "source/build/preset-bank-build.log",
+  "build_log_sha256": "316494e74b509498de4c47f6d2d02c17f88bab28255b273bd133ef1289b73148",
+  "observed_utc": "2026-11-22T09:23:27.022892+00:00",
   "packaged_binaries_sha256": {
-    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "c6d759a1a186714e423f33489352644e8ec36df5ff5a1710522d14900aed1eef",
-    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "7c92e6417922f8b7c9166cd683b2880a4e19e74967e1c0f5416188eca56ba760"
+    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "691d219bb89086fe92e0e074974d1449125ffe2230ed35829019e02ea288b9d8",
+    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "eb0efa51631879b105a0a40ef4399e7a414e686b666ee2dfdd3fe60bcb78c6ae"
   },
   "source_inputs_sha256": {
     "ThirdParty/CLAP-Helpers.txt": "ced49f9ef950277afdb56199369ea6e8165ebfdbfbb37ebfe1827e0de892088d",
@@ -50,7 +50,7 @@
     "ThirdParty/Vital/src/synthesis/framework/utils.h": "03ab20657db95414fe8f4710413921cd0af6bf9cc06dc081d9ec054c4c5ebd74",
     "ThirdParty/Vital/src/synthesis/lookups/lookup_table.h": "f9a517b8a4443722f3b48557ac2178a204cec1f4f910525e7e313d956e882de4",
     "ThirdParty/Vital/src/synthesis/lookups/memory.h": "a74ac243b4b1a6c2b114c203ef247eb018b9bef61eec7d30d28eaf4343935b97",
-    "source/CMakeLists.txt": "cd0f46ede542b37d42ed3abeca8ece8f817bda4eb85ea885fcb33b6a623c1bc8",
+    "source/CMakeLists.txt": "d7c413a687b42cf717cf7bf820eb6e7c3fc4c4a240995a5598dbd33a6e0ca3c2",
     "source/assets/PixelifySans.ttf": "9ba86cd010a4de309d263ceff8e8044092c9db7efda869620cb9ff1c4389e8a5",
     "source/cmake/PatchClap.cmake": "58ea27a3d5cac8ea912378c0a4a3aa89fec17f69d3a0e570a5f3cdd48f214a32",
     "source/cmake/PatchClapSidechain.cmake": "858610a9a40e777e1d1f08cc18bad19e3616d029a0a1a31834be59d1cf167619",
@@ -64,6 +64,7 @@
     "source/src/DoublerPanel.h": "80fb9613443d858fad311ed971da34fa03f10ebef98241cd7e7ae34f0551ba04",
     "source/src/DoublerSettings.h": "e31bbf325e64fe62c51e8e72b62e47ee0b460d286d7e0a0352d5f8e43c4c32a8",
     "source/src/Equalizer.h": "89b3a2c66e16bf04003f02afb0e517e3fd6adb4e92a61c2582cdbed6884346c2",
+    "source/src/ExpandedFactoryPresets.h": "c9c555345859631aeab7328393557623b55da6ad6c538e6f1ea9a743331c96b8",
     "source/src/FactoryConvolution.h": "e0dfae2d1a3343afb4852234704ea7199634493c785662663c0f060d611bc878",
     "source/src/FluidBackground.h": "ddaa63477439a62d154c64c53c9a7543b5307534520ad1cbb6be315531b942f5",
     "source/src/FxMonitor.h": "d3a35b4ea1a9aa4adb0a4eb24692eb40542bfce67281e67f412acf9b3fdac954",
@@ -82,9 +83,9 @@
     "source/src/ParameterKnob.h": "c0ee54dc3ba948247d263df1c7c1ef0c6fec148b59bbe2baab95568ee5681829",
     "source/src/PluginEditor.cpp": "67caf4f6800e4a55a33e3ea396e2305d3b0ffd3d7214c63515e6fb3e1427cac7",
     "source/src/PluginEditor.h": "cc4a8385dc9db93c971d06d1ed258ef6a79b5d315d477cfbdd585216d6acfac4",
-    "source/src/PluginProcessor.cpp": "5a604941d31b835f750e408281c321be6a8d1f15edfe272caf0fe0f2c41f6704",
+    "source/src/PluginProcessor.cpp": "01fbd35e209e3556e21c3c3c1cf4ee7ace627d0857a368327a3a87230a0ba505",
     "source/src/PluginProcessor.h": "51fdd539c8619bcab4026f8c08653120465a16f859730ea5d69467715c5370d2",
-    "source/src/PresetManager.h": "ae6374d99e0793c7ea8dd3d952f9d04db76fcd5b325342047b7b8678b21c6b0d",
+    "source/src/PresetManager.h": "8279a6d7224e7d80be1cef50768223236f37b8879085329aa0cf2938ed32b519",
     "source/src/ProcessorRoutingState.h": "ace17e64753d1f2975ebc5e53908c715771eb762bb58f517b97dede9c2a6dc18",
     "source/src/ReactiveFxVisualModels.h": "b3512340e0e4938da45fd56d9469d69422dd9a20e6032c059e637881cab36712",
     "source/src/ReactiveMaterial.h": "1b3af30dcbae621e84a7e9673dc23dd0ceb8d7f8c3b7a2a52fe05beda7627491",
@@ -107,5 +108,5 @@
     "source/src/Waveshaper.h": "2e98576a2e9bb38864a7675629fce399b51cf3166daa840cb6fe385b17f47050"
   },
   "source_mode": "uncommitted-working-tree",
-  "version": "1.12.2"
+  "version": "1.12.3"
 }

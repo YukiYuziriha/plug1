@@ -134,26 +134,56 @@ Measurement render(int preset, double rate, int channels, const juce::File& pref
     owner->releaseResources();
     require(result.all.clipped == 0, "Factory sample peak reaches/exceeds 0 dBFS at documented input");
     require(result.active.rms() > 1.e-5, "Factory unexpectedly muted active audio");
-    require(result.tail.rms() > 1.e-9, "Factory unexpectedly lost its delay/reverb tail");
-    require(result.finalTail.rms() < result.firstTail.rms(), "Factory tail did not decay over 15 seconds");
+    if (preset < PresetManager::originalFactoryCount)
+        require(result.tail.rms() > 1.e-9, "Factory unexpectedly lost its delay/reverb tail");
+    if (result.firstTail.rms() > 1.e-9)
+        require(result.finalTail.rms() < result.firstTail.rms(), "Factory tail did not decay over 15 seconds");
     return result;
 }
 }
 int main(int argc, char** argv) {
     try {
-        require(argc <= 2, "Usage: FactoryPresetAudioTests [factory-index-0-to-7]");
+        require(argc <= 2, "Usage: FactoryPresetAudioTests [factory-index | --validate]");
+        const bool validateOnly = argc == 2 && std::string_view(argv[1]) == "--validate";
         int selected = -1;
-        if (argc == 2) {
+        if (argc == 2 && !validateOnly) {
             char* end = nullptr;
             const long value = std::strtol(argv[1], &end, 10);
-            require(end != argv[1] && *end == '\0' && value >= 0 && value < 10, "Invalid factory index");
+            require(end != argv[1] && *end == '\0' && value >= 0 && value < PresetManager::factoryCount, "Invalid factory index");
             selected = int(value);
         }
         juce::ScopedJuceInitialiser_GUI init;
         juce::ScopedNoDenormals noDenormals;
         TemporaryFolder files;
         const auto names = PresetManager::factoryNames();
-        require(names.size() == 10, "Review coverage when factory preset count changes");
+        require(names.size() == PresetManager::factoryCount, "Factory name/recipe count differs");
+        if (validateOnly) {
+            auto processor = std::make_unique<Processor>();
+            for (const auto* id : {"levelOn", "doubleOn", "formantOn", "choraleOn", "advancedOn", "bypass"})
+                require(processor->parameters.getRawParameterValue(id)->load() == 0.0f, "Fresh instance enabled a feature or bypass");
+            processor->prepareToPlay(48000, 64);
+            juce::MidiBuffer midi;
+            juce::AudioBuffer<float> audio(2, 64);
+            const int latency = processor->getLatencySamples();
+            for (int frame = 0; frame < latency + 128; frame += 64) {
+                audio.clear();
+                if (frame == 0) { audio.setSample(0, 0, .25f); audio.setSample(1, 0, -.125f); }
+                processor->processBlock(audio, midi);
+                for (int i = 0; i < 64; ++i) {
+                    require(audio.getSample(0, i) == (frame + i == latency ? .25f : 0.f), "Fresh left channel is not latency-aligned dry");
+                    require(audio.getSample(1, i) == (frame + i == latency ? -.125f : 0.f), "Fresh right channel is not latency-aligned dry");
+                }
+            }
+            processor->releaseResources();
+            PresetManager manager(*processor, files.root.getChildFile("isolated.settings"));
+            for (int preset = 0; preset < names.size(); ++preset) {
+                const auto result = manager.load({names[preset], {}, preset});
+                if (result.failed()) std::fprintf(stderr, "%s: %s\n", names[preset].toRawUTF8(), result.getErrorMessage().toRawUTF8());
+                success(result);
+            }
+            std::puts("PASS: fresh non-bypassed stereo is latency-aligned dry; all factory patches load");
+            return 0;
+        }
         std::puts("preset,rate,channels,trim_db,latency,input_peak_dbfs,input_rms_dbfs,output_peak_dbfs,active_rms_dbfs,tail_peak_dbfs,tail_rms_dbfs,first_tail_rms_dbfs,final_tail_rms_dbfs,clipped_samples,hash");
         int cases = 0;
         for (int preset = 0; preset < names.size(); ++preset)

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.12.2 LANGUAGES C CXX)
+project(VocalStack VERSION 1.12.3 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -203,7 +203,8 @@ if(VOCALSTACK_BUILD_TESTS)
         target_sources(VocalStackFactoryPresetAudioTests PRIVATE tests/FactoryPresetAudioTests.cpp)
         target_link_libraries(VocalStackFactoryPresetAudioTests PRIVATE VocalStack vocalstack_dsp
             juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
-        foreach(preset RANGE 0 9)
+        add_test(NAME VocalStackFactoryPresetValidation COMMAND VocalStackFactoryPresetAudioTests --validate)
+        foreach(preset RANGE 0 29)
             add_test(NAME VocalStackFactoryPresetAudio${preset} COMMAND VocalStackFactoryPresetAudioTests ${preset})
         endforeach()
 

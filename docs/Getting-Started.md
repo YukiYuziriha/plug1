@@ -5,7 +5,7 @@
 
 ## Install on Windows x64
 
-HEAVEN by lil grass block v1.12.2 is an audio effect supplied as CLAP and VST3. Choose the
+HEAVEN by lil grass block v1.12.3 is an audio effect supplied as CLAP and VST3. Choose the
 format your host supports; installing both is optional. There is no tracked
 installer. Building from source is not required to use the supplied binaries.
 
@@ -31,15 +31,18 @@ installer. Building from source is not required to use the supplied binaries.
    Locations** if it is missing. These are installation pointers, not a claim of
    completed real-DAW validation.
 
-The tracked binaries are v1.12.2. See the
-[validation and delivery record](Release-1.12.2-Validation.md).
-This version restores pre-tuning processing and increases UI font heights by 2.
+The tracked binaries are v1.12.3. This version starts dry and expands the
+[factory preset bank](Factory-Presets.md) to 30 patches.
 There is no Tuning tab or automatic pitch correction on main. The previous
 implementation and replacement plan are preserved on
 [`work/autotune-donor-integration`](https://github.com/YukiYuziriha/plug1/tree/work/autotune-donor-integration).
 Legacy plugin identities and preset/preferences locations remain unchanged.
 
 ## Start with Stack
+
+A fresh instance starts with Leveler, Doubler, shared Formant and rack effects
+inactive. The lead is audible and global Bypass is off. Enable the controls you
+want or load a factory preset; opening a saved session restores its own patch.
 
 Play a vocal through the plugin and start with the main controls:
 

@@ -177,7 +177,7 @@ inline void factories() {
     std::unique_ptr<Processor> pStorage = std::make_unique<Processor>();
     Processor& p = *pStorage;
     PresetManager manager(p, files.preferences());
-    require(PresetManager::factoryNames().size() == 10, "Expected ten factory patches");
+    require(PresetManager::factoryNames().size() == 30, "Expected 30 factory patches");
     require(p.parameters.getParameter("fx1delay_time") != nullptr, "Creative factory parameters are not integrated");
     for (int i = 0; i < PresetManager::factoryNames().size(); ++i) {
         juce::ValueTree clean, dirty;

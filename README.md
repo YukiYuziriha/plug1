@@ -7,7 +7,7 @@ vocal doubling, expand to **eight generated voices plus a separate Lead**, then
 shape individual branches or the whole mix with a modular effects graph. Stack
 and Routing are two views of the same patch—not separate processing modes.
 
-**v1.12.2 — no automatic tuning, larger text** · [Download & install](#download--install) ·
+**v1.12.3 — clean startup and 30 factory vocal patches** · [Download & install](#download--install) ·
 [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase) ·
 [Build from source](docs/Building.md) · [GPLv3 + AGPLv3 licensing](docs/Licensing.md)
 
@@ -28,7 +28,12 @@ Its [replacement plan](https://github.com/YukiYuziriha/plug1/blob/work/autotune-
 requires HEAVEN with only tuning active to match the original donor plugin's
 output—not just correct a test tone. No replacement tuner is implemented on main.
 
-[Validation and delivery](docs/Release-1.12.2-Validation.md).
+Fresh instances pass the latency-aligned lead through with the Leveler, Doubler,
+shared Formant, and rack effects off—not globally bypassed. The factory bank now
+has 10 revised originals, 10 lead-ready presets, and 10 wild presets. See the
+[factory preset guide](docs/Factory-Presets.md) for starting points.
+
+[Previous release validation](docs/Release-1.12.2-Validation.md).
 
 ## What you can make
 
@@ -103,9 +108,8 @@ from either view. [Try the wiring walkthrough](docs/Getting-Started.md#spectral-
 for both formats, their complete notices and source-download information.
 [SHA256 checksums](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/SHA256SUMS.txt)
 are supplied with that historical release. Current tracked binaries below are
-1.12.2, not the same bytes. Local 1.12.2 archive names are
-`HEAVEN-1.12.2-Windows-x64.zip` and
-`HEAVEN-1.12.2-corresponding-source.zip`; creating them does not publish a GitHub Release.
+1.12.3, not the same bytes. The files under `Windows-x64` are the current
+main-branch builds, separate from the historical GitHub Release.
 
 | Format | Download | Install |
 | --- | --- | --- |

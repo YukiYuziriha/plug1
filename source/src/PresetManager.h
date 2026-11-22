@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "ProcessorRoutingState.h"
 #include "CreativeEffects.h"
+#include "ExpandedFactoryPresets.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_data_structures/juce_data_structures.h>
 #include <filesystem>
@@ -50,9 +51,13 @@ public:
 
     juce::File getFolder() const { return folder; }
     bool canUndoLoad() const noexcept { return undoPatch.isValid(); }
+    static constexpr int originalFactoryCount = 10;
+    static constexpr int factoryCount = originalFactoryCount + int(expandedFactoryPresets::names.size());
     static juce::StringArray factoryNames() {
-        return {"Dark Lead", "Grit Adlibs", "Deep Double", "Night Echo", "Cloud Choir",
-                    "Clean Vocal Utility", "Vocal Filter Motion", "Shimmer Bloom", "Synthetic Church", "Warm Plate"};
+        juce::StringArray result{"Dark Lead", "Grit Adlibs", "Deep Double", "Night Echo", "Cloud Choir",
+                                "Clean Vocal Utility", "Vocal Filter Motion", "Shimmer Bloom", "Synthetic Church", "Warm Plate"};
+        for (const auto* name : expandedFactoryPresets::names) result.add(name);
+        return result;
     }
 
     juce::Result setFolder(const juce::File& chosen) {
@@ -182,7 +187,7 @@ public:
     // declared default, replace graph/layout/modulation, then author overrides.
     // Descriptor IDs and raw units are shared with the host parameter bridge.
     juce::Result factoryPatch(int index, juce::ValueTree& patch) {
-        if (index < 0 || index >= factoryNames().size()) return fail("Unknown factory preset.");
+        if (index < 0 || index >= factoryCount) return fail("Unknown factory preset.");
         patch = currentPatch();
         for (int i = patch.getNumChildren(); --i >= 0;)
             patch.removeChild(i, nullptr);
@@ -201,31 +206,28 @@ public:
             for (const auto& d : creativeParameters)
                 setRaw(patch, "fx" + juce::String(slot) + d.id, d.initial);
         setRaw(patch, "bypass", 0); setRaw(patch, "outputGain", -3);
-        setRaw(patch, "levelOn", 1); setRaw(patch, "level", 35);
         setRaw(patch, "doubleOn", 1); setRaw(patch, "advancedOn", 1);
         setRaw(patch, "globalMix", 100); setRaw(patch, "choraleOn", 0);
+        const auto raw = [&](const juce::String& id, float value) { setRaw(patch, id, value); };
         for (int v = 1; v <= 8; ++v) {
-            setRaw(patch, "voice" + juce::String(v) + "Present", v <= 2 ? 1 : 0);
-            setRaw(patch, "voice" + juce::String(v) + "On", v <= 2 ? 1 : 0);
+            raw("voice" + juce::String(v) + "Present", 0);
+            raw("voice" + juce::String(v) + "On", 0);
         }
-        const float blends[]{12, 30, 42, 18, 46, 10, 18, 35, 12, 8};
-        setRaw(patch, "double", blends[index]);
-        for (int v = 1; v <= 2; ++v) {
+        const auto voice = [&](int v, float gain, float pan, float delay, float detune,
+                               float pitch, float formant, float depth, float rate) {
             const auto prefix = "voice" + juce::String(v);
-            setRaw(patch, prefix + "Gain", index == 2 ? -7 : -12);
-            setRaw(patch, prefix + "Pan", v == 1 ? -.65f : .65f);
-            setRaw(patch, prefix + "Delay", v == 1 ? 17 : 29);
-            setRaw(patch, prefix + "Detune", v == 1 ? -6 : 7);
-            setRaw(patch, prefix + "Pitch", index == 2 ? -12 : (index == 4 ? (v == 1 ? 7 : 12) : 0));
-            setRaw(patch, prefix + "Formant", index == 2 ? -3 : (index == 4 ? -1 : 0));
-        }
-        // Start with the serialized default graph, remove legacy Chorale, and
-        // insert a post-stack chain. Graph uses normalized mix, PARAM uses percent.
-        auto graph = processorRouting::encode(defaultGraph(), "RoutingGraph");
-        graph.removeChild(graph.getChildWithProperty("id", 12), nullptr);
+            raw(prefix + "Present", 1); raw(prefix + "On", 1);
+            raw(prefix + "Gain", gain); raw(prefix + "Pan", pan); raw(prefix + "Delay", delay);
+            raw(prefix + "Detune", detune); raw(prefix + "Pitch", pitch); raw(prefix + "Formant", formant);
+            raw(prefix + "Depth", depth); raw(prefix + "Rate", rate);
+        };
+        // Replace the direct output edge with a post-stack chain. Routing uses
+        // normalized mix while the corresponding host parameters use percent.
+        auto graph = processorRouting::encode(defaultGraph(false), "RoutingGraph");
         for (int i = graph.getNumChildren(); --i >= 0;) {
             auto child = graph.getChild(i);
-            if (child.hasType("Link") && (int(child["source"]) == 12 || int(child["destination"]) == 12)) graph.removeChild(i, nullptr);
+            if (child.hasType("Link") && int(child["source"]) == 11 && int(child["destination"]) == 13)
+                            graph.removeChild(i, nullptr);
         }
         int previous = 11, slot = 0;
         const auto effect = [&](int type, float mix) {
@@ -240,74 +242,97 @@ public:
             setRaw(patch, "fx" + juce::String(slot) + "Mix", mix);
             return "fx" + juce::String(slot);
         };
-        if (index == 5) {
-            const auto gate = effect(int(NodeType::gate), 100);
-            setRaw(patch, gate + "gate_threshold", -48);
-            setRaw(patch, gate + "gate_range", 18);
-            setRaw(patch, gate + "gate_ratio", 3);
-            setRaw(patch, gate + "gate_release", 180);
-            const auto stereo = effect(int(NodeType::stereo), 100);
-            setRaw(patch, stereo + "stereo_width", 115);
-            const auto trim = effect(int(NodeType::gain), 100);
-            setRaw(patch, trim + "gain_db", -2);
-        }
-        if (index == 6) {
-            const auto xp = effect(int(NodeType::xpFilter), 100);
-            setRaw(patch, xp + "xp_mode", 6);
-            setRaw(patch, xp + "xp_cutoff", 180);
-            setRaw(patch, xp + "xp_resonance", 15);
-            const auto synth = effect(int(NodeType::synthFilter), 22);
-            setRaw(patch, synth + "synth_mode", 6);
-            setRaw(patch, synth + "synth_cutoff", 950);
-            setRaw(patch, synth + "synth_resonance", 25);
-        }
-        if (index >= 8) {
-            setRaw(patch, "outputGain", -6);
-            if (index == 9) {
-                const auto sat = effect(int(NodeType::saturator), 100);
-                setRaw(patch, sat + "saturator_drive", 9);
-                setRaw(patch, sat + "saturator_character", 55);
-                setRaw(patch, sat + "saturator_output", -9);
-                setRaw(patch, sat + "saturator_tone", -2);
-            }
-            const auto conv = effect(int(NodeType::convolution), index == 8 ? 18 : 15);
-            setRaw(patch, conv + "convolution_space", index == 8 ? 0 : 3);
-            setRaw(patch, conv + "convolution_duck", 6);
-            setRaw(patch, conv + "convolution_brightness", index == 8 ? -2 : 1);
+        if (index >= originalFactoryCount) {
+            const auto append = [&](NodeType type, float wet) { return effect(int(type), wet); };
+            using Raw = decltype(raw);
+            using Effect = decltype(append);
+            using Voice = decltype(voice);
+            struct Context { const Raw& raw; const Effect& effect; const Voice& voice; };
+            expandedFactoryPresets::apply(index - originalFactoryCount, Context{raw, append, voice});
         } else {
-        auto compressor = effect(11, 100);
-        setRaw(patch, compressor + "compressor_threshold", -22);
-        setRaw(patch, compressor + "compressor_ratio", index == 1 ? 6 : 3);
-        setRaw(patch, compressor + "compressor_makeup", index == 1 ? 5 : 3);
-        if (index == 1) {
-            const auto crusher = effect(12, 22);
-            setRaw(patch, crusher + "crusher_bits", 9);
-            setRaw(patch, crusher + "crusher_rate", 12000);
-        }
-        if (index == 4) {
-            const auto grain = effect(13, 20);
-            setRaw(patch, grain + "granular_pitch", 7);
-            setRaw(patch, grain + "granular_spread", 85);
-            setRaw(patch, grain + "granular_highcut", 4400);
-        }
-        const auto delay = effect(9, index == 3 ? 32 : 13);
-        setRaw(patch, delay + "delay_time", index == 3 ? 440 : 270);
-        setRaw(patch, delay + "delay_feedback", index == 3 ? 48 : 24);
-        setRaw(patch, delay + "delay_highcut", 3600);
-        setRaw(patch, delay + "delay_duck", 10);
-        const auto reverb = effect(10, index == 4 ? 30 : 12);
-        setRaw(patch, reverb + "reverb_decay", index == 4 ? 5.5f : 1.8f);
-        setRaw(patch, reverb + "reverb_highcut", 4800);
-        setRaw(patch, reverb + "reverb_duck", 9);
-        if (index == 7) {
-            setRaw(patch, "outputGain", -6);
-            setRaw(patch, reverb + "Mix", 32);
-            graph.getChildWithProperty("id", 99 + slot).setProperty("mix", .32f, nullptr);
-            setRaw(patch, reverb + "reverb_decay", 5);
-            setRaw(patch, reverb + "reverb_pitch", 12);
-            setRaw(patch, reverb + "reverb_pitch_amount", 38);
-            setRaw(patch, reverb + "reverb_swell", 450);
-        }
+            const float blends[]{22, 41, 52, 19, 56, 0, 26, 32, 18, 15};
+            raw("double", blends[index]);
+            raw("levelOn", 1); raw("level", index == 5 ? 55 : 35);
+            if (index != 5) {
+                const float gain = index == 2 ? -4 : (index == 4 ? -5 : -8);
+                const float pitch = index == 2 ? -12 : (index == 4 ? 7 : 0);
+                const float formant = index == 2 ? -3 : (index == 4 ? -1 : 0);
+                voice(1, gain, -.8f, 15, -8, pitch, formant, .55f, .8f);
+                voice(2, gain,  .8f, 32, 10, index == 4 ? 12 : pitch, formant, .66f, 1.1f);
+            }
+            if (index == 0) {
+                const auto filter = effect(int(NodeType::xpFilter), 100);
+                raw(filter + "xp_mode", 5); raw(filter + "xp_cutoff", 5900);
+            }
+            if (index == 5) {
+                const auto gate = effect(int(NodeType::gate), 100);
+                setRaw(patch, gate + "gate_threshold", -48);
+                setRaw(patch, gate + "gate_range", 24);
+                setRaw(patch, gate + "gate_ratio", 3);
+                setRaw(patch, gate + "gate_release", 180);
+                const auto stereo = effect(int(NodeType::stereo), 100);
+                setRaw(patch, stereo + "stereo_width", 115);
+                const auto trim = effect(int(NodeType::gain), 100);
+                setRaw(patch, trim + "gain_db", -2);
+            }
+            if (index == 6) {
+                const auto xp = effect(int(NodeType::xpFilter), 100);
+                setRaw(patch, xp + "xp_mode", 6);
+                setRaw(patch, xp + "xp_cutoff", 180);
+                setRaw(patch, xp + "xp_resonance", 15);
+                const auto synth = effect(int(NodeType::synthFilter), 39);
+                setRaw(patch, synth + "synth_mode", 6);
+                setRaw(patch, synth + "synth_cutoff", 950);
+                setRaw(patch, synth + "synth_resonance", 25);
+            }
+            if (index >= 8) {
+                setRaw(patch, "outputGain", -6);
+                if (index == 9) {
+                    const auto sat = effect(int(NodeType::saturator), 100);
+                    setRaw(patch, sat + "saturator_drive", 9);
+                    setRaw(patch, sat + "saturator_character", 55);
+                    setRaw(patch, sat + "saturator_output", -9);
+                    setRaw(patch, sat + "saturator_tone", -2);
+                }
+                const auto conv = effect(int(NodeType::convolution), index == 8 ? 32 : 25);
+                setRaw(patch, conv + "convolution_space", index == 8 ? 0 : 3);
+                setRaw(patch, conv + "convolution_duck", 6);
+                setRaw(patch, conv + "convolution_brightness", index == 8 ? -2 : 1);
+            } else {
+                auto compressor = effect(11, 100);
+                setRaw(patch, compressor + "compressor_threshold", -22);
+                setRaw(patch, compressor + "compressor_ratio", index == 1 ? 6 : 3);
+                setRaw(patch, compressor + "compressor_makeup", index == 1 ? 5 : 3);
+                if (index == 1) {
+                    const auto crusher = effect(12, 39);
+                    setRaw(patch, crusher + "crusher_bits", 9);
+                    setRaw(patch, crusher + "crusher_rate", 12000);
+                }
+                if (index == 4) {
+                    const auto grain = effect(13, 30);
+                    setRaw(patch, grain + "granular_pitch", 7);
+                    setRaw(patch, grain + "granular_spread", 85);
+                    setRaw(patch, grain + "granular_highcut", 4400);
+                }
+                const auto delay = effect(9, index == 3 ? 44 : (index == 5 ? 5 : 13));
+                setRaw(patch, delay + "delay_time", index == 3 ? 440 : 270);
+                setRaw(patch, delay + "delay_feedback", index == 3 ? 48 : 24);
+                setRaw(patch, delay + "delay_highcut", 3600);
+                setRaw(patch, delay + "delay_duck", 10);
+                const auto reverb = effect(10, index == 4 ? 39 : (index == 5 ? 5 : 12));
+                setRaw(patch, reverb + "reverb_decay", index == 4 ? 5.5f : 1.8f);
+                setRaw(patch, reverb + "reverb_highcut", 4800);
+                setRaw(patch, reverb + "reverb_duck", 9);
+                if (index == 7) {
+                    setRaw(patch, "outputGain", -6);
+                    setRaw(patch, reverb + "Mix", 46);
+                    graph.getChildWithProperty("id", 99 + slot).setProperty("mix", .46f, nullptr);
+                    setRaw(patch, reverb + "reverb_decay", 5);
+                    setRaw(patch, reverb + "reverb_pitch", 12);
+                    setRaw(patch, reverb + "reverb_pitch_amount", 52);
+                    setRaw(patch, reverb + "reverb_swell", 450);
+                }
+            }
         }
         addLink(graph, previous, 13);
         patch.addChild(graph, -1, nullptr);
@@ -517,8 +542,10 @@ public:
     void refresh() {
         const auto result = manager.refresh(entries);
         browser.clear(juce::dontSendNotification);
-        browser.addSectionHeading("Factory / original vocal patches");
+        browser.addSectionHeading("Factory / originals");
         for (size_t i = 0; i < entries.size(); ++i) {
+            if (i == PresetManager::originalFactoryCount) browser.addSectionHeading("Factory / lead-ready");
+            if (i == PresetManager::originalFactoryCount + 10) browser.addSectionHeading("Factory / wild");
             if (i == size_t(PresetManager::factoryNames().size())) { browser.addSeparator(); browser.addSectionHeading("User presets"); }
             browser.addItem(entries[i].name, int(i + 1));
         }
