@@ -7,7 +7,7 @@ vocal doubling, expand to **eight generated voices plus a separate Lead**, then
 shape individual branches or the whole mix with a modular effects graph. Stack
 and Routing are two views of the same patch—not separate processing modes.
 
-**v1.12.3 — clean startup and 30 factory vocal patches** · [Download & install](#download--install) ·
+**v1.13.0 — Vocal Glitch: grab, stutter, reverse** · [Download & install](#download--install) ·
 [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase) ·
 [Build from source](docs/Building.md) · [GPLv3 + AGPLv3 licensing](docs/Licensing.md)
 
@@ -108,7 +108,7 @@ from either view. [Try the wiring walkthrough](docs/Getting-Started.md#spectral-
 for both formats, their complete notices and source-download information.
 [SHA256 checksums](https://github.com/YukiYuziriha/plug1/releases/download/v1.11.1/SHA256SUMS.txt)
 are supplied with that historical release. Current tracked binaries below are
-1.12.3, not the same bytes. The files under `Windows-x64` are the current
+1.13.0, not the same bytes. The files under `Windows-x64` are the current
 main-branch builds, separate from the historical GitHub Release.
 
 | Format | Download | Install |

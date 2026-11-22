@@ -161,9 +161,22 @@ inline constexpr size_t creativeParameterStart = waveAlgorithmParameterStart + 1
 inline constexpr size_t legacyCreativeParameterCount = 48;
 inline constexpr size_t releasedCreativeParameterCount = 51;
 inline constexpr size_t newCreativeParameterStart = 2087;
+inline constexpr size_t preGlitchCreativeParameterCount = size_t(CreativeParameter::glitchLength);
+inline constexpr size_t spectralMorphParameterStart = 2252;
+inline constexpr size_t stereoMonoParameterStart = spectralMorphParameterStart + 15 * spectralMorphParameterCount;
+inline constexpr size_t vocalGlitchParameterStart = stereoMonoParameterStart + 15;
+inline constexpr size_t vocalGlitchParameterCount = creativeParameterCount - preGlitchCreativeParameterCount;
+static_assert(preGlitchCreativeParameterCount == 62 && vocalGlitchParameterCount == 6);
+static_assert(size_t(CreativeParameter::glitchPattern) == 63 && size_t(CreativeParameter::glitchGrid) == 64
+    && size_t(CreativeParameter::glitchLayer) == 65 && size_t(CreativeParameter::glitchAuto) == 66
+    && size_t(CreativeParameter::glitchThreshold) == 67);
+static_assert(newCreativeParameterStart + 15 * (preGlitchCreativeParameterCount - releasedCreativeParameterCount) == spectralMorphParameterStart);
+static_assert(stereoMonoParameterStart == 2342 && vocalGlitchParameterStart == 2357);
 inline constexpr size_t creativeParameterIndex(size_t slot, size_t p) noexcept {
+    if (p >= preGlitchCreativeParameterCount)
+        return vocalGlitchParameterStart + (slot - 1) * vocalGlitchParameterCount + p - preGlitchCreativeParameterCount;
     if (p >= releasedCreativeParameterCount)
-        return newCreativeParameterStart + (slot - 1) * (creativeParameterCount - releasedCreativeParameterCount) + p - releasedCreativeParameterCount;
+        return newCreativeParameterStart + (slot - 1) * (preGlitchCreativeParameterCount - releasedCreativeParameterCount) + p - releasedCreativeParameterCount;
     return p < legacyCreativeParameterCount
         ? creativeParameterStart + (slot - 1) * legacyCreativeParameterCount + p
         : creativeParameterStart + 15 * legacyCreativeParameterCount
@@ -192,8 +205,7 @@ inline juce::String utilityParameterId(size_t slot, size_t p) {
     return slot > 0 && slot < 16 && p < utilityParameterCount
         ? juce::String(utilityParameterIdStorage[(slot - 1) * utilityParameterCount + p]) : juce::String();
 }
-inline constexpr size_t spectralMorphParameterStart = 2252;
-static_assert(newCreativeParameterStart + 15 * (creativeParameterCount - releasedCreativeParameterCount) == spectralMorphParameterStart);
+
 inline constexpr size_t spectralMorphParameterIndex(size_t slot, size_t field) noexcept {
     return spectralMorphParameterStart + (slot - 1) * spectralMorphParameterCount + field;
 }
@@ -207,8 +219,7 @@ inline juce::String spectralMorphParameterId(size_t slot, size_t field) {
     return slot > 0 && slot < 16 && field < spectralMorphParameterCount
         ? juce::String(spectralMorphIdStorage[(slot - 1) * spectralMorphParameterCount + field]) : juce::String();
 }
-inline constexpr size_t stereoMonoParameterStart = spectralMorphParameterStart + 15 * spectralMorphParameterCount;
-static_assert(stereoMonoParameterStart == 2342);
+
 inline const auto stereoMonoIdStorage = [] {
     std::array<std::string, 15> ids;
     for (size_t slot = 1; slot < 16; ++slot) ids[slot - 1] = "fx" + std::to_string(slot) + "stereo_mono_audition";
@@ -218,7 +229,7 @@ inline juce::String stereoMonoParameterId(size_t slot) {
     return slot > 0 && slot < 16 ? juce::String(stereoMonoIdStorage[slot - 1]) : juce::String();
 }
 inline const auto parameterIds = [] {
-    std::array<const char*, stereoMonoParameterStart + 15> ids{};
+    std::array<const char*, vocalGlitchParameterStart + 15 * vocalGlitchParameterCount> ids{};
         static_assert(utilityParameterStart + 15 * utilityParameterCount == newCreativeParameterStart);
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
@@ -294,6 +305,10 @@ public:
     void releaseResources() override;
     void reset() override;
     bool isBusesLayoutSupported(const BusesLayout&) const override;
+    void requestVocalGlitch(size_t slot, bool grab) noexcept {
+        if (slot > 0 && slot < 16)
+            glitchRequests.fetch_or((grab ? 1u : 2u) << (2 * (slot - 1)), std::memory_order_relaxed);
+    }
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     juce::AudioProcessorParameter* getBypassParameter() const override;
@@ -421,7 +436,10 @@ private:
     std::atomic<uint64_t> modulationSnapshotSequence{0};
     std::array<std::atomic<bool>, parameterIds.size()> snapshotTargeted{};
     std::array<std::atomic<float>, parameterIds.size()> snapshotBase{}, snapshotEffective{};
-    bool transportPlaying = false;
+    bool transportPlaying = false, glitchHadPpq = false, glitchHadSamplePosition = false;
+    double glitchExpectedPpq = 0;
+    int64_t glitchExpectedSamplePosition = 0;
+    std::atomic<uint32_t> glitchRequests{0};
     std::atomic<double> hostTempo{120};
     std::atomic<int> skin{0};
     std::atomic<bool> advancedVisible{false}, advancedInitialized{false};

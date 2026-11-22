@@ -301,7 +301,7 @@ State::ParameterLayout Processor::makeParameters() {
             appendDescriptor(utilityParameterId(slot, p), "FX " + juce::String(int(slot)) + " " + d.label, d);
         }
     for (size_t slot = 1; slot < 16; ++slot)
-        for (size_t p = releasedCreativeParameterCount; p < creativeParameterCount; ++p) {
+        for (size_t p = releasedCreativeParameterCount; p < preGlitchCreativeParameterCount; ++p) {
             const auto& d = creativeParameters[p];
             appendDescriptor(creativeParameterId(slot, p), "FX " + juce::String(int(slot)) + " " + d.label, d);
         }
@@ -319,6 +319,19 @@ State::ParameterLayout Processor::makeParameters() {
     for (size_t slot = 1; slot < 16; ++slot)
         layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{stereoMonoParameterId(slot), 1},
             "FX " + juce::String(int(slot)) + " Mono Audition", false));
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t p = preGlitchCreativeParameterCount; p < creativeParameterCount; ++p) {
+            const auto& d = creativeParameters[p];
+            const auto id = creativeParameterId(slot, p);
+            const auto name = "FX " + juce::String(int(slot)) + " " + d.label;
+            const auto field = static_cast<CreativeParameter>(p);
+            if (field == CreativeParameter::glitchPattern || field == CreativeParameter::glitchGrid) {
+                const auto choices = field == CreativeParameter::glitchPattern
+                    ? juce::StringArray{"Triplet Reverse", "Straight Ratchet", "Reverse Pickup", "Octave Cut"}
+                    : juce::StringArray{"Immediate", "1/16", "1/8 Triplet", "Next Beat"};
+                layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id, 1}, name, choices, int(d.initial)));
+            } else appendDescriptor(id, name, d);
+        }
     return layout;
 }
 
@@ -406,7 +419,8 @@ void Processor::prepareToPlay(double sampleRate, int) {
     activeTargetMask.fill(false);
     for (auto& target : snapshotTargeted) target.store(false);
     modulationSnapshotSequence.fetch_add(1);
-    transportPlaying = false;
+    transportPlaying = glitchHadPpq = glitchHadSamplePosition = false;
+    glitchRequests.store(0, std::memory_order_relaxed);
     // Host activation is the only boundary at which integer graph latency may
     // change. A transport stop/reset is not a host deactivation.
     prepared = false;
@@ -443,6 +457,8 @@ void Processor::reset() {
         for (auto& target : snapshotTargeted) target.store(false);
         modulationSnapshotSequence.fetch_add(1);
         engine.reset(settings());
+        transportPlaying = glitchHadPpq = glitchHadSamplePosition = false;
+        glitchRequests.store(0, std::memory_order_relaxed);
         grainBridge.publish(engine.grainSnapshot());
         spectralBridge.publish(engine.spectralSnapshots());
         voiceBridge.publish(engine.voiceSnapshots());
@@ -461,55 +477,69 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
         return;
     if (meterResetRequested.exchange(false, std::memory_order_relaxed))
         engine.resetMeters();
+    const int samples = audio.getNumSamples();
+    if (samples == 0) return;
+    double ppq = std::numeric_limits<double>::quiet_NaN();
+    double bpm = ppq;
+    bool playing = false, hasSamplePosition = false;
+    int64_t samplePosition = 0;
     if (auto* playHead = getPlayHead()) {
         if (auto position = playHead->getPosition()) {
-            if (auto bpm = position->getBpm()) {
-                modulation.setTempo(*bpm);
-                if (std::isfinite(*bpm) && *bpm > 0) hostTempo.store(*bpm, std::memory_order_relaxed);
+            if (auto reportedBpm = position->getBpm()) {
+                bpm = *reportedBpm;
+                modulation.setTempo(bpm);
+                if (std::isfinite(bpm) && bpm > 0) hostTempo.store(bpm, std::memory_order_relaxed);
             }
-            const bool playing = position->getIsPlaying();
-            if (playing && !transportPlaying) modulation.retrigger(ModulationRetrigger::transport);
-            transportPlaying = playing;
+            if (auto beat = position->getPpqPosition()) ppq = *beat;
+            if (auto sample = position->getTimeInSamples()) { samplePosition = *sample; hasSamplePosition = true; }
+            playing = position->getIsPlaying();
         }
     }
+    const bool hasPpq = playing && std::isfinite(ppq) && std::isfinite(bpm) && bpm > 0;
+    const double beatPerSample = hasPpq ? bpm / (60.0 * processingSampleRate) : 0;
+    const bool sampleClock = hasSamplePosition && glitchHadSamplePosition;
+    const double ppqTolerance = std::max(.02, 4 * beatPerSample);
+    const bool positionJump = sampleClock && std::abs(double(samplePosition) - double(glitchExpectedSamplePosition)) > 1.0;
+    const bool beatJump = hasPpq && glitchHadPpq && (ppq < glitchExpectedPpq - ppqTolerance
+        || (!sampleClock && ppq > glitchExpectedPpq + ppqTolerance));
+    const bool discontinuity = transportPlaying && (!playing || positionJump || beatJump);
+    if (playing && !transportPlaying) modulation.retrigger(ModulationRetrigger::transport);
+    transportPlaying = playing;
+    glitchHadPpq = hasPpq;
+    glitchHadSamplePosition = playing && hasSamplePosition;
+    glitchExpectedPpq = ppq + samples * beatPerSample;
+    glitchExpectedSamplePosition = hasSamplePosition ? samplePosition + samples : 0;
+    const auto uiTriggers = glitchRequests.exchange(0, std::memory_order_relaxed);
     auto mainInput = getBusBuffer(audio, true, 0);
     auto mainOutput = getBusBuffer(audio, false, 0);
     const int auxiliaryChannels = getChannelCountOfBus(true, 1);
     auto auxiliary = getBusBuffer(audio, true, 1);
     sidechainChannels.store(auxiliaryChannels, std::memory_order_relaxed);
-    // With no modulators there is no control work or re-chunking of the legacy
-    // engine path. A newly published plan is picked up on the next host block.
-    if (modulation.isIdle()) {
-        engine.process(mainInput.getArrayOfReadPointers(), mainOutput.getArrayOfWritePointers(),
-            audio.getNumSamples(), settings(), hostBypass,
-            auxiliaryChannels > 0 ? auxiliary.getArrayOfReadPointers() : nullptr, auxiliaryChannels);
-        processedSamples += uint64_t(audio.getNumSamples());
-        grainBridge.publish(engine.grainSnapshot());
-        spectralBridge.publish(engine.spectralSnapshots());
-        voiceBridge.publish(engine.voiceSnapshots());
-        voiceBridge.publishLead(engine.leadSnapshot());
-        metering.publish(engine.meters());
-        return;
-    }
+    const bool modulationIdle = modulation.isIdle();
     const auto blockBaseSettings = settings();
     auto event = midi.begin();
-    for (int offset = 0; offset < audio.getNumSamples();) {
+    for (int offset = 0; offset < samples;) {
+        uint32_t triggers = offset == 0 ? uiTriggers : 0;
         while (event != midi.end() && (*event).samplePosition <= offset) {
             const auto metadata = *event;
-            if (metadata.numBytes >= 3 && (metadata.data[0] & 0xf0) == 0x90 && metadata.data[2] != 0)
-                modulation.retrigger(ModulationRetrigger::note);
+            if (metadata.numBytes >= 3 && (metadata.data[0] & 0xf0) == 0x90 && metadata.data[2] != 0) {
+                if (!modulationIdle) modulation.retrigger(ModulationRetrigger::note);
+                const int note = int(metadata.data[1]) - 36;
+                if (note >= 0 && note < 30) triggers |= 1u << note;
+            }
             ++event;
         }
-        if (modulation.samplesUntilTick() <= 0) updateModulationValues();
-        int count = std::min(modulation.samplesUntilTick(), audio.getNumSamples() - offset);
+        if (!modulationIdle && modulation.samplesUntilTick() <= 0) updateModulationValues();
+        int count = modulationIdle ? samples - offset : std::min(modulation.samplesUntilTick(), samples - offset);
         if (event != midi.end()) count = std::min(count, std::max(1, (*event).samplePosition - offset));
         const float* input[2] = {mainInput.getReadPointer(0, offset), mainInput.getReadPointer(std::min(1, mainInput.getNumChannels() - 1), offset)};
-                const float* donor[2] = {auxiliaryChannels > 0 ? auxiliary.getReadPointer(0, offset) : nullptr,
-                    auxiliaryChannels > 0 ? auxiliary.getReadPointer(std::min(1, auxiliaryChannels - 1), offset) : nullptr};
+        const float* donor[2] = {auxiliaryChannels > 0 ? auxiliary.getReadPointer(0, offset) : nullptr,
+            auxiliaryChannels > 0 ? auxiliary.getReadPointer(std::min(1, auxiliaryChannels - 1), offset) : nullptr};
         float* output[2] = {mainOutput.getWritePointer(0, offset), mainOutput.getWritePointer(std::min(1, mainOutput.getNumChannels() - 1), offset)};
-        engine.process(input, output, count, modulation.targets().empty()
+        engine.setGlitchSpan(ppq + offset * beatPerSample, bpm, playing, offset == 0 && discontinuity, triggers);
+        engine.process(input, output, count, modulationIdle || modulation.targets().empty()
             ? blockBaseSettings : settingsFromValues(effectiveValues), hostBypass, donor, auxiliaryChannels);
-        modulation.advance(count);
+        if (!modulationIdle) modulation.advance(count);
         processedSamples += uint64_t(count);
         offset += count;
     }
@@ -826,7 +856,7 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                         initial = node.creative.values[field];
             }
             if (graphTree.isValid() && i >= newCreativeParameterStart && i < spectralMorphParameterStart) {
-                const size_t width = creativeParameterCount - releasedCreativeParameterCount;
+                const size_t width = preGlitchCreativeParameterCount - releasedCreativeParameterCount;
                 const size_t slot = 1 + (i - newCreativeParameterStart) / width;
                 const size_t field = releasedCreativeParameterCount + (i - newCreativeParameterStart) % width;
                 for (const auto& node : active.nodes)
@@ -840,11 +870,19 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                 for (const auto& node : active.nodes) if (node.type == NodeType::spectralMorph && routingFxSlot(node.id) == int(slot))
                     initial = spectralMorphValues(node.spectralMorph)[field];
             }
-            if (i >= stereoMonoParameterStart) {
+            if (i >= stereoMonoParameterStart && i < vocalGlitchParameterStart) {
                 initial = 0;
                 for (const auto& node : draft.nodes)
                     if (node.type == NodeType::stereo && processorRouting::fxSlot(node.id) == int(i - stereoMonoParameterStart + 1))
                         initial = node.monoAudition ? 1.f : 0.f;
+            }
+            if (i >= vocalGlitchParameterStart) {
+                const size_t offset = i - vocalGlitchParameterStart;
+                const size_t slot = 1 + offset / vocalGlitchParameterCount;
+                const size_t field = preGlitchCreativeParameterCount + offset % vocalGlitchParameterCount;
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::vocalGlitch && processorRouting::fxSlot(node.id) == int(slot))
+                        initial = node.creative.values[field];
             }
             if (graphTree.isValid() && i >= utilityParameterStart && i < newCreativeParameterStart) {
                 const size_t slot = 1 + (i - utilityParameterStart) / utilityParameterCount;
@@ -1354,6 +1392,7 @@ bool Processor::setModulationState(const ModulationState& state, juce::String& e
         for (size_t i = 0; i < plan.modulatorCount; ++i) if (plan.modulators[i].id == a.modulatorId) source = i;
         for (size_t i = 0; i < parameterIds.size(); ++i) if (a.targetParameterId == parameterIds[i]) target = i;
         if (source == plan.modulatorCount || target == parameterIds.size()) return fail("Unknown modulation source or parameter ID");
+        if (target >= vocalGlitchParameterStart) return fail("Vocal Glitch controls are host automation only, not modulation targets");
         if (target >= stereoMonoParameterStart) return fail("Mono Audition is host automation only, not a continuous modulation target");
         if (target >= spectralMorphParameterStart) {
             const auto field = (target - spectralMorphParameterStart) % spectralMorphParameterCount;

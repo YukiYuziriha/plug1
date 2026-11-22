@@ -6,6 +6,7 @@
 #include "Multiband.h"
 #include "FxMonitor.h"
 #include "CreativeEffects.h"
+#include "VocalGlitch.h"
 #include "UtilityFilters.h"
 #include "SpectralMorph.h"
 #include "SpectralMorphBridge.h"
@@ -24,7 +25,7 @@ namespace vocalstack {
 
 // Serializable model. IDs identify machines, not positions in nodes[]. Changing
 // an effect ID or type creates fresh state; retaining both retains DSP history.
-enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19, convolution = 20, saturator = 21, sidechain = 22, spectralMorph = 23 };
+enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19, convolution = 20, saturator = 21, sidechain = 22, spectralMorph = 23, vocalGlitch = 24 };
 
 // Named signal inputs are shared by validation, prepared plans and presentation.
 // Additional multi-input effects extend this declaration, not host-buffer access.
@@ -44,11 +45,12 @@ inline constexpr EffectInputDeclaration routingInput(NodeType type, int pin) noe
 }
 inline constexpr bool isCreativeEffect(NodeType type) noexcept {
     return (type >= NodeType::delay && type <= NodeType::granular)
-        || type == NodeType::convolution || type == NodeType::saturator;
+        || type == NodeType::convolution || type == NodeType::saturator || type == NodeType::vocalGlitch;
 }
 inline constexpr CreativeKind creativeKind(NodeType type) noexcept {
     if (type == NodeType::convolution) return CreativeKind::convolution;
     if (type == NodeType::saturator) return CreativeKind::saturator;
+    if (type == NodeType::vocalGlitch) return CreativeKind::vocalGlitch;
     return static_cast<CreativeKind>(int(type) - int(NodeType::delay));
 }
 inline constexpr bool isUtilityEffect(NodeType type) noexcept {
@@ -370,6 +372,15 @@ public:
         tailSamplesUntilUpdate = 0;
         if (fxMonitor) fxMonitor->reset(rate > 0 ? rate : 48000);
     }
+    void setGlitchSpan(double ppq, double bpm, bool playing, bool discontinuity, uint32_t triggers) noexcept {
+        glitchPpq = ppq;
+        glitchBpm = bpm;
+        glitchPlaying = playing;
+        glitchDiscontinuity = discontinuity;
+        glitchTriggers = triggers;
+        glitchOffset = 0;
+        ++glitchStamp;
+    }
     StereoSample process(const RoutingSources& sources, const RoutingControls& controls) noexcept {
         const auto write = retireWrite.load(std::memory_order_relaxed);
         // SPSC retirement queue: bounded work, no audio CAS retry loop. If the
@@ -395,8 +406,10 @@ public:
         --tailSamplesUntilUpdate;
         if (fxMonitor) fxMonitor->beginSample();
         updateRegions(controls);
-        return active->hasCrossover ? processPlan(sources, controls, active->values)
-                                    : processPlan(sources, controls, active->compactValues);
+        const auto out = active->hasCrossover ? processPlan(sources, controls, active->values)
+                                              : processPlan(sources, controls, active->compactValues);
+        ++glitchOffset;
+        return out;
     }
 
 private:
@@ -601,6 +614,42 @@ private:
                 monitorHasGainReduction = n.type == NodeType::compressor && fx.enabled && controls.monitorWetEnabled;
                 break;
             }
+            case NodeType::vocalGlitch: {
+                using P = CreativeParameter;
+                value = input(0);
+                const auto fx = effectSettings(n, controls);
+                auto& glitch = *step.fx->glitch;
+                const bool enabled = fx.enabled && controls.monitorWetEnabled;
+                if (step.glitchStamp != glitchStamp) {
+                    step.glitchStamp = glitchStamp;
+                    const double ppq = glitchOffset == 0 ? glitchPpq : glitchPpq + glitchOffset * glitchBpm / (60.0 * rate);
+                    glitch.setClock(ppq, glitchBpm, glitchPlaying, glitchDiscontinuity || !enabled);
+                }
+                const auto choice = [&](P p) {
+                    const auto v = fx.creative[p];
+                    return std::isfinite(v) ? int(std::clamp(v, 0.f, 3.f)) : 0;
+                };
+                glitch.setSettings({fx.creative[P::glitchLength], fx.creative[P::glitchThreshold],
+                    choice(P::glitchPattern), choice(P::glitchGrid), fx.creative[P::glitchLayer] >= .5f,
+                    enabled && fx.creative[P::glitchAuto] >= .5f});
+                if (enabled && glitchOffset == 0 && glitchTriggers != 0) {
+                    const auto slot = routingFxSlot(n.id);
+                    if (slot > 0 && slot < 16) {
+                        const auto bits = glitchTriggers >> (2 * (slot - 1));
+                        if (bits & 1u) glitch.grab();
+                        if (bits & 2u) glitch.fire();
+                    }
+                }
+                const float target = enabled ? unit(fx.mix, .25f) : 0.f;
+                if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
+                else step.smoothedMix += mixSmoothing * (target - step.smoothedMix);
+                if (std::abs(step.smoothedMix - target) < 1.e-7) step.smoothedMix = target;
+                StereoSample wet;
+                glitch.process(value.audio.left, value.audio.right, wet.left, wet.right);
+                const float m = float(step.smoothedMix);
+                value.audio = {blend(value.audio.left, wet.left, m), blend(value.audio.right, wet.right, m)};
+                break;
+            }
             case NodeType::spectralMorph: {
                 value = input(0); // Only MAIN contributes audible provenance.
                 const auto donor = input(1);
@@ -691,6 +740,7 @@ private:
             case NodeType::waveshaper: waveshaper.prepare(sr); break;
             case NodeType::equalizer: eq.prepare(sr); break;
             case NodeType::crossover: crossover.prepare(sr); break;
+            case NodeType::vocalGlitch: glitch = std::make_unique<VocalGlitch>(); glitch->prepare(sr); break;
             case NodeType::spectralMorph: spectral = std::make_unique<SpectralMorph>(); spectral->prepare(sr); break;
             default:
                 if (isCreativeEffect(type)) creative.prepare(sr, creativeKind(type));
@@ -698,7 +748,7 @@ private:
                 break;
             }
         }
-        void reset() { chorale.reset(); waveshaper.reset(); eq.reset(); crossover.reset(); creative.reset(); utility.reset(); if (spectral) spectral->reset(); }
+        void reset() { chorale.reset(); waveshaper.reset(); eq.reset(); crossover.reset(); creative.reset(); utility.reset(); if (spectral) spectral->reset(); if (glitch) glitch->reset(); }
         NodeType type;
         Chorale chorale;
         Waveshaper waveshaper;
@@ -707,6 +757,7 @@ private:
         CreativeEffect creative;
         UtilityEffect utility;
         std::unique_ptr<SpectralMorph> spectral;
+        std::unique_ptr<VocalGlitch> glitch;
     };
     static constexpr double moduleTailSeconds(NodeType type) noexcept {
         switch (type) {
@@ -716,6 +767,7 @@ private:
         case NodeType::crossover: return 8;
 
         case NodeType::compressor: case NodeType::bitcrusher: return 2;
+        case NodeType::vocalGlitch: return 6.25; // Up to one beat waiting plus one beat of playback at 20 BPM.
         case NodeType::convolution: return 3.6;
         case NodeType::saturator: return Waveshaper::tailSeconds;
         // Cover ringing and old comb contents across mode/cutoff/feedback edits,
@@ -745,6 +797,7 @@ private:
         int inputCount = 0;
         double smoothedMix = 0;
         bool mixInitialized = false;
+        uint64_t glitchStamp = 0;
         std::shared_ptr<Machine> fx;
     };
     struct Plan {
@@ -901,7 +954,7 @@ private:
             }
             case NodeType::delay: case NodeType::reverb: case NodeType::compressor:
             case NodeType::bitcrusher: case NodeType::granular:
-            case NodeType::convolution: case NodeType::saturator:
+            case NodeType::convolution: case NodeType::saturator: case NodeType::vocalGlitch:
                 for (size_t p = 0; p < creativeParameterCount; ++p) {
                     const auto& d = creativeParameters[p]; const float x = n.creative.values[p];
                     if (!std::isfinite(x) || x < d.min || x > d.max) return {false, "invalid creative effect controls"};
@@ -984,6 +1037,10 @@ private:
     std::atomic<double> reportedTail{0};
     int reserve = 0;
     double rate = 0;
+    double glitchPpq = 0, glitchBpm = 120;
+    uint64_t glitchStamp = 1, glitchOffset = 0;
+    uint32_t glitchTriggers = 0;
+    bool glitchPlaying = false, glitchDiscontinuity = false;
     float mixSmoothing = 0;
     Plan* active = nullptr;
     std::atomic<Plan*> pending{nullptr};

@@ -140,6 +140,87 @@ Measurement render(int preset, double rate, int channels, const juce::File& pref
         require(result.finalTail.rms() < result.firstTail.rms(), "Factory tail did not decay over 15 seconds");
     return result;
 }
+
+void validateVocalGlitchMidi(int latency) {
+    struct PlayHead final : juce::AudioPlayHead {
+        PositionInfo position;
+        juce::Optional<PositionInfo> getPosition() const override { return position; }
+    };
+    constexpr int rate = 48000, blockSize = 64;
+    constexpr double bpm = 150, beatsPerSample = bpm / (60 * rate);
+    constexpr int quarterBeat = int(.25 / beatsPerSample + .5);
+    constexpr int grab = 1824, fire = 2032, earlyGrid = 2008, launch = earlyGrid + quarterBeat;
+    constexpr int pulseLength = 16, sliceMs = 10, sliceLength = rate * sliceMs / 1000;
+    constexpr int replay = launch + sliceLength - pulseLength;
+    constexpr int end = (launch + sliceLength + blockSize - 1) / blockSize * blockSize;
+    constexpr int seekAt = (fire / blockSize + 1) * blockSize;
+    require(latency <= grab - pulseLength, "Vocal Glitch fixture pulse would start before the render");
+
+    Graph graph{{{1, NodeType::lead}, {100, NodeType::vocalGlitch}, {13, NodeType::output}},
+        {{1, 100, 0}, {100, 13, 0}}};
+    auto& node = graph.nodes[1]; // FX slot 1, enabled by default.
+    node.mix = 1.f;
+    node.creative[CreativeParameter::glitchLength] = sliceMs;
+    node.creative[CreativeParameter::glitchPattern] = 1;
+    node.creative[CreativeParameter::glitchGrid] = 1; // 1/16 note
+    node.creative[CreativeParameter::glitchLayer] = 1;
+
+    std::array<std::array<float, 2>, end> reference{};
+    enum class Run { reference, launch, seek };
+    for (const auto run : {Run::reference, Run::launch, Run::seek}) {
+        PlayHead playHead;
+        playHead.position.setBpm(bpm);
+        playHead.position.setIsPlaying(true);
+        auto processor = std::make_unique<Processor>(); // No modulators or assignments.
+        processor->setPlayHead(&playHead);
+        processor->prepareToPlay(rate, blockSize);
+        juce::String error;
+        require(processor->setRoutingGraph(graph, error), "Vocal Glitch routing graph rejected");
+        require(!processor->routingRestartPending(), "Vocal Glitch graph requires a host restart");
+        juce::AudioBuffer<float> audio(2, blockSize);
+        juce::MidiBuffer midi;
+        for (int frame = 0; frame < end; frame += blockSize) {
+            // Fire falls after earlyGrid in the same block, so a block-start Fire lands one grid too early.
+            const int hostFrame = frame + (run == Run::seek && frame >= seekAt ? quarterBeat : 0);
+            playHead.position.setTimeInSamples(hostFrame);
+            playHead.position.setPpqPosition(.25 + (hostFrame - earlyGrid) * beatsPerSample);
+            midi.clear();
+            if (run != Run::reference) {
+                if (grab / blockSize == frame / blockSize)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 36, 1.f), grab - frame);
+                if (fire / blockSize == frame / blockSize)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 37, 1.f), fire - frame);
+            }
+            audio.clear();
+            for (int i = 0; i < blockSize; ++i) {
+                // The pulse reaches Glitch in the same block as Grab, just before its MIDI offset.
+                const int atNode = frame + i + latency;
+                if (atNode >= grab - pulseLength && atNode < grab) {
+                    audio.setSample(0, i, .25f);
+                    audio.setSample(1, i, -.125f);
+                }
+            }
+            processor->processBlock(audio, midi);
+            require(processor->getLatencySamples() == latency, "Vocal Glitch changed plugin latency");
+            for (int i = 0; i < blockSize; ++i) for (int c = 0; c < 2; ++c) {
+                const int sample = frame + i;
+                const float actual = audio.getSample(c, i);
+                require(std::isfinite(actual), "Vocal Glitch produced nonfinite audio");
+                if (run == Run::reference) {
+                    reference[sample][c] = actual;
+                } else {
+                    const float delta = std::abs(actual - reference[sample][c]);
+                    if (run == Run::launch && sample == replay)
+                        require(delta > 1.e-3f, "Vocal Glitch missed the quantized MIDI replay onset");
+                    if (run == Run::seek || sample < replay || sample >= replay + pulseLength)
+                        require(delta < 1.e-6f, run == Run::seek ? "Vocal Glitch replay survived a transport seek"
+                            : "Vocal Glitch changed audio outside the quantized replay window");
+                }
+            }
+        }
+        processor->releaseResources();
+    }
+}
 }
 int main(int argc, char** argv) {
     try {
@@ -181,7 +262,8 @@ int main(int argc, char** argv) {
                 if (result.failed()) std::fprintf(stderr, "%s: %s\n", names[preset].toRawUTF8(), result.getErrorMessage().toRawUTF8());
                 success(result);
             }
-            std::puts("PASS: fresh non-bypassed stereo is latency-aligned dry; all factory patches load");
+            validateVocalGlitchMidi(latency);
+            std::puts("PASS: fresh stereo is latency-aligned dry; all factory patches load; Vocal Glitch MIDI quantizes and cancels on seek without changing latency");
             return 0;
         }
         std::puts("preset,rate,channels,trim_db,latency,input_peak_dbfs,input_rms_dbfs,output_peak_dbfs,active_rms_dbfs,tail_peak_dbfs,tail_rms_dbfs,first_tail_rms_dbfs,final_tail_rms_dbfs,clipped_samples,hash");

@@ -74,6 +74,9 @@ public:
     void collectRetiredGraphs() { routing.collectRetired(); }
     // Optional non-owning bridge; caller owns lifetime, audio must be quiescent.
     void setFxMonitor(FxMonitor* monitor) noexcept { routing.setFxMonitor(monitor); }
+    void setGlitchSpan(double ppq, double bpm, bool playing, bool discontinuity, uint32_t triggers) noexcept {
+        routing.setGlitchSpan(ppq, bpm, playing, discontinuity, triggers);
+    }
     std::array<VoiceSnapshot, 8> voiceSnapshots() const noexcept { return snapshots; }
     VoiceSnapshot leadSnapshot() const noexcept { return leadState; }
         // Same-owner audio copies; Processor owns concurrent publication.

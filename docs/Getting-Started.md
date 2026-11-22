@@ -102,6 +102,30 @@ Switching the Stack/Routing view does not itself change sound.
 - A branched or auxiliary path can make rack topology controls read-only. Use
   Routing to edit those wires/nodes; the rack will not flatten your graph.
 
+### Vocal Glitch
+
+Add **Vocal Glitch** from **+ FX** or Routing. With the vocal playing, hit **Grab**
+just after the sound you want. **Length** sets how much recent audio it saves;
+**Fire** replays that same audio until you grab again. For exact trigger timing,
+route MIDI to HEAVEN: slot 1 uses notes **36** (Grab) and **37** (Fire), on any
+channel. Each subsequent slot uses the next pair, as shown in the controls.
+
+- **Pattern:** Triplet Reverse plays three hits with the last one backward;
+  Straight Ratchet plays four forwards; Reverse Pickup plays one backward;
+  Octave Cut plays at half speed, then cuts in Replace mode.
+- **Grid:** Immediate works without transport. The other choices wait for the
+  next sixteenth, eighth-note triplet, or quarter-note boundary and require
+  running host transport with beat position and tempo. Capture is not quantized.
+- **Layer:** On keeps the live vocal beneath the fill. Off replaces it; set the
+  slot's Mix to 100% if you want gaps to go silent.
+- **Auto:** Opt in to catch phrase tails as the input falls below Threshold.
+  Auto uses the same Pattern and Grid and cancels a queued fill if the vocal
+  comes back before launch. It detects level changes, not syllables or phonemes,
+  and doesn't overwrite your manual Grab.
+
+Place it before long delay or reverb tails if you want Auto to follow the words.
+Captured audio isn't saved in presets or sessions. Vocal Glitch adds no lookahead.
+
 ### Spectral Morph and sidechain
 
 Morph needs **two deliberately chosen sources**:

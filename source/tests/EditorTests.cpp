@@ -86,12 +86,13 @@ void advancedParameterContract() {
     Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 2357, "Expected 2087 preserved + 165 new effect parameters");
+    expect(owner.getParameters().size() == 2447, "Expected 2357 preserved + 90 Vocal Glitch parameters");
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
             const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
-                                                  : field < 51 ? 1727 + (slot - 1) * 3 + field - 48
-                                                                                                                 : 2087 + (slot - 1) * 11 + field - 51;
+                : field < 51 ? 1727 + (slot - 1) * 3 + field - 48
+                : field < 62 ? 2087 + (slot - 1) * 11 + field - 51
+                             : 2357 + (slot - 1) * 6 + field - 62;
             expect(vocalstack::creativeParameterIndex(slot, field) == expectedIndex,
                    "Creative append-only mapping changed");
             expect(parameter(owner, vocalstack::creativeParameterId(slot, field)).getParameterIndex() == int(expectedIndex),

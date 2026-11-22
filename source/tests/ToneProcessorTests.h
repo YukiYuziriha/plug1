@@ -41,8 +41,8 @@ inline Graph graph(NodeType type) {
 inline void parameterContract() {
     auto processor = std::make_unique<Processor>();
     auto& p = *processor;
-    require(p.getParameters().size() == 2357 && parameterIds.size() == 2357 && creativeParameterStart == 1007
-        && legacyCreativeParameterCount == 48 && creativeParameterCount == 62
+    require(p.getParameters().size() == 2447 && parameterIds.size() == 2447 && creativeParameterStart == 1007
+        && legacyCreativeParameterCount == 48 && creativeParameterCount == 68
         && utilityParameterStart == 1772 && utilityParameterCount == 21,
             "Incorrect host count or appended parameter layout");
     std::unordered_set<std::string> unique;
@@ -61,7 +61,9 @@ inline void parameterContract() {
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t f = 0; f < creativeParameterCount; ++f) {
             const auto index = f < 48 ? 1007 + (slot - 1) * 48 + f
-                : f < 51 ? 1727 + (slot - 1) * 3 + f - 48 : 2087 + (slot - 1) * 11 + f - 51;
+                : f < 51 ? 1727 + (slot - 1) * 3 + f - 48
+                : f < 62 ? 2087 + (slot - 1) * 11 + f - 51
+                         : 2357 + (slot - 1) * 6 + f - 62;
             require(creativeParameterIndex(slot, f) == index, "Creative host index changed");
             require(creativeParameterId(slot, f) == parameterIds[index], "Creative helper offset");
         }

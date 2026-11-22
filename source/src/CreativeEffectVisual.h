@@ -19,6 +19,10 @@ public:
         setTooltip(kind == CreativeKind::granular
                     ? grainDescription()
                     : "Parameter-derived schematic using coherent effective modulation targets. Unassigned parameters are host base reads; DSP smoothing and signal-dependent behaviour are not simulated. Reverb is not a measured impulse response. Compressor GR is measured by the DSP.");
+        if (kind == CreativeKind::vocalGlitch) {
+            setName("Vocal Glitch playback guide");
+            setTooltip("Effective Pattern and Grid targets, not live capture, playback or transport status.");
+        }
         if (kind == CreativeKind::compressor) {
             setName("Compressor shared transfer and measured history plot");
             setTooltip("One plot, independent axes: solid Curve uses Input/Output -72..0 dBFS. In (faint) and Wet (strong) show measured stereo RMS before Mix, using the bottom History time scale and left dBFS scale. PCM retains 2.56 s, right-aligned in 4 s; older space is empty. Dashed GR is actual DSP gain reduction before makeup/Mix, peak per 20 ms bin, four seconds, on the right 0..36 dB downward scale. Curve is the parameter-derived static transfer including Mix/makeup, not measured output; attack/release and detector behaviour are not simulated. Off-scale values are clipped; the numeric GR meter is not. Stopped/bypassed/reset telemetry clears.");
@@ -38,6 +42,24 @@ public:
             }
         }
         refresh();
+    }
+    static juce::String glitchChoiceDescription(CreativeParameter field, int choice) {
+        if (field == P::glitchPattern) {
+            switch (choice) {
+                case 0: return "Three hits; last one reversed";
+                case 1: return "Four forward hits";
+                case 2: return "One reverse pickup";
+                case 3: return "One half-speed hit";
+                default: return {};
+            }
+        }
+        switch (choice) {
+            case 0: return "Immediate (no grid)";
+            case 1: return "Next sixteenth-note boundary";
+            case 2: return "Next eighth-note triplet boundary";
+            case 3: return "Next quarter-note boundary";
+            default: return {};
+        }
     }
     void setNeon(bool enabled) { neon = enabled; repaint(); }
     bool delaySynced() const { return value(P::delaySync) >= 0.5f; }
@@ -138,6 +160,16 @@ public:
         b.reduce(8, 8);
         if (kind == CreativeKind::granular) { granular(g, b, {}, c); return; }
         if (kind == CreativeKind::delay) { delay(g, b, {}, c); return; }
+        if (kind == CreativeKind::vocalGlitch) {
+            text(g, b.removeFromTop(21), enabled ? "PLAYBACK GUIDE" : "BYPASS | PLAYBACK GUIDE", c.text);
+            if (!ready) {
+                text(g, b.removeFromTop(21), "Waiting for parameter snapshot", c.muted);
+                return;
+            }
+            text(g, b.removeFromTop(21), glitchChoiceDescription(P::glitchPattern, juce::roundToInt(value(P::glitchPattern))), c.text);
+            text(g, b.removeFromTop(21), glitchChoiceDescription(P::glitchGrid, juce::roundToInt(value(P::glitchGrid))), c.muted);
+            return;
+        }
         text(g, b.removeFromTop(16), enabled ? "PARAMETER MODEL" : "BYPASS | stored parameter model", c.text);
         text(g, b.removeFromTop(15), ready ? "Effective targets / base if unassigned" : "Waiting for coherent parameter snapshot", c.muted);
         auto footer = b.removeFromBottom(43);
@@ -152,6 +184,7 @@ public:
             case CreativeKind::bitcrusher: crusher(g, plot, footer, c); break;
             case CreativeKind::convolution: break;
             case CreativeKind::saturator: break;
+            case CreativeKind::vocalGlitch: break; // Compact guide above.
         }
     }
 private:

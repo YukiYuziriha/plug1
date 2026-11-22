@@ -12,7 +12,7 @@
 
 namespace vocalstack {
 
-enum class CreativeKind { delay, reverb, compressor, bitcrusher, granular, convolution, saturator };
+enum class CreativeKind { delay, reverb, compressor, bitcrusher, granular, convolution, saturator, vocalGlitch };
 
 // Append, never reorder, when these indices/IDs become part of host state.
 enum class CreativeParameter : std::size_t {
@@ -29,7 +29,8 @@ enum class CreativeParameter : std::size_t {
     granularDrive, reverbPitch, reverbPitchAmount, reverbSwell,
     convolutionSpace, convolutionBrightness, convolutionPredelay, convolutionTail,
     convolutionDuck, convolutionOutput, saturatorDrive, saturatorCharacter,
-    saturatorTone, saturatorOutput, saturatorLevelMatch, count
+    saturatorTone, saturatorOutput, saturatorLevelMatch,
+    glitchLength, glitchPattern, glitchGrid, glitchLayer, glitchAuto, glitchThreshold, count
 };
 inline constexpr std::size_t creativeParameterCount = static_cast<std::size_t>(CreativeParameter::count);
 struct CreativeParameterDescriptor {
@@ -102,7 +103,13 @@ inline constexpr std::array<CreativeParameterDescriptor, creativeParameterCount>
     {"saturator_character", "Character", "%", 0, 100, 35, CreativeKind::saturator},
     {"saturator_tone", "Tone", "dB", -12, 12, 0, CreativeKind::saturator},
     {"saturator_output", "Output", "dB", -24, 12, -6, CreativeKind::saturator},
-    {"saturator_level_match", "Level match", "", 0, 1, 0, CreativeKind::saturator, true}
+    {"saturator_level_match", "Level match", "", 0, 1, 0, CreativeKind::saturator, true},
+    {"glitch_length", "Glitch Length", "ms", 10, 1000, 150, CreativeKind::vocalGlitch},
+    {"glitch_pattern", "Pattern", "", 0, 3, 0, CreativeKind::vocalGlitch, true},
+    {"glitch_grid", "Grid", "", 0, 3, 0, CreativeKind::vocalGlitch, true},
+    {"glitch_layer", "Layer", "", 0, 1, 0, CreativeKind::vocalGlitch, true},
+    {"glitch_auto", "Auto", "", 0, 1, 0, CreativeKind::vocalGlitch, true},
+    {"glitch_threshold", "Threshold", "dB", -72, -6, -36, CreativeKind::vocalGlitch}
 }};
 struct CreativeSettings {
     std::array<float, creativeParameterCount> values{};
@@ -279,6 +286,7 @@ public:
             case CreativeKind::compressor: out = compressor(left, right); break;
             case CreativeKind::bitcrusher: out = crusher(left, right); break;
             case CreativeKind::granular: out = granular(left, right); break;
+            case CreativeKind::vocalGlitch: out = {left, right}; break; // Routing owns its clock and triggers.
             case CreativeKind::convolution:
                 out = convolution_.process(left, right,
                     int(std::round(std::isfinite(settings[P::convolutionSpace]) ? std::clamp(settings[P::convolutionSpace], 0.f, 3.f) : 0.f)),
@@ -401,7 +409,7 @@ private:
                 density_ = value(P::granularDensity) / static_cast<float>(sr_);
                 drive_ = dbGain(value(P::granularDrive)); makeup_ = 1.f / std::sqrt(drive_);
                 setBand(value(P::granularLowCut), value(P::granularHighCut)); break;
-            case CreativeKind::convolution: case CreativeKind::saturator: break;
+            case CreativeKind::convolution: case CreativeKind::saturator: case CreativeKind::vocalGlitch: break;
         }
     }
     float duck(float l, float r) noexcept {

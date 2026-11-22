@@ -8,9 +8,9 @@ namespace ui = toneUiTests;
 using P = CreativeParameter;
 inline void contractAndState() {
     static_assert(int(NodeType::splitter) == 19 && int(NodeType::convolution) == 20 && int(NodeType::saturator) == 21);
-    static_assert(newCreativeParameterStart == 2087 && parameterIds.size() == 2357);
+    static_assert(newCreativeParameterStart == 2087 && parameterIds.size() == 2447);
     auto owner = std::make_unique<Processor>();
-    for (size_t slot = 1; slot < 16; ++slot) for (size_t p = 51; p < creativeParameterCount; ++p) {
+    for (size_t slot = 1; slot < 16; ++slot) for (size_t p = 51; p < 62; ++p) {
         const auto id = creativeParameterId(slot, p);
         ui::require(ui::parameter(*owner, id).getParameterIndex() == int(2087 + (slot - 1) * 11 + p - 51), "Appended factory FX host index");
         ui::write(*owner, id, creativeParameters[p].max);

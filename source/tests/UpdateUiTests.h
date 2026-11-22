@@ -13,7 +13,7 @@ namespace vocalstack::updateUiTests {
 namespace ui = toneUiTests;
 static_assert(int(NodeType::gain) == 14 && int(NodeType::stereo) == 15 && int(NodeType::gate) == 16
               && int(NodeType::xpFilter) == 17 && int(NodeType::synthFilter) == 18);
-static_assert(creativeParameterCount == 62 && utilityParameterCount == 21);
+static_assert(creativeParameterCount == 68 && utilityParameterCount == 21);
 
 template <typename Predicate>
 inline void waitFor(Predicate predicate, const juce::String& reason) {

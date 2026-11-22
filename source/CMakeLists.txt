@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.12.3 LANGUAGES C CXX)
+project(VocalStack VERSION 1.13.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -37,6 +37,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
     FetchContent_MakeAvailable(JUCE clap_juce)
     include(cmake/PatchClapTail.cmake)
     include(cmake/PatchClapSidechain.cmake)
+    include(cmake/PatchClapGlitchClock.cmake)
 
     juce_add_plugin(VocalStack
         COMPANY_NAME "lil grass block"

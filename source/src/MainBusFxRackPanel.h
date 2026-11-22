@@ -469,8 +469,8 @@ private:
         sync();
     }
     void timerCallback() override { sync(); }
-    inline static constexpr std::array<NodeType, 16> types{NodeType::chorale, NodeType::waveshaper,
-        NodeType::bitcrusher, NodeType::compressor, NodeType::delay, NodeType::reverb, NodeType::granular,
+    inline static constexpr std::array<NodeType, 17> types{NodeType::chorale, NodeType::waveshaper,
+        NodeType::bitcrusher, NodeType::compressor, NodeType::delay, NodeType::reverb, NodeType::granular, NodeType::vocalGlitch,
         NodeType::equalizer, NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter, NodeType::convolution, NodeType::saturator, NodeType::spectralMorph};
 
     modulationui::PanelStyle panelStyle;

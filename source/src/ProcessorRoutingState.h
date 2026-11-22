@@ -158,7 +158,7 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
             RoutingNode n;
             n.id = static_cast<std::uint32_t>(static_cast<juce::int64>(child.getProperty("id", 0)));
             const int type = child.getProperty("type", -1);
-            if (type < 0 || type > int(NodeType::spectralMorph)) return false;
+            if (type < 0 || type > int(NodeType::vocalGlitch)) return false;
             n.type = static_cast<NodeType>(type);
             n.voiceSlot = child.getProperty("voiceSlot", 0);
             n.enabled = child.getProperty("enabled", true);

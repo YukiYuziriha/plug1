@@ -1,3 +1,4 @@
+#include <bitset>
 #include "VisualTheme.h"
 #pragma once
 
@@ -31,8 +32,8 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
                 std::array<std::array<float, 2>, 15> waveValues{};
                         std::array<float, 15> qualityValues{}, levelMatchValues{};
         std::array<std::array<float, creativeParameterCount>, 15> creativeValues{};
-        static_assert(creativeParameterCount <= 64 && utilityParameterCount <= 64);
-        std::array<std::uint64_t, 15> creativeUndoMasks{};
+        static_assert(utilityParameterCount <= 64);
+        std::array<std::bitset<creativeParameterCount>, 15> creativeUndoMasks{};
         std::array<std::array<float, utilityParameterCount>, 15> utilityValues{};
         std::array<std::uint64_t, 15> utilityUndoMasks{};
         unsigned fxMixUndoMask = 0;
@@ -719,6 +720,7 @@ private:
         case NodeType::granular:
         case NodeType::convolution:
         case NodeType::saturator:
+        case NodeType::vocalGlitch:
             return CreativeEffectPanel::effectName(creativeKind(n.type)).toUpperCase() + " " + juce::String(routingFxSlot(n.id));
         }
         return {};
@@ -873,7 +875,7 @@ private:
                     if (id == utilityParameterId(size_t(slot), field)) saved.utilityUndoMasks[size_t(slot - 1)] |= std::uint64_t(1) << field;
             } else {
                 for (size_t field = 0; field < creativeParameterCount; ++field)
-                    if (id == parameterIds[creativeParameterIndex(size_t(slot), field)]) saved.creativeUndoMasks[size_t(slot - 1)] |= std::uint64_t(1) << field;
+                    if (id == parameterIds[creativeParameterIndex(size_t(slot), field)]) saved.creativeUndoMasks[size_t(slot - 1)].set(field);
             }
             inspectorDragging = true; updateButtons();
         };
@@ -1489,6 +1491,7 @@ private:
             case NodeType::granular:
             case NodeType::convolution:
             case NodeType::saturator:
+            case NodeType::vocalGlitch:
             case NodeType::spectralMorph:
             case NodeType::gain:
             case NodeType::stereo:
@@ -1645,7 +1648,7 @@ private:
             }
             if (slot > 0) {
                 for (size_t field = 0; field < creativeParameterCount; ++field)
-                    if (lifecycleChange || (s.creativeUndoMasks[slot - 1] & (std::uint64_t(1) << field)))
+                    if (lifecycleChange || s.creativeUndoMasks[slot - 1].test(field))
                         setParameter(parameterIds[creativeParameterIndex(slot, field)], s.creativeValues[slot - 1][field]);
                                         for (size_t field = 0; field < utilityParameterCount; ++field)
                                             if (lifecycleChange || (s.utilityUndoMasks[slot - 1] & (std::uint64_t(1) << field)))
@@ -1799,6 +1802,7 @@ private:
         menu.addItem(52, "Compressor | stereo dynamics", effectRoom);
         menu.addItem(53, "Bitcrusher | digital texture", effectRoom);
         menu.addItem(54, "Granular | capture / pitch", effectRoom);
+        menu.addItem(58, "Vocal Glitch | grab / fire", effectRoom);
         menu.addItem(57, "Spectral Morph | MAIN / DONOR", effectRoom);
                 menu.addItem(55, "Convolution | synthetic IR spaces", effectRoom);
                 menu.addItem(56, "Saturator | warm / 2x ADAA", effectRoom);
@@ -1839,7 +1843,7 @@ private:
     void addNode(int kind, juce::Point<float> insertion) {
         if (graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
         RoutingNode n;
-        if (kind == 1 || kind == 4 || kind == 5 || kind == 6 || (kind >= 50 && kind <= 57) || (kind >= 60 && kind <= 64)) {
+        if (kind == 1 || kind == 4 || kind == 5 || kind == 6 || (kind >= 50 && kind <= 58) || (kind >= 60 && kind <= 64)) {
             switch (kind) {
                 case 1: n.type = NodeType::chorale; break;
                 case 4: n.type = NodeType::waveshaper; break;
@@ -1850,6 +1854,7 @@ private:
                 case 52: n.type = NodeType::compressor; break;
                 case 53: n.type = NodeType::bitcrusher; break;
                 case 54: n.type = NodeType::granular; break;
+                case 58: n.type = NodeType::vocalGlitch; n.mix = 1.f; break;
                 case 57: n.type = NodeType::spectralMorph; n.mix = 1.f; break;
                                 case 55: n.type = NodeType::convolution; n.mix = .25f; break;
                                 case 56: n.type = NodeType::saturator; n.mix = 1.f; break;
@@ -1983,7 +1988,7 @@ private:
                                 undoStates.back().fxMixUndoMask |= 1u << unsigned(slot);
                             else for (size_t field = 0; field < creativeParameterCount; ++field)
                                 if (id == parameterIds[creativeParameterIndex(size_t(slot), field)])
-                                    undoStates.back().creativeUndoMasks[size_t(slot - 1)] |= std::uint64_t(1) << field;
+                                    undoStates.back().creativeUndoMasks[size_t(slot - 1)].set(field);
                             inspectorDragging = true;
                             updateButtons();
                         };

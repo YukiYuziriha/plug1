@@ -1,6 +1,7 @@
 // Standalone, no JUCE or project libraries. Example: c++ -std=c++17 -O2
 // -Isource/src source/tests/CreativeEffectsTests.cpp -o CreativeEffectsTests
 #include "../src/CreativeEffects.h"
+#include "../src/VocalGlitch.h"
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -65,7 +66,7 @@ void finite(const std::array<float, 2>& v) {
     check(std::abs(v[0]) <= 64 && std::abs(v[1]) <= 64, "Unbounded output");
 }
 void descriptors() {
-    check(creativeParameterCount == 62, "Host parameter count changed");
+    check(creativeParameterCount == 68, "Host parameter count changed");
     constexpr std::array<const char*, 48> legacyIds {{
         "delay_time", "delay_sync", "delay_beats", "delay_feedback", "delay_pingpong",
         "delay_lowcut", "delay_highcut", "delay_drive", "delay_duck", "delay_duck_release", "delay_pitch",
@@ -84,7 +85,7 @@ void descriptors() {
         && static_cast<std::size_t>(P::reverbPitchAmount) == 49
         && static_cast<std::size_t>(P::reverbSwell) == 50, "Reverb controls must be appended");
     CreativeSettings s;
-    std::array<int, 7> counts{};
+    std::array<int, static_cast<std::size_t>(CreativeKind::vocalGlitch) + 1> counts{};
     for (std::size_t i = 0; i < creativeParameterCount; ++i) {
         const auto& d = creativeParameters[i];
         check(d.id && *d.id && d.label && *d.label && d.unit, "Incomplete descriptor");
@@ -539,6 +540,110 @@ void decayingTails() {
         check(lastSecond < 1.e-12, "Unfrozen tail does not decay to silence");
     }
 }
+constexpr double glitchRate = 1000.0, glitchTempo = 120.0;
+constexpr double glitchPpqPerSample = glitchTempo / (60.0 * glitchRate);
+constexpr std::array<float, 8> glitchFade {0, 1.f / 3, 2.f / 3, 1, 1, 2.f / 3, 1.f / 3, 0};
+using GlitchFrame = std::array<float, 2>;
+GlitchFrame glitchSample(VocalGlitch& fx, GlitchFrame in = {}) {
+    GlitchFrame out{};
+    fx.process(in[0], in[1], out[0], out[1]);
+    return out;
+}
+void checkGlitchFrame(GlitchFrame actual, GlitchFrame expected, const char* message) {
+    check(std::abs(actual[0] - expected[0]) < 1.e-6f && std::abs(actual[1] - expected[1]) < 1.e-6f, message);
+}
+void glitchTimedGrab() {
+    constexpr int grabOffset = 13, sliceLength = 8, beatSamples = 500;
+    const auto source = [](int i) -> GlitchFrame { return { .02f * i, -.01f * (i + 4) }; };
+    constexpr GlitchFrame live {-.25f, .375f};
+    for (bool layer : {false, true}) {
+        VocalGlitch fx;
+        fx.prepare(glitchRate);
+        VocalGlitch::Settings s;
+        s.lengthMs = sliceLength; s.pattern = 3; s.layer = layer;
+        fx.setSettings(s);
+        // Dispatch the grab before this sample, as for an in-block MIDI event.
+        // Keep feeding distinct live audio long enough to overwrite the input ring.
+        for (int i = 0; i < 1300; ++i) {
+            if (i == grabOffset) fx.grab();
+            const auto in = i < grabOffset ? source(i) : live;
+            check(glitchSample(fx, in) == in, "VocalGlitch grab changed dry audio before fire");
+        }
+        fx.fire();
+        // Half-speed interpolation exposes both endpoints despite the edge fades.
+        for (int i = 0; i < 2 * sliceLength; ++i) {
+            if (i == 2) fx.grab(); // Repin while the original slice is playing.
+            const int index = grabOffset - sliceLength + i / 2;
+            const auto a = source(index);
+            const auto b = (i % 2 != 0 && index + 1 < grabOffset) ? source(index + 1) : a;
+            const float wet = std::min({i, 2 * sliceLength - 1 - i, 3}) / 3.f;
+            const float dry = layer ? 1.f : 1.f - std::min(i, 3) / 3.f;
+            checkGlitchFrame(glitchSample(fx, live),
+                {dry * live[0] + wet * .5f * (a[0] + b[0]), dry * live[1] + wet * .5f * (a[1] + b[1])},
+                "VocalGlitch changed the grabbed stereo window or Replace/Layer mix");
+        }
+        for (int i = 2 * sliceLength; i < beatSamples; ++i) glitchSample(fx, live);
+        check(glitchSample(fx, live) == live, "VocalGlitch did not restore dry audio after playback");
+        fx.fire();
+        for (int i = 0; i < 3; ++i) glitchSample(fx);
+        checkGlitchFrame(glitchSample(fx), live, "VocalGlitch did not pin the new grab during playback");
+    }
+}
+void glitchQuantizedFire() {
+    constexpr int boundary = 125; // A sixteenth note at 120 BPM and 1 kHz.
+    constexpr int jumpSample = 109;
+    constexpr std::array<int, 6> blocks {0, 17, 64, jumpSample, 144, 250};
+    constexpr GlitchFrame captured {.375f, -.25f};
+    for (bool jump : {false, true}) {
+        VocalGlitch fx;
+        fx.prepare(glitchRate);
+        VocalGlitch::Settings s;
+        s.lengthMs = 8; s.pattern = 1; s.grid = 1; s.layer = true;
+        fx.setSettings(s);
+        for (std::size_t block = 0; block + 1 < blocks.size(); ++block) {
+            const int start = blocks[block];
+            const double ppq = jump && start >= jumpSample
+                ? 2.0 + (start - jumpSample) * glitchPpqPerSample : start * glitchPpqPerSample;
+            fx.setClock(ppq, glitchTempo, true, jump && start == jumpSample);
+            for (int i = start; i < blocks[block + 1]; ++i) {
+                if (i == 20) { fx.grab(); fx.fire(); }
+                if (i == 60) fx.grab(); // A new grab must not change the queued slice.
+                const GlitchFrame in = i < 20 ? captured : GlitchFrame{};
+                const int offset = i - boundary;
+                const float wet = !jump && offset >= 0 && offset < 8 ? glitchFade[static_cast<std::size_t>(offset)] : 0;
+                checkGlitchFrame(glitchSample(fx, in), {in[0] + wet * captured[0], in[1] + wet * captured[1]},
+                    jump ? "VocalGlitch launched a queued fire after a transport jump"
+                         : "VocalGlitch quantized fire missed the cross-block grid or lost its slice");
+            }
+        }
+    }
+}
+void glitchAutomaticTail() {
+    constexpr int phraseEnd = 64, boundary = 250;
+    const auto voice = [](int i) -> GlitchFrame { return {0, -.25f - .004f * i}; };
+    for (bool onset : {false, true}) {
+        VocalGlitch fx;
+        fx.prepare(glitchRate);
+        VocalGlitch::Settings s;
+        s.lengthMs = 8; s.thresholdDb = -20; s.pattern = 1; s.grid = 1;
+        s.layer = true; s.automatic = true;
+        fx.setSettings(s);
+        fx.setClock(0, glitchTempo, true, false);
+        for (int i = 0; i < (onset ? 500 : 375); ++i) {
+            if (i == 200) fx.setClock(i * glitchPpqPerSample, glitchTempo, true, false);
+            // One right-channel sample above threshold, too short to reopen the
+            // smoothed detector, must cancel even on the scheduled grid sample.
+            const auto in = i < phraseEnd ? voice(i) : (onset && i == boundary ? GlitchFrame{0, .125f} : GlitchFrame{});
+            auto expected = in;
+            const int offset = i - boundary;
+            if (!onset && offset >= 0 && offset < 8)
+                expected[1] += glitchFade[static_cast<std::size_t>(offset)] * voice(phraseEnd - 8 + offset)[1];
+            checkGlitchFrame(glitchSample(fx, in), expected,
+                onset ? "VocalGlitch did not cancel its automatic launch on onset"
+                      : "VocalGlitch automatic launch did not replay the phrase tail without debounce silence");
+        }
+    }
+}
 } // namespace
 int main() {
     try {
@@ -546,7 +651,8 @@ int main() {
         reverbPitchAndSwell(); reverbPitchFreezeAndReset(); reverbPitchedDecay();
         crusherTests(); granularTests(); granularOverlapAutomation(); duckingAndCrusherRate(); pitchedDelayAndTempoSlew();
         automationAndRealtime(); blockIndependenceAndPreparation(); decayingTails();
-        std::cout << "CreativeEffects: all tests passed (62 parameters, legacy 5 effects; zero audio allocations/frees)\n";
+        glitchTimedGrab(); glitchQuantizedFire(); glitchAutomaticTail();
+        std::cout << "CreativeEffects: all tests passed (68 parameters, legacy 5 effects; zero audio allocations/frees)\n";
         return 0;
     } catch (const std::exception& e) {
         audioThread = false;
