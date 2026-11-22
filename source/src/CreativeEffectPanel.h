@@ -204,7 +204,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
         std::unique_ptr<juce::ParameterAttachment> choiceLink;
     };
     struct Group {
-        enum class Layout { standard, compactChoices, vertical };
+        enum class Layout { standard, compactChoices, glitchAuto };
         Layout layout = Layout::standard;
         std::unique_ptr<juce::Label> heading;
         std::vector<std::unique_ptr<Row>> rows;
@@ -255,7 +255,7 @@ public:
                 using Layout = Group::Layout;
                 using P = CreativeParameter;
                 addGroup(section, field == P::glitchPattern ? Layout::compactChoices
-                    : field == P::glitchLayer ? Layout::vertical : Layout::standard);
+                    : field == P::glitchLayer ? Layout::glitchAuto : Layout::standard);
                 previous = section;
             }
             const auto id = creativeParameterId(slot, i);
@@ -403,14 +403,21 @@ public:
                 if (x != 0) y += rowHeight + gap;
                 continue;
             }
-            if (group.layout == Group::Layout::vertical) {
-                for (auto& row : group.rows) if (row->isVisible()) {
-                    const bool button = row->buttonLink != nullptr;
-                    const int w = juce::jmin(controlsWidth, button ? 60 : 88);
-                    const int h = button ? 28 : row->inspectorHeight(w);
-                    row->setBounds(controlsX, y, w, h);
-                    y += h + (button ? 6 : 4);
-                }
+            if (group.layout == Group::Layout::glitchAuto) {
+                auto& layer = *group.rows[0];
+                auto& automatic = *group.rows[1];
+                auto& threshold = *group.rows[2];
+                constexpr int buttonWidth = 60, buttonHeight = 28, buttonStep = 34, knobX = buttonWidth + 12;
+                const bool beside = controlsWidth >= knobX + 64;
+                const int knobWidth = juce::jmin(76, controlsWidth - (beside ? knobX : 0));
+                const int knobHeight = threshold.inspectorHeight(knobWidth);
+                const int dialCentre = (knobHeight - threshold.captionHeight(knobWidth) + 20) / 2;
+                const int autoY = y + (beside ? juce::jmax(buttonStep, dialCentre - buttonHeight / 2) : buttonStep);
+                layer.setBounds(controlsX, autoY - buttonStep, juce::jmin(buttonWidth, controlsWidth), buttonHeight);
+                automatic.setBounds(controlsX, autoY, layer.getWidth(), buttonHeight);
+                threshold.setBounds(controlsX + (beside ? knobX : 0), beside ? y : automatic.getBottom() + 6,
+                                    knobWidth, knobHeight);
+                y = juce::jmax(automatic.getBottom(), threshold.getBottom()) + 4;
                 continue;
             }
             if (sparse) {
