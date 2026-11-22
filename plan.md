@@ -1,5 +1,19 @@
 # Vocal Stack: Current roadmap and release history
 
+## Planned — HEAVEN vocal glitch slicer
+
+Borrow [Gross Beat](https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/plugins/Gross%20Beat.htm)'s separation of buffer capture and launch timing, and [Stutter Edit 2](https://www.izotope.com/en/products/stutter-edit-2.html)'s one-trigger gestures. Don't build a time-curve editor or duplicate the granular rack effect. The goal is to grab the end of a word once, play three triplet hits with the last reversed, and be back on the live vocal at the downbeat.
+
+### First version
+
+- [ ] **Host clock:** Extend `PluginProcessor`'s BPM and transport handling to read beat position (PPQ) each block. Use PPQ for grid phase and BPM plus sample rate for the in-block launch offset. Support straight and triplet subdivisions; if a next-bar option is added, use the host's bar-start position where available and account for time signature. Clear pending launches on stop, seek, or loop wrap. Keep Immediate usable without a valid running host clock.
+- [ ] **Grab:** Keep a bounded, preallocated rolling buffer of the rack node's input. Pin the selected duration immediately before the trigger; don't quantize capture. Preserve the exact slice until the next valid grab, even as new audio rolls in. Empty history or no captured slice leaves the vocal unchanged. Captured audio is transient, not preset or session data.
+- [ ] **Fire:** Launch the pinned slice immediately or on the next selected grid line. Provide separate Grab and Fire controls and MIDI triggers; honor MIDI sample offsets and process these triggers independently of modulation. UI events are not sample-accurate. Keep capture length independent of repeat spacing.
+- [ ] **Ready-made fills:** Start with straight and triplet ratchets, a reverse pickup, and an octave-down varispeed burst into a cut. Keep fills one-shot and deterministic, with short fades at jumps and a return to live input at the pattern boundary. Use **Replace** for actual cuts and **Layer** to keep the live vocal underneath. The node starts off and must not add look-ahead or change reported plugin latency.
+- [ ] **Acceptance:** Use marked input to verify the exact slice and launch offset, repeated reuse of the same slice, reverse order, and return to live. Check straight/triplet timing across block sizes, missing PPQ, transport jumps, and both routing modes. In Bitwig, verify MIDI and grid behavior in CLAP/VST3 and audition the triplet-to-reverse fill on a real vocal.
+
+**After the first version plays well:** Add a compact editable lane (`Live`, `Repeat`, `Reverse`, `Repitch`, `Cut`). Defer independent pitch/time, phrase-end auto-triggering, and drawn playback curves.
+
 ## Current release — 1.11.1 approved, packaged and installed
 
 Unified Compressor plot, larger small technical text, and the Motion comparison
