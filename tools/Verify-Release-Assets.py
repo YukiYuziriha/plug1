@@ -11,6 +11,16 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def is_compiled_output(name, checksum):
+    # JUCE's pinned Wavefront model is source artwork, not a compiler object.
+    if (name in ('external/JUCE/examples/Assets/teapot.obj',
+                 'external/JUCE/examples/DemoRunner/Builds/Android/app/src/main/assets/teapot.obj',
+                 'external/JUCE/extras/AudioPluginHost/Builds/Android/app/src/main/assets/teapot.obj')
+            and checksum == '094925284a957f46411dc64a36d965bcaa6d6d774eeb3b382af03ce168cfa8e5'):
+        return False
+    return Path(name).suffix.lower() in ('.clap', '.vst3', '.dll', '.exe', '.obj', '.o', '.lib', '.a', '.pdb', '.gitbundle')
+
+
 def members(archive, prefix):
     names = [item.filename for item in archive.infolist() if not item.is_dir()]
     if len(names) != len(set(names)):
@@ -57,7 +67,7 @@ def main():
         if source_names != set(manifest['files_sha256']) | {'SOURCE-MANIFEST.json'}:
             raise RuntimeError('Source manifest inventory mismatch')
         for name, checksum in manifest['files_sha256'].items():
-            if Path(name).suffix.lower() in ('.clap', '.vst3', '.dll', '.exe', '.obj', '.o', '.lib', '.a', '.pdb', '.gitbundle'):
+            if is_compiled_output(name, checksum):
                 raise RuntimeError(f'Compiled output in source archive: {name}')
             if digest(source.read(prefix + name)) != checksum:
                 raise RuntimeError(f'Source manifest mismatch: {name}')

@@ -40,6 +40,19 @@ CMAKE = ('project(VocalStack VERSION 1.12.2 LANGUAGES CXX)\n'
                    for name in ('JUCE', 'clap_juce', 'signalsmith-linear', 'signalsmith-stretch')))
 
 
+class SourceAssetClassification(unittest.TestCase):
+    def test_only_pinned_wavefront_model_is_allowed(self):
+        name = 'external/JUCE/examples/Assets/teapot.obj'
+        checksum = '094925284a957f46411dc64a36d965bcaa6d6d774eeb3b382af03ce168cfa8e5'
+        for asset in (name,
+                      'external/JUCE/examples/DemoRunner/Builds/Android/app/src/main/assets/teapot.obj',
+                      'external/JUCE/extras/AudioPluginHost/Builds/Android/app/src/main/assets/teapot.obj'):
+            self.assertFalse(verify.is_compiled_output(asset, checksum))
+        self.assertTrue(verify.is_compiled_output(name, '0' * 64))
+        self.assertTrue(verify.is_compiled_output('source/build/teapot.obj', checksum))
+        self.assertTrue(verify.is_compiled_output('external/JUCE/examples/Assets/teapot.o', checksum))
+
+
 class PackageFixture(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
