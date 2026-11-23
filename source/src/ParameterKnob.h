@@ -199,9 +199,10 @@ public:
             previousDragSensitivity = getMouseDragSensitivity();
             previousSnapToMouse = getSliderSnapsToMousePosition();
             const int trackWidth = getLookAndFeel().getSliderLayout(*this).sliderBounds.getWidth();
-            // Relative travel stays half-speed even on narrow cards or resized inspectors.
+            // Fat Mix rails follow the pointer 1:1; compact sliders retain fine travel.
             setSliderSnapsToMousePosition(false);
-            setMouseDragSensitivity(juce::jmax(2, trackWidth * 2));
+            const bool fatMix = bool(getProperties()["vocalstackTexturedBar"]);
+            setMouseDragSensitivity(juce::jmax(2, trackWidth * (fatMix ? 1 : 2)));
         }
         juce::Slider::mouseDown(e);
     }

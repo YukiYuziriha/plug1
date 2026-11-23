@@ -1,5 +1,13 @@
 # Vocal Stack: Current roadmap and release history
 
+## Routing-node wet pockets
+
+- First delivery: Granular owns an independent Delay insert in its wet path, before Granular's local Dry/Wet blend. Granular at 0% Wet must mute the entire pocket including Delay tails; parent bypass must return dry. Configure from the Routing node, not the Stack rack.
+- [ ] Extend wet pockets to **all FX nodes**, wherever a meaningful wet signal exists: ordered insert chains, add/remove/reorder, clear ownership and navigation, independent persistent FX identities/modulation, undo/redo, preset recall and explicit nested-latency compensation.
+- [ ] Permit all supported FX types inside pockets after validating their latency, tails, auxiliary inputs, bypass and recursion rules. Do not silently permit feedback cycles or uncompensated spectral/oversampled paths.
+- [ ] Refine the node-only nested-chain editor; do not add pocket configuration to Stack panels.
+
+
 ## Implemented in 1.13.0 — HEAVEN vocal glitch slicer
 
 Borrow [Gross Beat](https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/plugins/Gross%20Beat.htm)'s separation of buffer capture and launch timing, and [Stutter Edit 2](https://www.izotope.com/en/products/stutter-edit-2.html)'s one-trigger gestures. Don't build a time-curve editor or duplicate the granular rack effect. The goal is to grab the end of a word once, play three triplet hits with the last reversed, and be back on the live vocal at the downbeat.

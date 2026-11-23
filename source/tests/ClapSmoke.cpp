@@ -77,8 +77,16 @@ struct Instance {
         return *extension;
     }
 
-    clap_host_t host{CLAP_VERSION, nullptr, "Vocal Stack Test", "Vocal Stack", "", "1.0",
-                    noExtension, noRequest, noRequest, noRequest};
+    static Instance& from(const clap_host_t* host) { return *static_cast<Instance*>(host->host_data); }
+    static void CLAP_ABI requestRestart(const clap_host_t* host) { ++from(host).restartRequests; }
+    static void CLAP_ABI latencyChanged(const clap_host_t* host) { ++from(host).latencyChanges; }
+    static const void* CLAP_ABI extension(const clap_host_t*, const char* id) {
+        static const clap_host_latency_t latency{latencyChanged};
+        return std::strcmp(id, CLAP_EXT_LATENCY) == 0 ? &latency : nullptr;
+    }
+    int restartRequests = 0, latencyChanges = 0;
+    clap_host_t host{CLAP_VERSION, this, "Vocal Stack Test", "Vocal Stack", "", "1.0",
+                    extension, requestRestart, noRequest, noRequest};
     const clap_plugin_t* plugin = nullptr;
 };
 
@@ -353,6 +361,9 @@ void checkSpectralDonor(const clap_plugin_factory_t& factory, clap_id configurat
     const uint32_t baseline = rate == 96000. ? 2688u : 1344u;
     expect(activationLatency.get(plug) == baseline, "CLAP baseline retained Morph reserve");
     expect(state.load(plug,&preset.input), "CLAP routed Morph state load failed");
+    plug->on_main_thread(plug);
+    expect(instance.restartRequests > 0, "CLAP pending Morph did not request automatic host reactivation");
+    const int requestsBeforeActivation = instance.restartRequests;
     expect(activationLatency.get(plug) == baseline, "CLAP active state changed host latency before reactivation");
     plug->deactivate(plug);
     const uint32_t mainChannels = configuration%3 == 0 ? 2 : 1;
@@ -362,6 +373,8 @@ void checkSpectralDonor(const clap_plugin_factory_t& factory, clap_id configurat
     expect(plug->activate(plug,rate,1,maximum), "CLAP Morph activation failed");
     const auto& latencyExtension = instance.get<clap_plugin_latency_t>(CLAP_EXT_LATENCY);
     const uint32_t latency = latencyExtension.get(plug);
+    plug->on_main_thread(plug);
+    expect(instance.restartRequests == requestsBeforeActivation, "CLAP activation caused a restart loop");
     expect(latency == baseline + 4096, "CLAP Morph activation failed to declare the actual delay");
     expect(plug->start_processing(plug), "CLAP Morph start failed");
     std::array<std::array<float,maximum>,2> main{},aux{},out{};

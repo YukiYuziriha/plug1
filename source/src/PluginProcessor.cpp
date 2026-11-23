@@ -656,7 +656,7 @@ void Processor::getStateInformation(juce::MemoryBlock& data) {
 bool Processor::restoreState(const juce::XmlElement& xml) {
     if (!xml.hasTagName(stateType))
         return false;
-    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+    std::unique_lock<std::recursive_mutex> lock(controlMutex);
     auto restored = juce::ValueTree::fromXml(xml);
     ModulationState savedModulation;
     const auto mods = restored.getChildWithName("Modulation");
@@ -927,6 +927,10 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
         }
         routingActive = std::move(active);
     }
+    const bool requestActivation = restartPending;
+    lock.unlock();
+    if (requestActivation)
+        updateHostDisplay(ChangeDetails{}.withLatencyChanged(true));
     return true;
 }
 
@@ -1181,6 +1185,7 @@ bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
 
 bool Processor::setRoutingGraphImpl(const Graph& graph, juce::String& error, const uint64_t* historyRevision) {
     bool accepted;
+    bool requestActivation = false;
     {
         const std::lock_guard<std::recursive_mutex> lock(controlMutex);
         if (historyRevision && *historyRevision != routingStateRevision) {
@@ -1189,6 +1194,7 @@ bool Processor::setRoutingGraphImpl(const Graph& graph, juce::String& error, con
         }
         const auto previous = qualitySnapshot(routingDraft);
         accepted = setRoutingGraphLocked(graph, error, historyRevision != nullptr);
+        requestActivation = accepted && restartPending;
         if (accepted) {
             // Only intentional inspector edits/new nodes update automation.
             // A cable-only edit must not overwrite host-automated FX values.
@@ -1252,7 +1258,7 @@ bool Processor::setRoutingGraphImpl(const Graph& graph, juce::String& error, con
             }
         }
     }
-    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true).withLatencyChanged(requestActivation));
     return accepted;
 }
 

@@ -67,7 +67,10 @@ inline Segment discover(const Graph& graph) {
         }
         if (!next) return fail();
         int inputs = 0;
-        for (const auto& link : graph.links) if (link.destination == next->destination) ++inputs;
+        const auto* destination = find(graph, next->destination);
+        for (const auto& link : graph.links)
+            if (link.destination == next->destination
+                && !routingInput(destination->type, link.inputPin).auxiliary) ++inputs;
         if (inputs != 1) return fail();
         current = next->destination;
         if (current == result.output) {
@@ -108,11 +111,34 @@ inline Edit add(const Graph& original, NodeType type, unsigned spent = 0) {
     if (!segment.editable()) { edit.error = segment.unavailable; return edit; }
     if (!eligible(type)) { edit.error = "Structural nodes are only available in Routing."; return edit; }
     if (auto problem = capacityProblem(original, spent); !problem.empty()) { edit.error = problem; return edit; }
+    uint32_t donor = 0;
+    bool createSidechain = false;
+    if (type == NodeType::spectralMorph) {
+        for (const auto& existing : original.nodes)
+            if (existing.type == NodeType::sidechain) donor = existing.id;
+        if (!donor) {
+            if (find(original, 14)) { edit.error = "SIDECHAIN node ID 14 is already in use. Edit Routing first."; return edit; }
+            donor = 14; createSidechain = true;
+        }
+        // Routing output edits replace destinations; never create implicit fanout
+        // or steal an explicit cable when supplying the new Morph's default donor.
+        for (const auto& link : original.links) if (link.source == donor) {
+            edit.error = "SIDECHAIN output is already connected. Edit Routing to choose the Morph donor."; return edit;
+        }
+    }
+    if (original.nodes.size() + 1 + size_t(createSidechain) > size_t(RoutingExecutor::maxNodes)) {
+        edit.error = "Routing node capacity reached (48); Morph also needs a SIDECHAIN source."; return edit;
+    }
+    if (original.links.size() + 1 + size_t(donor != 0) > size_t(RoutingExecutor::maxLinks)) {
+        edit.error = "Routing link capacity reached (128)."; return edit;
+    }
     RoutingNode node;
     node.type = type; node.mix = type == NodeType::chorale || type == NodeType::convolution ? .25f : 1.0f;
     for (uint32_t id = 100; id <= 114; ++id) if (!(spent & (1u << (id - 99))) && !find(original, id)) { node.id = id; break; }
     edit.graph.nodes.push_back(node);
     auto ordered = segment.effects; ordered.push_back(node.id); wire(edit.graph, segment, ordered);
+    if (createSidechain) edit.graph.nodes.push_back({donor, NodeType::sidechain});
+    if (donor) edit.graph.links.push_back({donor, node.id, 1, 0});
     const auto valid = RoutingExecutor::validate(edit.graph);
     if (!valid) { edit.graph = original; edit.error = valid.message; return edit; }
     edit.changed = true; return edit;
@@ -124,7 +150,9 @@ inline Edit remove(const Graph& original, uint32_t id) {
     const auto it = std::find(ordered.begin(), ordered.end(), id);
     if (it == ordered.end()) { edit.error = "FX is no longer in the main bus."; return edit; }
     ordered.erase(it); wire(edit.graph, segment, ordered);
-    edit.graph.nodes.erase(std::remove_if(edit.graph.nodes.begin(), edit.graph.nodes.end(), [=](const auto& node) { return node.id == id; }), edit.graph.nodes.end());
+    edit.graph.links.erase(std::remove_if(edit.graph.links.begin(), edit.graph.links.end(),
+        [=](const auto& link) { return link.destination == id; }), edit.graph.links.end());
+    edit.graph.nodes.erase(std::remove_if(edit.graph.nodes.begin(), edit.graph.nodes.end(), [=](const auto& node) { return node.id == id || node.wetOwner == id; }), edit.graph.nodes.end());
     edit.changed = true; return edit;
 }
 inline Edit move(const Graph& original, uint32_t id, size_t index) {

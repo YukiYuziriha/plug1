@@ -76,6 +76,7 @@ struct RoutingNode {
     UtilitySettings utility;
     SpectralMorphSettings spectralMorph;
     bool monoAudition = false;
+    std::uint32_t wetOwner = 0; // Owned insert, processed before its parent's local Mix.
 };
 struct RoutingLink {
     std::uint32_t source = 0, destination = 0;
@@ -321,6 +322,10 @@ public:
             if (step.node.type == NodeType::output) plan->output = i;
         }
 
+        for (int child = 0; child < plan->count; ++child) if (plan->steps[child].node.wetOwner)
+            for (int parent = 0; parent < plan->count; ++parent)
+                if (plan->steps[parent].node.id == plan->steps[child].node.wetOwner)
+                    plan->steps[parent].wetInsert = child;
         plan->outputDelay.data.resize(size_t(reserve - plan->steps[plan->output].pathLatency));
         plan->revision = grainRevision.fetch_add(1, std::memory_order_acq_rel) + 1;
         delete pending.exchange(plan.release(), std::memory_order_acq_rel);
@@ -426,6 +431,7 @@ private:
             else ports[0] = {};
             auto& value = ports[0];
             const auto& n = step.node;
+            if (n.wetOwner) continue; // Clocked exactly once by its owner's wet path.
             const int monitorSlot = fxMonitor && isEffect(n.type) ? routingFxSlot(n.id) : -1;
             const bool monitoring = monitorSlot >= 0 && fxMonitor->capturing(size_t(monitorSlot));
             StereoSample monitorInput{}, monitorWet{};
@@ -595,7 +601,22 @@ private:
                 value = input(0);
                 if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
-                const auto wet = step.fx->creative.process(value.audio.left, value.audio.right, fx.creative, controls.tempoBpm);
+                auto wet = step.fx->creative.process(value.audio.left, value.audio.right, fx.creative, controls.tempoBpm);
+                if (step.wetInsert >= 0) {
+                    auto& insert = active->steps[step.wetInsert];
+                    const auto settings = effectSettings(insert.node, controls);
+                    const auto processed = insert.fx->creative.process(wet[0], wet[1], settings.creative, controls.tempoBpm);
+                    const float targetMix = settings.enabled ? unit(settings.mix, 1.f) : 0.f;
+                    if (!insert.mixInitialized) { insert.smoothedMix = targetMix; insert.mixInitialized = true; }
+                    else insert.smoothedMix += mixSmoothing * (targetMix - insert.smoothedMix);
+                    const StereoSample pocketInput{wet[0], wet[1]};
+                    wet = {blend(wet[0], processed[0], float(insert.smoothedMix)),
+                           blend(wet[1], processed[1], float(insert.smoothedMix))};
+                    const int slot = routingFxSlot(insert.node.id);
+                    if (fxMonitor && slot >= 0 && fxMonitor->capturing(size_t(slot)))
+                        fxMonitor->capture(size_t(slot), insert.node.id, pocketInput.left, pocketInput.right,
+                            wet[0], wet[1], 0, {}, false, 0, 0, int(insert.node.type), false);
+                }
                 if (monitoring && (n.type == NodeType::reverb || n.type == NodeType::convolution || n.type == NodeType::saturator || n.type == NodeType::compressor)) {
                     // Actual processed wet samples, not dry input or a parameter model.
                     // Bypass/zero Mix invalidates measured history, not DSP state.
@@ -794,6 +815,7 @@ private:
         std::array<SignalDelay, maxLinks> delays;
         std::array<StereoSample, maxLinks> wireAudio{};
         int pathLatency = 0; bool donorWired = false;
+        int wetInsert = -1;
         int inputCount = 0;
         double smoothedMix = 0;
         bool mixInitialized = false;
@@ -877,6 +899,13 @@ private:
                 ? controls.fxSettings[size_t(slot)].creative : n.creative;
             plan.pathTails[i] = upstream + (isCreativeEffect(n.type)
                 ? creativeTailSeconds(n.type, settings, controls.tempoBpm) : moduleTailSeconds(n.type));
+            if (step.wetInsert >= 0) {
+                const auto& child = plan.steps[step.wetInsert].node;
+                const int childSlot = routingFxSlot(child.id);
+                const auto& childSettings = controls.fxAutomation && childSlot > 0
+                    ? controls.fxSettings[size_t(childSlot)].creative : child.creative;
+                plan.pathTails[i] += creativeTailSeconds(child.type, childSettings, controls.tempoBpm);
+            }
         }
         reportedTail.store(plan.pathTails[plan.output], std::memory_order_release);
     }
@@ -973,10 +1002,21 @@ private:
             default: return {false, "unknown node type"};
             }
         }
+        for (const auto& child : g.nodes) if (child.wetOwner) {
+            const int parent = find(g, child.wetOwner);
+            if (parent < 0 || g.nodes[parent].type != NodeType::granular || g.nodes[parent].wetOwner
+                || child.type != NodeType::delay || child.id == child.wetOwner)
+                return {false, "Wet pocket currently supports Delay inside Granular only"};
+            int children = 0;
+            for (const auto& other : g.nodes) children += other.wetOwner == child.wetOwner;
+            if (children != 1) return {false, "Granular currently supports one wet-pocket insert"};
+        }
         if (effects > maxEffects || outputs != 1) return {false, "require one Output and at most 16 effects"};
         for (const auto& l : g.links) {
             const int s = find(g, l.source), d = find(g, l.destination);
             if (s < 0 || d < 0 || s == d) return {false, "invalid link endpoint"};
+            if (g.nodes[s].wetOwner || g.nodes[d].wetOwner)
+                return {false, "Wet-pocket inserts use their owner's wet signal, not canvas cables"};
             const auto type = g.nodes[d].type;
             const int count = routingInputCount(type);
             if (g.nodes[s].type == NodeType::output || l.inputPin < 0 || l.inputPin >= count)

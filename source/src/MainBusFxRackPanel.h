@@ -97,9 +97,9 @@ public:
             card->handle.setTooltip(card->canReorder ? "Select FX; drag horizontally to reorder (Undo in Routing)" : "Select FX / " + juce::String(reason));
         }
         status.setText(lastError.isNotEmpty()
-                    ? (owner.routingRestartPending() ? "RESTART PENDING / Saved topology is not running. " : juce::String()) + lastError
+                    ? (owner.routingRestartPending() ? "APPLYING ROUTING / Host reactivation requested. " : juce::String()) + lastError
                     : owner.routingRestartPending()
-            ? "RESTART PENDING / Saved topology is not running. Host deactivate/reactivate required; transport stop is not enough."
+            ? "APPLYING ROUTING / Host reactivation requested; current audio stays active until applied."
             : reason.empty() ? "MAIN BUS FX  /  same nodes as Routing  /  before Output trim"
             : juce::String(reason), juce::dontSendNotification);
         status.setTooltip(status.getText());

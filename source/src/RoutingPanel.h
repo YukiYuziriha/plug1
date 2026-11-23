@@ -63,6 +63,13 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
     public:
         NodeCard(RoutingPanel& p, const RoutingNode& n) : panel(p), model(n) {
             const int slot = panel.fxSlot(n);
+            if (n.type == NodeType::granular) {
+                wetPocket.setButtonText("Wet pocket / Delay");
+                wetPocket.setComponentID("granularWetPocket");
+                wetPocket.setTooltip("Add or edit Delay inside Granular's wet signal. Granular Mix also controls its echoes.");
+                wetPocket.onClick = [this] { panel.openWetPocket(model.id); };
+                addAndMakeVisible(wetPocket);
+            }
             if (isEffect(n.type) && slot >= 0) {
                 enabled.setModulationOwner(panel.owner);
                 enabled.setComponentID(fxParameterId(size_t(slot), "On"));
@@ -126,6 +133,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         void resized() override {
             auto body = getLocalBounds();
             if (enabled.getParentComponent()) { enabled.setBounds(body.removeFromTop(28).withWidth(150)); body.removeFromTop(4); }
+            if (wetPocket.getParentComponent()) { wetPocket.setBounds(body.removeFromTop(26)); body.removeFromTop(4); }
             if (voice) voice->setBounds(body);
             if (tone) tone->setBounds(body);
             if (spectral) spectral->setBounds(body);
@@ -151,6 +159,8 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             enabled.setColour(juce::TextButton::buttonOnColourId, p.accent);
             enabled.setColour(juce::TextButton::textColourOffId, p.text);
             enabled.setColour(juce::TextButton::textColourOnId, p.background);
+            wetPocket.setColour(juce::TextButton::buttonColourId, p.inset);
+            wetPocket.setColour(juce::TextButton::textColourOffId, p.text);
             modulationui::styleRotary(localMix, neon);
         }
         void reveal(const juce::String& id) {
@@ -178,7 +188,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         RoutingPanel& panel;
         RoutingNode model;
         bool editing = false;
-        modulationui::Button enabled;
+        modulationui::Button enabled, wetPocket;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enabledLink;
         std::unique_ptr<VoiceControls> voice;
         std::unique_ptr<ToneEffectPanel> tone;
@@ -686,13 +696,14 @@ private:
         for (const auto& n : g.nodes)
             s += juce::String(n.id) + ":" + juce::String(int(n.type)) + ":" + juce::String(n.voiceSlot) + ":"
                 + juce::String(int(n.enabled)) + ":" + juce::String(n.type == NodeType::mix && !localMixParameterId(n.id).isEmpty() ? 0.0f : n.mix, 6) + ":" + juce::String(n.motion, 6)
-                + ":" + juce::String(int(n.mainControls)) + ":" + juce::String(n.referencePower, 6) + ":" + juce::String(n.latencySamples) + ";";
+                + ":" + juce::String(int(n.mainControls)) + ":" + juce::String(n.referencePower, 6) + ":" + juce::String(n.latencySamples) + ":" + juce::String(n.wetOwner) + ";";
         s += "|";
         for (const auto& l : g.links) s += juce::String(l.source) + ":" + juce::String(l.sourcePin) + ">" + juce::String(l.destination) + ":" + juce::String(l.inputPin) + ";";
         return s;
     }
     juce::String title(const RoutingNode& n) const {
         if (const auto alias = names.find(n.id); alias != names.end()) return alias->second;
+        if (n.wetOwner) return "WET DELAY / GRANULAR " + juce::String(routingFxSlot(n.wetOwner));
         switch (n.type) {
         case NodeType::spectralMorph: return "SPECTRAL MORPH " + juce::String(routingFxSlot(n.id));
         case NodeType::lead: return "LEAD";
@@ -730,10 +741,10 @@ private:
             || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
     }
     static int inputs(const RoutingNode& n) {
-        return routingInputCount(n.type);
+        return n.wetOwner ? 0 : routingInputCount(n.type);
     }
     int outputPins(const RoutingNode& n) const {
-        if (n.type == NodeType::output || n.type == NodeType::sum) return 0;
+        if (n.wetOwner || n.type == NodeType::output || n.type == NodeType::sum) return 0;
         if (n.type == NodeType::splitter) return 2;
         if (n.type != NodeType::crossover) return 1;
         const int slot = fxSlot(n);
@@ -1672,10 +1683,10 @@ private:
 
     void showStatus() {
         status.setText(error.isNotEmpty() ? "EDIT REJECTED  /  " + error
-                        + (owner.routingRestartPending() ? "  /  RESTART PENDING: saved cables are not running. Host deactivate/reactivate required."
+                        + (owner.routingRestartPending() ? "  /  APPLYING ROUTING: host reactivation requested."
                                                          : "  /  Visible cables remain the running routing.")
             : owner.routingRestartPending()
-                ? "RESTART PENDING  /  Saved cables are not running. Deactivate/reactivate the plugin in the host to apply latency changes (transport stop is not enough)."
+                ? "APPLYING ROUTING / Host reactivation requested for latency alignment. Current audio stays active until the host applies it."
                 : "LIVE ROUTING  /  Automatic gain compensation at merges. Unconnected inputs and Output are silent.", juce::dontSendNotification);
         status.setTooltip(status.getText());
         status.setColour(juce::Label::textColourId, error.isEmpty() ? themePalette(*this, neon).secondary : themePalette(*this, neon).accent);
@@ -1725,8 +1736,12 @@ private:
     void deleteSelection() {
         const auto* n = node(selectedNode); if (!n || !nodeVisible(*n) || n->type == NodeType::output) return;
         remember(); const auto id = selectedNode;
+        for (const auto& child : graph.nodes) if (child.wetOwner == id) {
+            positions.erase(child.id); compactPositions.erase(child.id); expandedPositions.erase(child.id);
+            expanded.erase(child.id); names.erase(child.id);
+        }
         graph.links.erase(std::remove_if(graph.links.begin(), graph.links.end(), [id](const auto& l) { return l.source == id || l.destination == id; }), graph.links.end());
-        graph.nodes.erase(std::remove_if(graph.nodes.begin(), graph.nodes.end(), [id](const auto& item) { return item.id == id; }), graph.nodes.end());
+        graph.nodes.erase(std::remove_if(graph.nodes.begin(), graph.nodes.end(), [id](const auto& item) { return item.id == id || item.wetOwner == id; }), graph.nodes.end());
         positions.erase(id); compactPositions.erase(id); expandedPositions.erase(id); expanded.erase(id);
         names.erase(id); selectedNode = 0; selectedLink = -1; publish(); rebuildInspector();
     }
@@ -1769,11 +1784,49 @@ private:
         selectedNode = copy.id; selectedLink = -1;
         publish(); rebuildInspector();
     }
+    uint32_t wetPocketChild(uint32_t parent) const {
+        for (const auto& child : graph.nodes) if (child.wetOwner == parent) return child.id;
+        return 0;
+    }
+    void openWetPocket(uint32_t parent) {
+        const auto* source = node(parent);
+        if (!source || source->type != NodeType::granular) return;
+        if (const auto child = wetPocketChild(parent)) {
+            selectedNode = child; selectedLink = -1; inspectorVisible = true;
+            rebuildInspector(); resized(); canvas.repaint(); return;
+        }
+        const auto id = nextFxNodeId();
+        if (!id || graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)
+            || std::count_if(graph.nodes.begin(), graph.nodes.end(), [](const auto& n) { return isEffect(n.type); }) >= 16) {
+            error = "No unused FX automation slot or node capacity for a wet Delay"; showStatus(); return;
+        }
+        const auto parentBounds = nodeBounds(*source);
+        std::vector<juce::Rectangle<float>> obstacles;
+        for (const auto& existing : graph.nodes) if (nodeVisible(existing)) obstacles.push_back(nodeBounds(existing));
+        const auto anchor = parentBounds.getBottomLeft() + juce::Point<float>(0, 16);
+        const auto placement = packedPosition({anchor.x, anchor.y, 190, 64}, obstacles,
+            0, float(canvas.getWidth()) / zoom, anchor, true);
+        remember();
+        RoutingNode child; child.id = id; child.type = NodeType::delay; child.mix = 1.f; child.wetOwner = parent;
+        graph.nodes.push_back(child);
+        positions[id] = compactPositions[id] = placement;
+        expanded[id] = false; selectedNode = id; selectedLink = -1; inspectorVisible = true;
+        if (publish()) {
+            const auto slot = size_t(routingFxSlot(id));
+            setParameter(fxParameterId(slot, "On"), 1);
+            setParameter(fxParameterId(slot, "Mix"), 100);
+            for (size_t p = 0; p < creativeParameterCount; ++p)
+                setParameter(parameterIds[creativeParameterIndex(slot, p)], child.creative.values[p]);
+        }
+        rebuildInspector(); resized();
+    }
     void showNodeMenu() {
         juce::PopupMenu menu; menu.setLookAndFeel(&getLookAndFeel());
         const auto* n = node(selectedNode);
         menu.addItem(1, "Delete node", n && n->type != NodeType::output);
         menu.addItem(2, "Toggle FX bypass", n && isEffect(n->type));
+        if (n && n->type == NodeType::granular)
+            menu.addItem(4, wetPocketChild(n->id) ? "Open wet pocket / Delay" : "Wet pocket / Add Delay");
         menu.addItem(3, "Duplicate Dry / Wet", n && n->type == NodeType::mix && !n->mainControls
                      && graph.nodes.size() < size_t(RoutingExecutor::maxNodes));
         juce::Component::SafePointer<RoutingPanel> safe(this);
@@ -1781,6 +1834,7 @@ private:
             if (!safe) return;
             if (result == 1) safe->deleteSelection(); else if (result == 2) safe->toggleBypass();
                         else if (result == 3) safe->duplicateDryWet();
+                        else if (result == 4) safe->openWetPocket(safe->selectedNode);
         });
     }
     void showAddMenu(bool atCursor) {
@@ -1896,11 +1950,30 @@ private:
         }
         else return;
         if (node(n.id)) return;
+        uint32_t automaticDonor = 0;
+        bool createDonor = false;
+        if (n.type == NodeType::spectralMorph) {
+            for (const auto& source : graph.nodes) if (source.type == NodeType::sidechain) automaticDonor = source.id;
+            createDonor = automaticDonor == 0;
+            if (createDonor) automaticDonor = 14;
+            if ((createDonor && (node(14) || graph.nodes.size() + 2 > size_t(RoutingExecutor::maxNodes)))
+                || graph.links.size() >= size_t(RoutingExecutor::maxLinks)) {
+                error = "No routing capacity for Morph's automatic SIDECHAIN donor"; showStatus(); return;
+            }
+            for (const auto& wire : graph.links) if (wire.source == automaticDonor) {
+                error = "SIDECHAIN already has a destination. Use a Splitter in Routing to share it."; showStatus(); return;
+            }
+        }
         if (isUtilityEffect(n.type)) n.mix = 1.0f;
         remember();
         positions[n.id] = insertion; compactPositions[n.id] = insertion;
         expandedPositions.erase(n.id); expanded.erase(n.id);
         graph.nodes.push_back(n); selectedNode = n.id; selectedLink = -1;
+        if (createDonor) {
+            graph.nodes.push_back({automaticDonor, NodeType::sidechain});
+            positions[automaticDonor] = insertion.translated(-230, 100);
+        }
+        if (automaticDonor) graph.links.push_back({automaticDonor, n.id, 1, 0});
         if (publish() && isEffect(n.type) && n.id >= 100 && n.id <= 114) {
             // Initialize a new machine only after its graph is accepted.
             const auto slot = size_t(routingFxSlot(n.id));
@@ -1951,6 +2024,8 @@ private:
         juce::String info = "Select a machine to edit its controls.\n\nInputs accept multiple voices with automatic merge compensation. Each output (each Multiband band) has one outgoing cable. Dragging it to another input replaces its existing links; dropping on empty space disconnects them. Saved fanout remains until that output is edited. A click without dragging leaves wiring unchanged.\n\nDrag an occupied input end to reconnect; drop it on empty space to disconnect that cable. Ctrl/Command-drag an output to move a cable's source. Wheel zooms at the cursor; Alt/middle-drag pans.\n\nAbsent voices and the untouched bypassed main Chorale are hidden without changing routing. Muted voices stay visible. Unconnected inputs receive silence; rejected edits retain accepted routing.";
         if (n) {
             info = "Node ID " + juce::String(n->id);
+            if (n->wetOwner) info += "\nInside Granular " + juce::String(routingFxSlot(n->wetOwner))
+                + " wet pocket: automatic internal signal, before its Mix. No canvas cables required. Delete this node to remove the insert.";
             if (n->type == NodeType::sidechain)
                 info += "\nOptional host auxiliary input. Mono duplicates; stereo preserves L/R. Configured channels do not prove a host cable is connected: connectivity is unknown. Missing input is silence, never main audio. Connect this source explicitly; no FX slot or level normalization.";
             if (n->type == NodeType::splitter)

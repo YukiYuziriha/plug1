@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "ProcessorRoutingState.h"
 #include "MainBusFxRack.h"
+#include "SidechainWorkflowUiTests.h"
 #include <atomic>
 #include <cstdlib>
 #include <new>
@@ -18,6 +19,20 @@ void operator delete[](void* p, std::size_t) noexcept { ::operator delete(p); }
 namespace {
 using namespace vocalstack;
 void check(bool x, const char* reason) { if (!x) throw std::runtime_error(reason); }
+struct ActivationListener : juce::AudioProcessorListener {
+    explicit ActivationListener(Processor& owner) : processor(owner) { processor.addListener(this); }
+    ~ActivationListener() override { processor.removeListener(this); }
+    void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override {}
+    void audioProcessorChanged(juce::AudioProcessor* owner, const ChangeDetails& details) override {
+        if (details.latencyChanged) {
+            ++requests;
+            latencyAtRequest = owner->getLatencySamples();
+        }
+    }
+    Processor& processor;
+    int requests = 0;
+    int latencyAtRequest = -1;
+};
 float donorSample(int channel, int sample) {
     return channel == 0 ? .13f * std::sin(sample * .063f) : -.21f * std::cos(sample * .087f);
 }
@@ -163,20 +178,29 @@ void activationLatencyPolicy() {
         owner->prepareToPlay(rate, 137);
         const int base = rate == 96000 ? 2688 : 1344;
         check(owner->getLatencySamples() == base, "no-Morph graph retained the 4096 penalty");
+        ActivationListener listener(*owner);
+        const auto baseSettings = owner->settingsText();
+        auto cableEdit = owner->getRoutingGraph();
+        check(!cableEdit.links.empty(), "ordinary cable edit fixture");
+        cableEdit.links.pop_back();
+        juce::String error;
+        check(owner->setRoutingGraph(cableEdit, error) && !owner->routingRestartPending(), "ordinary cable edit rejected");
+        check(listener.requests == 0 && owner->getLatencySamples() == base, "ordinary cable edit requested activation");
         auto morph = mainBusFx::add(defaultGraph(), NodeType::spectralMorph);
         check(morph.changed, "latency Morph fixture");
         // Even dormant or disconnected Morph must reserve its eventual active
         // delay, so enabling/wiring it later is a same-contract operation.
         for (auto& node : morph.graph.nodes) if (node.type == NodeType::spectralMorph) node.enabled = false;
-        juce::String error;
         check(owner->setRoutingGraph(morph.graph, error) && error.isEmpty(), "live Morph draft rejected");
         check(owner->routingRestartPending(), "latency change was not labeled pending");
+        check(listener.requests == 1 && listener.latencyAtRequest == base, "Morph addition did not request activation at the active latency");
         auto rejected = morph.graph; rejected.nodes.push_back({101, NodeType::spectralMorph});
         for (auto& link : rejected.links) if (link.source == 100 && link.destination == 13) link.source = 101;
         rejected.links.push_back({100, 101, 0});
         check(!owner->setRoutingGraph(rejected, error) && error.isNotEmpty() && owner->routingRestartPending(),
               "rejected serial Morph destroyed the explicit pending activation state");
         check(owner->getRoutingGraph().nodes.size() == morph.graph.nodes.size(), "rejected pending edit changed saved topology");
+        check(listener.requests == 1, "rejected pending edit requested activation");
         check(owner->getLatencySamples() == base, "latency changed before host reprepare");
         const auto checkBypass = [&](int expectedLatency) {
             auto* bypass = owner->parameters.getParameter("bypass");
@@ -201,16 +225,35 @@ void activationLatencyPolicy() {
         check(owner->routingRestartPending(), "reset/transport-style reset applied pending topology");
         juce::MemoryBlock pendingState; owner->getStateInformation(pendingState);
         auto recalled = std::make_unique<Processor>();
-        recalled->setStateInformation(pendingState.getData(), int(pendingState.getSize()));
         recalled->prepareToPlay(rate, 137);
+        ActivationListener recalledListener(*recalled);
+        recalled->setStateInformation(pendingState.getData(), int(pendingState.getSize()));
+        check(recalled->routingRestartPending() && recalledListener.requests == 1 && recalledListener.latencyAtRequest == base,
+              "live state load did not request pending Morph activation");
+        check(recalled->getLatencySamples() == base, "state load changed active latency before prepare");
+        recalled->releaseResources(); recalled->prepareToPlay(rate, 137);
         check(recalled->getLatencySamples() == base + 4096, "pending topology was lost on state recall");
+        recalledListener.requests = 0;
+        check(recalled->pasteSettings(baseSettings) && recalled->routingRestartPending(), "pasted Morph removal not deferred");
+        check(recalledListener.requests == 1 && recalledListener.latencyAtRequest == base + 4096
+            && recalled->getLatencySamples() == base + 4096, "paste did not request activation while preserving active latency");
+        recalled->releaseResources(); recalled->prepareToPlay(rate, 137);
+        check(!recalled->routingRestartPending() && recalled->getLatencySamples() == base, "pasted removal failed to apply at prepare");
         owner->releaseResources(); owner->prepareToPlay(rate, 137);
         check(!owner->routingRestartPending() && owner->getLatencySamples() == base + 4096, "host activation failed to apply Morph latency");
         checkBypass(base + 4096);
+        listener.requests = 0;
         auto enabled = owner->getRoutingGraph();
         for (auto& node : enabled.nodes) if (node.type == NodeType::spectralMorph) node.enabled = true;
         check(owner->setRoutingGraph(enabled, error) && !owner->routingRestartPending(), "Morph enable unexpectedly changed latency contract");
+        auto donorEdit = enabled;
+        donorEdit.links.erase(std::remove_if(donorEdit.links.begin(), donorEdit.links.end(), [](const auto& link) {
+            return link.destination == 100 && link.inputPin == 1;
+        }), donorEdit.links.end());
+        check(owner->setRoutingGraph(donorEdit, error) && !owner->routingRestartPending(), "live donor cable edit rejected");
+        check(listener.requests == 0 && owner->getLatencySamples() == base + 4096, "same-latency Morph edit requested activation");
         check(owner->setRoutingGraph(defaultGraph(), error) && owner->routingRestartPending(), "Morph removal not deferred");
+        check(listener.requests == 1 && listener.latencyAtRequest == base + 4096, "Morph removal did not request activation at the active latency");
         check(owner->getLatencySamples() == base + 4096, "Morph removal changed latency before activation");
         checkBypass(base + 4096);
         owner->releaseResources(); owner->prepareToPlay(rate, 137);
@@ -233,17 +276,42 @@ void spectralContract() {
     auto rack=mainBusFx::add(defaultGraph(),NodeType::spectralMorph);
     check(rack.changed, "rack cannot add independent Morph");
     uint32_t id=0; for(const auto& n:rack.graph.nodes) if(n.type==NodeType::spectralMorph) id=n.id;
-    int inputs=0; for(const auto& l:rack.graph.links) if(l.destination==id) { ++inputs; check(l.inputPin==0,"rack invented donor wire"); }
-    check(inputs==1,"rack did not create exactly one MAIN wire");
-    rack.graph.nodes.push_back({14,NodeType::sidechain}); rack.graph.links.push_back({14,id,1});
-    check(!mainBusFx::discover(rack.graph).editable(),"wired auxiliary rack edits must reject rather than erase donor cables");
-    check(!mainBusFx::remove(rack.graph,id).changed,"read-only donor graph was rewritten");
+    int inputs=0, donorInputs=0;
+    for(const auto& l:rack.graph.links) if(l.destination==id) {
+        ++inputs;
+        if(l.inputPin==1) {
+            ++donorInputs;
+            const auto* donor=mainBusFx::find(rack.graph,l.source);
+            check(donor && donor->type==NodeType::sidechain,"rack donor is not SIDECHAIN");
+        } else check(l.inputPin==0,"rack invented Morph input");
+    }
+    check(inputs==2 && donorInputs==1,"rack did not create MAIN and SIDECHAIN inputs");
+    check(mainBusFx::discover(rack.graph).editable(),"automatic SIDECHAIN made the Morph rack read-only");
+    const auto removed=mainBusFx::remove(rack.graph,id);
+    check(removed.changed && RoutingExecutor::validate(removed.graph),"automatic donor Morph could not be safely removed");
+    check(mainBusFx::discover(removed.graph).editable() && mainBusFx::find(removed.graph,14),"Morph removal damaged the rack or SIDECHAIN source");
+    check(std::none_of(removed.graph.links.begin(),removed.graph.links.end(),[=](const auto& link) {
+        return link.source==id || link.destination==id;
+    }),"Morph removal left dangling cables");
     auto branch = mainBusFx::add(defaultGraph(),NodeType::spectralMorph);
+    branch.graph.links.erase(std::remove_if(branch.graph.links.begin(),branch.graph.links.end(),[=](const auto& link) {
+        return link.destination==id && link.inputPin==1;
+    }),branch.graph.links.end());
     branch.graph.nodes.push_back({101,NodeType::gain});
     branch.graph.links.push_back({12,101,0}); branch.graph.links.push_back({101,id,1});
+    check(bool(RoutingExecutor::validate(branch.graph)),"branched donor restriction fixture is invalid");
     const auto discovered = mainBusFx::discover(branch.graph);
     check(!discovered.editable() && std::find(discovered.effects.begin(),discovered.effects.end(),101)==discovered.effects.end(),
         "analysis-only donor FX was treated as an audible main-bus rack stage");
+    auto pocket = mainBusFx::add(defaultGraph(), NodeType::granular).graph;
+    RoutingNode wetDelay; wetDelay.id = 101; wetDelay.type = NodeType::delay; wetDelay.mix = 1; wetDelay.wetOwner = 100;
+    pocket.nodes.push_back(wetDelay);
+    Graph decoded;
+    check(processorRouting::decode(processorRouting::encode(pocket, "RoutingGraph"), decoded), "wet pocket state decode failed");
+    check(mainBusFx::find(decoded, 101) && mainBusFx::find(decoded, 101)->wetOwner == 100, "wet ownership lost on recall");
+    const auto withoutParent = mainBusFx::remove(decoded, 100);
+    check(withoutParent.changed && !mainBusFx::find(withoutParent.graph, 101)
+        && bool(RoutingExecutor::validate(withoutParent.graph)), "removing Granular orphaned its wet insert");
     Graph graph{{{1,NodeType::lead},{14,NodeType::sidechain},{100,NodeType::spectralMorph},{13,NodeType::output}},{{1,100,0},{14,100,1},{100,13,0}}};
     graph.nodes[2].mix=1; graph.nodes[2].spectralMorph.morph=.5f;
     juce::String error; check(owner->setRoutingGraph(graph,error),"Morph processor graph rejected");
@@ -279,8 +347,14 @@ void spectralContract() {
         "recall pretended to restore captured donor data");
 }
 }
-int main() {
+int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI juce;
-    try { busMatrix(); monoAuditionAndGateBridge(); activationLatencyPolicy(); spectralContract(); check(!allocations && !destructions, "processor callback allocated/reclaimed"); std::cout << "Sidechain JUCE processor bus/state tests passed\n"; return 0; }
+    try {
+        if (argc == 2 && juce::String(argv[1]) == "--workflow-check") {
+            activationLatencyPolicy(); spectralContract(); workflowUiTests::run();
+            check(!allocations && !destructions, "workflow callback allocated/reclaimed");
+            std::cout << "Sidechain activation and wet-pocket workflow checks passed\n"; return 0;
+        }
+        busMatrix(); monoAuditionAndGateBridge(); activationLatencyPolicy(); spectralContract(); check(!allocations && !destructions, "processor callback allocated/reclaimed"); std::cout << "Sidechain JUCE processor bus/state tests passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.13.2 LANGUAGES C CXX)
+project(VocalStack VERSION 1.13.3 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -58,6 +58,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
         JUCE_VST3_CAN_REPLACE_VST2=0)
     target_link_libraries(VocalStack PRIVATE
         vocalstack_dsp juce::juce_audio_processors juce::juce_recommended_config_flags)
+    include(cmake/PatchVst3Activation.cmake)
     clap_juce_extensions_plugin(TARGET VocalStack
         CLAP_ID "audio.vocalstack.effect"
         CLAP_FEATURES audio-effect pitch-shifter utility stereo mono
@@ -108,7 +109,7 @@ if(VOCALSTACK_BUILD_TESTS)
     add_executable(vocalstack_fxmonitor_tests tests/FxMonitorTests.cpp)
     target_link_libraries(vocalstack_fxmonitor_tests PRIVATE vocalstack_dsp)
     add_test(NAME VocalStackFxMonitor COMMAND vocalstack_fxmonitor_tests)
-    foreach(suite IN ITEMS RoutingBackend VoiceBackend FxAutomation PitchResolution FormantRatio ToneEffects Multiband LeadMixBackend WaveshaperExpansion MainBusFxRack DspAudit DspAuditRouting GrainSnapshot)
+    foreach(suite IN ITEMS RoutingBackend VoiceBackend FxAutomation PitchResolution FormantRatio ToneEffects Multiband LeadMixBackend WaveshaperExpansion MainBusFxRack WetPocket DspAudit DspAuditRouting GrainSnapshot)
         string(TOLOWER "${suite}" suite_lower)
         add_executable(vocalstack_${suite_lower}_tests tests/${suite}Tests.cpp)
         target_link_libraries(vocalstack_${suite_lower}_tests PRIVATE vocalstack_dsp)
