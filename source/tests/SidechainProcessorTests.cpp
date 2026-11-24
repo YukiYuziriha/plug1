@@ -8,6 +8,7 @@
 #include <array>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 
 namespace { thread_local bool audioThread = false; unsigned allocations=0, destructions=0; }
 void* operator new(std::size_t n) { if(audioThread) ++allocations; if(auto* p=std::malloc(n ? n : 1)) return p; throw std::bad_alloc(); }
@@ -27,12 +28,70 @@ struct ActivationListener : juce::AudioProcessorListener {
         if (details.latencyChanged) {
             ++requests;
             latencyAtRequest = owner->getLatencySamples();
+            allOnMessageThread &= juce::MessageManager::getInstance()->isThisTheMessageThread();
         }
     }
     Processor& processor;
     int requests = 0;
     int latencyAtRequest = -1;
+    bool allOnMessageThread = true;
 };
+
+void awaitLatencyRequest(const ActivationListener& listener, int previousRequests, int activeLatency) {
+    // Pump the real JUCE timer on the message thread, not Processor internals.
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 1500.0;
+    while (listener.requests == previousRequests && juce::Time::getMillisecondCounterHiRes() < deadline) {
+        juce::Timer::callPendingTimersSynchronously();
+        if (listener.requests == previousRequests) juce::Thread::sleep(10);
+    }
+    check(listener.requests == previousRequests + 1 && listener.allOnMessageThread
+        && listener.latencyAtRequest == activeLatency, "expected one message-thread latency request at the active latency");
+}
+
+void checkLatencyImpulse(Processor& owner, int channels, int latency, bool hostBypass = true) {
+    auto* bypass = owner.parameters.getParameter("bypass");
+    check(bypass != nullptr, "bypass parameter fixture");
+    const auto savedBypass = bypass->getValue();
+    if (hostBypass) bypass->setValueNotifyingHost(1.f); // Settle the bypass blend at reset.
+    owner.reset();
+    check(owner.getLatencySamples() == latency, "transport reset changed advertised latency");
+    constexpr std::array<int, 5> blocks{1, 137, 3, 511, 17};
+    for (int position = 0, block = 0; position < latency + 600; ++block) {
+        const int count = std::min(blocks[size_t(block) % blocks.size()], latency + 600 - position);
+        juce::AudioBuffer<float> audio(channels, count); audio.clear();
+        if (position == 0) for (int c = 0; c < channels; ++c) audio.setSample(c, 0, c ? -.25f : .4f);
+        juce::MidiBuffer midi;
+        audioThread = true;
+        if (hostBypass) owner.processBlockBypassed(audio, midi);
+        else owner.processBlock(audio, midi);
+        audioThread = false;
+        for (int c = 0; c < channels; ++c) for (int i = 0; i < count; ++i) {
+            const float expected = position + i == latency ? (c ? -.25f : .4f) : 0.f;
+            check(std::abs(audio.getSample(c, i) - expected) < 1.e-6f, "audio delay differs from active host latency");
+        }
+        position += count;
+    }
+    if (hostBypass) bypass->setValueNotifyingHost(savedBypass);
+}
+
+void requestParameterLatency(Processor& owner, const ActivationListener& listener, const char* id,
+                             float value, int activeLatency) {
+    auto* parameter = owner.parameters.getParameter(id);
+    check(parameter != nullptr && owner.getLatencySamples() == activeLatency, "latency parameter fixture");
+    const int previousRequests = listener.requests;
+    juce::AudioBuffer<float> silence(2, 137); silence.clear();
+    juce::MidiBuffer midi;
+    // Host automation can arrive off the message thread, immediately before render.
+    std::thread automated([&] {
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+        audioThread = true; owner.processBlock(silence, midi); audioThread = false;
+    });
+    automated.join();
+    check(listener.requests == previousRequests && owner.getLatencySamples() == activeLatency,
+          "automation or render synchronously notified the host or changed active latency");
+    awaitLatencyRequest(listener, previousRequests, activeLatency);
+    check(owner.getLatencySamples() == activeLatency, "timer applied latency before prepare");
+}
 float donorSample(int channel, int sample) {
     return channel == 0 ? .13f * std::sin(sample * .063f) : -.21f * std::cos(sample * .087f);
 }
@@ -176,8 +235,8 @@ void activationLatencyPolicy() {
         layout.outputBuses.set(0, juce::AudioChannelSet::canonicalChannelSet(channels));
         check(owner->setBusesLayout(layout), "latency policy layout");
         owner->prepareToPlay(rate, 137);
-        const int base = rate == 96000 ? 2688 : 1344;
-        check(owner->getLatencySamples() == base, "no-Morph graph retained the 4096 penalty");
+        constexpr int base = 0;
+        check(owner->getLatencySamples() == base, "fresh graph retained a latency reserve");
         ActivationListener listener(*owner);
         const auto baseSettings = owner->settingsText();
         auto cableEdit = owner->getRoutingGraph();
@@ -188,12 +247,9 @@ void activationLatencyPolicy() {
         check(listener.requests == 0 && owner->getLatencySamples() == base, "ordinary cable edit requested activation");
         auto morph = mainBusFx::add(defaultGraph(), NodeType::spectralMorph);
         check(morph.changed, "latency Morph fixture");
-        // Even dormant or disconnected Morph must reserve its eventual active
-        // delay, so enabling/wiring it later is a same-contract operation.
-        for (auto& node : morph.graph.nodes) if (node.type == NodeType::spectralMorph) node.enabled = false;
         check(owner->setRoutingGraph(morph.graph, error) && error.isEmpty(), "live Morph draft rejected");
         check(owner->routingRestartPending(), "latency change was not labeled pending");
-        check(listener.requests == 1 && listener.latencyAtRequest == base, "Morph addition did not request activation at the active latency");
+        awaitLatencyRequest(listener, 0, base);
         auto rejected = morph.graph; rejected.nodes.push_back({101, NodeType::spectralMorph});
         for (auto& link : rejected.links) if (link.source == 100 && link.destination == 13) link.source = 101;
         rejected.links.push_back({100, 101, 0});
@@ -202,64 +258,145 @@ void activationLatencyPolicy() {
         check(owner->getRoutingGraph().nodes.size() == morph.graph.nodes.size(), "rejected pending edit changed saved topology");
         check(listener.requests == 1, "rejected pending edit requested activation");
         check(owner->getLatencySamples() == base, "latency changed before host reprepare");
-        const auto checkBypass = [&](int expectedLatency) {
-            auto* bypass = owner->parameters.getParameter("bypass");
-            check(bypass != nullptr, "bypass parameter fixture");
-            bypass->setValueNotifyingHost(1.f);
-            owner->reset();
-            constexpr std::array<int, 5> blocks{1, 137, 3, 511, 17};
-            for (int position = 0, block = 0; position < expectedLatency + 600; ++block) {
-                const int count = std::min(blocks[size_t(block) % blocks.size()], expectedLatency + 600 - position);
-                juce::AudioBuffer<float> audio(channels, count); audio.clear();
-                if (position == 0) for (int c = 0; c < channels; ++c) audio.setSample(c, 0, c ? -.25f : .4f);
-                juce::MidiBuffer midi;
-                audioThread = true; owner->processBlockBypassed(audio, midi); audioThread = false;
-                for (int c = 0; c < channels; ++c) for (int i = 0; i < count; ++i) {
-                    const float expected = position + i == expectedLatency ? (c ? -.25f : .4f) : 0.f;
-                    check(std::abs(audio.getSample(c, i) - expected) < 1.e-6f, "audio delay moved before/away from host latency");
-                }
-                position += count;
-            }
-        };
-        checkBypass(base);
+        checkLatencyImpulse(*owner, channels, base);
         check(owner->routingRestartPending(), "reset/transport-style reset applied pending topology");
         juce::MemoryBlock pendingState; owner->getStateInformation(pendingState);
         auto recalled = std::make_unique<Processor>();
         recalled->prepareToPlay(rate, 137);
         ActivationListener recalledListener(*recalled);
         recalled->setStateInformation(pendingState.getData(), int(pendingState.getSize()));
-        check(recalled->routingRestartPending() && recalledListener.requests == 1 && recalledListener.latencyAtRequest == base,
-              "live state load did not request pending Morph activation");
+        check(recalled->routingRestartPending(), "live state load did not stage Morph activation");
+        awaitLatencyRequest(recalledListener, 0, base);
         check(recalled->getLatencySamples() == base, "state load changed active latency before prepare");
         recalled->releaseResources(); recalled->prepareToPlay(rate, 137);
         check(recalled->getLatencySamples() == base + 4096, "pending topology was lost on state recall");
         recalledListener.requests = 0;
         check(recalled->pasteSettings(baseSettings) && recalled->routingRestartPending(), "pasted Morph removal not deferred");
-        check(recalledListener.requests == 1 && recalledListener.latencyAtRequest == base + 4096
-            && recalled->getLatencySamples() == base + 4096, "paste did not request activation while preserving active latency");
+        awaitLatencyRequest(recalledListener, 0, base + 4096);
+        check(recalled->getLatencySamples() == base + 4096, "paste did not preserve active latency");
         recalled->releaseResources(); recalled->prepareToPlay(rate, 137);
         check(!recalled->routingRestartPending() && recalled->getLatencySamples() == base, "pasted removal failed to apply at prepare");
         owner->releaseResources(); owner->prepareToPlay(rate, 137);
         check(!owner->routingRestartPending() && owner->getLatencySamples() == base + 4096, "host activation failed to apply Morph latency");
-        checkBypass(base + 4096);
+        checkLatencyImpulse(*owner, channels, base + 4096);
         listener.requests = 0;
-        auto enabled = owner->getRoutingGraph();
-        for (auto& node : enabled.nodes) if (node.type == NodeType::spectralMorph) node.enabled = true;
-        check(owner->setRoutingGraph(enabled, error) && !owner->routingRestartPending(), "Morph enable unexpectedly changed latency contract");
-        auto donorEdit = enabled;
+        auto donorEdit = owner->getRoutingGraph();
         donorEdit.links.erase(std::remove_if(donorEdit.links.begin(), donorEdit.links.end(), [](const auto& link) {
             return link.destination == 100 && link.inputPin == 1;
         }), donorEdit.links.end());
         check(owner->setRoutingGraph(donorEdit, error) && !owner->routingRestartPending(), "live donor cable edit rejected");
         check(listener.requests == 0 && owner->getLatencySamples() == base + 4096, "same-latency Morph edit requested activation");
         check(owner->setRoutingGraph(defaultGraph(), error) && owner->routingRestartPending(), "Morph removal not deferred");
-        check(listener.requests == 1 && listener.latencyAtRequest == base + 4096, "Morph removal did not request activation at the active latency");
+        awaitLatencyRequest(listener, 0, base + 4096);
         check(owner->getLatencySamples() == base + 4096, "Morph removal changed latency before activation");
-        checkBypass(base + 4096);
+        checkLatencyImpulse(*owner, channels, base + 4096);
         owner->releaseResources(); owner->prepareToPlay(rate, 137);
-        check(owner->getLatencySamples() == base && !owner->routingRestartPending(), "Morph removal failed to restore legacy latency");
-        checkBypass(base);
+        check(owner->getLatencySamples() == base && !owner->routingRestartPending(), "Morph removal failed to restore fresh latency");
+        checkLatencyImpulse(*owner, channels, base);
     }
+}
+
+void delayOnlyAndVocalLatency() {
+    auto owner = std::make_unique<Processor>();
+    auto delay = mainBusFx::add(owner->getRoutingGraph(), NodeType::delay);
+    juce::String error;
+    check(delay.changed && owner->setRoutingGraph(delay.graph, error), "fresh Delay-only rack fixture");
+    owner->prepareToPlay(48000, 137);
+    checkLatencyImpulse(*owner, 2, 0);
+    ActivationListener listener(*owner);
+    constexpr int vocalLatency = 1344;
+    const auto transition = [&](const char* id, float value, int before, int after) {
+        requestParameterLatency(*owner, listener, id, value, before);
+        checkLatencyImpulse(*owner, 2, before);
+        owner->releaseResources();
+        check(owner->getLatencySamples() == before, "release changed vocal latency before prepare");
+        owner->prepareToPlay(48000, 137);
+        checkLatencyImpulse(*owner, 2, after);
+    };
+    transition("doubleOn", 1, 0, vocalLatency);
+    transition("doubleOn", 0, vocalLatency, 0);
+
+    auto* formant = owner->parameters.getParameter("formant");
+    check(formant != nullptr, "shared Formant amount fixture");
+    formant->setValueNotifyingHost(formant->convertTo0to1(5));
+    owner->releaseResources(); owner->prepareToPlay(48000, 137);
+    checkLatencyImpulse(*owner, 2, 0); // A dormant shared Formant amount is not a shift.
+    transition("formantOn", 1, 0, vocalLatency);
+    transition("formantOn", 0, vocalLatency, 0);
+    transition("leadPitch", 7, 0, vocalLatency);
+    transition("leadPitch", 0, vocalLatency, 0);
+}
+
+void morphAutomationLatency() {
+    auto owner = std::make_unique<Processor>();
+    Graph graph{{{1, NodeType::lead}, {14, NodeType::sidechain}, {100, NodeType::spectralMorph},
+                 {13, NodeType::output}}, {{1, 100, 0}, {14, 100, 1}, {100, 13, 0}}};
+    graph.nodes[2].enabled = false;
+    graph.nodes[2].mix = 0; // An enabled Morph still reserves latency at zero Wet.
+    juce::String error;
+    check(owner->setRoutingGraph(graph, error), "disabled Morph fixture");
+    owner->prepareToPlay(48000, 137);
+    checkLatencyImpulse(*owner, 2, 0, false);
+    ActivationListener listener(*owner);
+    int activeLatency = 0;
+    constexpr int morphLatency = 4096;
+    for (const bool enabled : {true, false, true, false}) {
+        requestParameterLatency(*owner, listener, "fx1On", enabled ? 1.f : 0.f, activeLatency);
+        // The running route must stay aligned too, not just host bypass.
+        checkLatencyImpulse(*owner, 2, activeLatency, false);
+        owner->releaseResources();
+        check(owner->getLatencySamples() == activeLatency, "release changed Morph latency before prepare");
+        owner->prepareToPlay(48000, 137);
+        activeLatency = enabled ? morphLatency : 0;
+        checkLatencyImpulse(*owner, 2, activeLatency, false);
+    }
+}
+
+void legacyLatencyStateRecall() {
+    auto owner = std::make_unique<Processor>();
+    Graph graph{{{1, NodeType::lead}, {100, NodeType::spectralMorph}, {13, NodeType::output}},
+                {{1, 100, 0}, {100, 13, 0}}};
+    graph.nodes[1].enabled = false;
+    juce::ValueTree legacy(owner->parameters.state.getType());
+    legacy.addChild(processorRouting::encode(graph, "RoutingGraph"), -1, nullptr);
+    const auto field = [&](const char* id, float value) {
+        juce::ValueTree child("PARAM");
+        child.setProperty("id", id, nullptr);
+        child.setProperty("value", value, nullptr);
+        legacy.addChild(child, -1, nullptr);
+    };
+    field("double", 61);
+    field("formant", 5);
+    field("doubleOn", 0);
+    field("formantOn", 0);
+    field("fx1Mix", 0);
+    const auto load = [&] {
+        juce::MemoryBlock state;
+        juce::AudioProcessor::copyXmlToBinary(*legacy.createXml(), state);
+        owner->setStateInformation(state.getData(), int(state.getSize()));
+        check(owner->getRoutingError().isEmpty(), "legacy routing recall failed");
+        owner->prepareToPlay(48000, 137);
+    };
+    const auto valueAt = [&](int index, const char* id) {
+        auto* p = dynamic_cast<juce::RangedAudioParameter*>(owner->getParameters()[index]);
+        check(p && p->paramID == id && owner->parameters.getParameter(id) == p, "released latency parameter index or ID moved");
+        return p->convertFrom0to1(p->getValue());
+    };
+    load(); // With no fx1On field, the legacy node's disabled flag supplies it.
+    check(valueAt(94, "fx1On") == 0 && valueAt(95, "fx1Mix") == 0, "legacy Morph slot fallback or Wet recall failed");
+    check(std::abs(valueAt(1, "double") - 61) < .001f && std::abs(valueAt(4, "formant") - 5) < .001f
+        && valueAt(5, "levelOn") == 1 && valueAt(6, "doubleOn") == 0 && valueAt(7, "formantOn") == 0
+        && valueAt(883, "leadPitch") == 0, "legacy vocal controls or missing parameter defaults failed");
+    check(owner->getLatencySamples() == 0, "legacy disabled graph-only Morph reserved latency");
+
+    owner->releaseResources();
+    field("fx1On", 1); // Explicit host state must win over the same disabled graph node.
+    load();
+    const auto recalled = owner->getRoutingGraph();
+    const auto* morph = mainBusFx::find(recalled, 100);
+    check(morph && morph->type == NodeType::spectralMorph && valueAt(94, "fx1On") == 1,
+          "legacy recall changed Morph identity or overwrote explicit host enable");
+    check(owner->getLatencySamples() == 4096, "stale legacy graph disabled flag overrode fx1On");
 }
 
 void spectralContract() {
@@ -351,10 +488,14 @@ int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI juce;
     try {
         if (argc == 2 && juce::String(argv[1]) == "--workflow-check") {
-            activationLatencyPolicy(); spectralContract(); workflowUiTests::run();
+            activationLatencyPolicy(); delayOnlyAndVocalLatency(); morphAutomationLatency(); legacyLatencyStateRecall();
+            spectralContract(); workflowUiTests::run();
             check(!allocations && !destructions, "workflow callback allocated/reclaimed");
             std::cout << "Sidechain activation and wet-pocket workflow checks passed\n"; return 0;
         }
-        busMatrix(); monoAuditionAndGateBridge(); activationLatencyPolicy(); spectralContract(); check(!allocations && !destructions, "processor callback allocated/reclaimed"); std::cout << "Sidechain JUCE processor bus/state tests passed\n"; return 0; }
+        busMatrix(); monoAuditionAndGateBridge(); activationLatencyPolicy(); delayOnlyAndVocalLatency();
+        morphAutomationLatency(); legacyLatencyStateRecall(); spectralContract();
+        check(!allocations && !destructions, "processor callback allocated/reclaimed");
+        std::cout << "Sidechain JUCE processor bus/state tests passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

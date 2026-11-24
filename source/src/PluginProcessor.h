@@ -405,6 +405,16 @@ private:
     void render(juce::AudioBuffer<float>&, juce::MidiBuffer&, bool hostBypass);
     Settings settingsFromValues(const std::array<float, parameterIds.size()>&) const;
     Graph qualitySnapshot(Graph) const;
+    Graph processingGraph(Graph, const Graph* previous = nullptr) const;
+    struct ProcessingRequirements {
+        int rackLatency = 0;
+        uint16_t latencyEffects = 0;
+        uint8_t connectedVoices = 0, independentVoices = 0;
+        bool vocalLatency = false;
+    };
+    ProcessingRequirements processingRequirements(const Graph&) const;
+    bool latencyDiffers(const ProcessingRequirements&) const noexcept;
+    RoutingValidation applyProcessingGraph(const Graph&, const ProcessingRequirements&);
     void updateModulationValues();
     void timerCallback() override;
     friend class RoutingPanel;
@@ -468,7 +478,7 @@ private:
     SpectralMorphBridge spectralBridge;
     VocalEngine engine;
     std::atomic<int> sidechainChannels{0};
-    int preparedRoutingLatency = 0;
+    ProcessingRequirements activeRequirements;
     bool restartPending = false;
     bool prepared = false;
 };

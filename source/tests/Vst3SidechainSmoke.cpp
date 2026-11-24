@@ -129,7 +129,7 @@ struct Stream final : IBStream {
     tresult PLUGIN_API tell(int64* position) override { if(!position) return kInvalidArgument; *position=cursor; return kResultOk; }
 };
 Stream state(int variant) {
-    std::string xml = "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/><PARAM id=\"doubleOn\" value=\"0\"/>"
+    std::string xml = "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/><PARAM id=\"doubleOn\" value=\"0\"/><PARAM id=\"formantOn\" value=\"0\"/>"
         "<PARAM id=\"bypass\" value=\"" + std::string(variant==1 ? "1" : "0") + "\"/>"
         "<PARAM id=\"globalMix\" value=\"" + std::string(variant==2 ? "0" : "100") + "\"/>"
         "<PARAM id=\"fx1Mix\" value=\"100\"/><PARAM id=\"fx1On\" value=\"1\"/>"
@@ -138,7 +138,7 @@ Stream state(int variant) {
         "<Node id=\"100\" type=\"23\" mix=\"1\"/><Node id=\"13\" type=\"5\"/>"
         "<Link source=\"1\" destination=\"100\" inputPin=\"0\"/><Link source=\"14\" destination=\"100\" inputPin=\"1\"/>"
         "<Link source=\"100\" destination=\"13\" inputPin=\"0\"/></RoutingGraph></VocalStack>";
-    if (variant == 3) xml = "<VocalStack/>";
+    if (variant == 3) xml = "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/><PARAM id=\"doubleOn\" value=\"0\"/><PARAM id=\"formantOn\" value=\"0\"/></VocalStack>";
     Stream result; result.bytes.resize(xml.size()+9);
     const uint32 magic=0x21324356, length=uint32(xml.size());
     std::memcpy(result.bytes.data(),&magic,4); std::memcpy(result.bytes.data()+4,&length,4);
@@ -160,12 +160,11 @@ void render(IPluginFactory& factory, const TUID cid, double rate, int mainChanne
     check(component->activateBus(kAudio,kInput,1,auxChannels!=0)==kResultOk,"VST3 auxiliary activation failed");
     ProcessSetup setup{}; setup.processMode=kOffline; setup.symbolicSampleSize=kSample32; setup.maxSamplesPerBlock=512; setup.sampleRate=rate;
     check(processor->setupProcessing(setup)==kResultOk && component->setActive(true)==kResultOk,"VST3 baseline prepare failed");
-    const uint32 baseline = rate == 96000. ? 2688u : 1344u;
-    check(processor->getLatencySamples() == baseline, "VST3 no-Morph baseline retained the reserve");
+    check(processor->getLatencySamples() == 0u, "VST3 fresh instance should report zero latency");
     auto preset=state(variant); check(component->setState(&preset)==kResultOk,"VST3 component state load failed");
-    check(processor->getLatencySamples() == baseline, "VST3 active state changed host compensation early");
+    check(processor->getLatencySamples() == 0u, "VST3 active state changed host compensation early");
     check(component->setActive(false)==kResultOk && component->setActive(true)==kResultOk,"VST3 Morph reactivation failed");
-    const auto latency=processor->getLatencySamples(); check(latency==baseline+4096,"VST3 reported Morph latency invalid");
+    const auto latency=processor->getLatencySamples(); check(latency == 4096u, "VST3 Morph-only activation should report 4096 samples");
     check(processor->setProcessing(true)==kResultOk,"VST3 processing activation failed");
     constexpr int maximum=512;
     std::array<std::array<float,maximum>,2> main{},aux{},out{};
@@ -234,10 +233,11 @@ void render(IPluginFactory& factory, const TUID cid, double rate, int mainChanne
     Stream saved; check(component->getState(&saved)==kResultOk && saved.bytes.size()>8,"VST3 state save failed");
     saved.cursor=0; check(component->setState(&saved)==kResultOk,"VST3 state recall failed");
     check(component->setActive(true)==kResultOk, "VST3 recalled Morph activation failed");
+    check(processor->getLatencySamples() == latency, "VST3 state recall changed Morph latency");
     auto noMorph = state(3); check(component->setState(&noMorph)==kResultOk, "VST3 active Morph removal failed");
     check(processor->getLatencySamples()==latency, "VST3 removal changed compensation while active");
     check(component->setActive(false)==kResultOk && component->setActive(true)==kResultOk, "VST3 no-Morph reactivation failed");
-    check(processor->getLatencySamples()==baseline, "VST3 no-Morph activation retained the penalty");
+    check(processor->getLatencySamples() == 0u, "VST3 default graph reactivation should restore zero latency");
     component->setActive(false);
     saved.cursor=0; check(component->setState(&saved)==kResultOk,"VST3 lifecycle Morph restore failed");
     if (rate == 48000 && mainChannels == 1 && outputChannels == 2 && auxChannels == 2 && variant == 0) {
@@ -252,7 +252,7 @@ void render(IPluginFactory& factory, const TUID cid, double rate, int mainChanne
             check(processor->setupProcessing(setup)==kResultOk && component->setActive(true)==kResultOk
                 && processor->setProcessing(true)==kResultOk,"VST3 rate-change reprepare failed");
             const uint32 reconfiguredLatency = processor->getLatencySamples();
-            check(reconfiguredLatency == (phase == 0 ? 6784u : 5440u),"VST3 reprepare did not report source-plus-reserve latency");
+            check(reconfiguredLatency == latency, "VST3 reprepare changed Morph-only latency");
             in[1].numChannels=auxiliary;
             main[0].fill(.1f); main[1].fill(.1f); aux[0].fill(-.04f); aux[1].fill(.07f);
             data.numSamples=137;

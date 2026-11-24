@@ -6,6 +6,7 @@
 #include "HarmonyShifter.h"
 #include <signalsmith-stretch/signalsmith-stretch.h>
 #include <array>
+
 #include <cstdint>
 #include <vector>
 
@@ -55,12 +56,18 @@ public:
     static constexpr int defaultLatency = 1344;
     // Quiescent audio required. prepare installs defaultGraph(); restore a saved
     // graph with requestGraph AFTER prepare. reset preserves the active graph.
-    void prepare(double sampleRate, int inputChannels, int outputChannels, const Settings&, int routingLatencyReserve = 0);
+    // With no vocal budget, spectral Lead and all generated voices stay bypassed
+    // until reprepare. A set bit in independentVoices keeps that enabled slot
+    // eligible even at main Mix zero (use a conservative union across graph edits).
+    void prepare(double sampleRate, int inputChannels, int outputChannels, const Settings&,
+                 int routingLatencyReserve = 0, bool needsVocalLatency = true,
+                 std::uint8_t independentVoices = 0xff);
     void reset(const Settings&);
     void process(const float* const* input, float* const* output, int count,
                  const Settings&, bool hostBypass = false,
                                   const float* const* auxiliary = nullptr, int auxiliaryChannels = 0);
-    int latency() const noexcept { return latencySamples + routingReserve; }
+    int vocalLatency() const noexcept { return latencySamples; }
+    int latency() const noexcept { return vocalLatency() + routingReserve; }
     // Active routing plan's longest connected tail, plus source delay/latency.
     // Queued graph edits update the routing bound when audio installs them.
     // Tone EQ/LR4 phase and ADAA phase are not integer sample latency.
@@ -71,6 +78,9 @@ public:
     void resetMeters() noexcept;
     // Off audio, one serialized control caller. prepare must have completed.
     RoutingValidation requestGraph(const Graph& graph) { return routing.requestGraph(graph); }
+    RoutingValidation requestGraph(const Graph& graph, std::uint8_t connected, std::uint8_t independent) {
+        return routing.requestGraph(graph, unsigned(connected) | (unsigned(independent) << 8));
+    }
     void collectRetiredGraphs() { routing.collectRetired(); }
     // Optional non-owning bridge; caller owns lifetime, audio must be quiescent.
     void setFxMonitor(FxMonitor* monitor) noexcept { routing.setFxMonitor(monitor); }
@@ -117,10 +127,10 @@ private:
         float time = 0, pitch = 0, tone = 0, remaining = 0;
         VoiceSettings controls{};
         float amplitude = 0, presence = 0, delaySamples = 0;
-        float appliedPitch = 0, appliedDetune = 0, appliedFormant = 0, measuredEnergy = 0;
+        float finePitch = 0, appliedPitch = 0, appliedDetune = 0, appliedFormant = 0, measuredEnergy = 0;
         bool running = false, harmonyRunning = false;
         float harmonyBlend = 0;
-        int harmonyWarmup = 0;
+        int harmonyWarmup = 0, wakeRemaining = 0;
     };
 
     struct Motion {
@@ -130,7 +140,9 @@ private:
     };
 
     void updateControls(const Settings&, bool hostBypass);
+    void resetLeveler() noexcept;
     float leveler(float power);
+    bool voiceRequested(size_t index, const VoiceSettings&, bool mainMixActive) const noexcept;
     float consonantWeight(float sample);
     float matchedGain(LevelMatch&, float referencePower, float renderedPower);
     void processChunk(const float* const* input, float* const* output, int offset, int count,
@@ -146,15 +158,17 @@ private:
     float lowPassStep = 0, edgeStep = 0, bodyStep = 0, articulationStep = 0;
     float rms = 0, activity = 0, gainDb = 0, gain = 1;
     float lowPass = 0, edgeEnergy = 0, bodyEnergy = 0, articulation = 1;
-    bool active = false;
+    bool active = false, levelerRunning = false, articulationRunning = false;
+    unsigned routedVoices = 0xffffu, defaultRoutedVoices = 0xffffu;
     LevelMatch leadMatch;
     Stretch lead{421};
     Voice leadMotion{613};
     std::array<HarmonyShifter, 2> leadHarmony;
     std::array<DelayLine, 2> leadLocalDelay;
     float leadPitchBlend = 0, leadLocalBlend = 0, globalMix = 1;
-    bool leadHarmonyRunning = false;
-    int leadHarmonyWarmup = 0;
+    bool leadSpectralRunning = false, leadHarmonyRunning = false, leadIndependentFormant = false;
+    float leadWakeBlend = 0;
+    int leadWakeRemaining = 0, leadHarmonyWarmup = 0;
     std::array<Voice, 8> voices{Voice{1471}, Voice{5417}, Voice{7919}, Voice{104729},
                               Voice{130363}, Voice{155921}, Voice{196613}, Voice{262147}};
     RoutingExecutor routing;

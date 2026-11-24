@@ -43,6 +43,10 @@ inline constexpr EffectInputDeclaration routingInput(NodeType type, int pin) noe
     return type == NodeType::mix ? EffectInputDeclaration{pin == 0 ? "DRY" : "WET", false}
                                  : EffectInputDeclaration{"MAIN", false};
 }
+// Mandatory whole-sample DSP delay only, not creative timing or filter phase.
+inline constexpr int routingDeclaredLatency(NodeType type) noexcept {
+    return type == NodeType::spectralMorph ? SpectralMorph::latencySamples : 0;
+}
 inline constexpr bool isCreativeEffect(NodeType type) noexcept {
     return (type >= NodeType::delay && type <= NodeType::granular)
         || type == NodeType::convolution || type == NodeType::saturator || type == NodeType::vocalGlitch;
@@ -182,12 +186,11 @@ struct RoutingControls {
 //
 // Bounded executor chosen instead of AudioProcessorGraph: no JUCE dependency,
 // explicit mixer/pin semantics, and a raw-pointer audio handoff with off-thread
-// reclamation. Spectral Morph contributes a fixed 4096-sample integer delay.
-// Prepared per-wire delays align every dependency (including auxiliary pins),
-// and the output is padded to the caller-provided fixed reserve. Paths exceeding
-// that reserve are rejected, including serial Morph. Donor provenance never
-// contributes to the audible MAIN lineage. EQ/LR4 and ADAA/IIR phase are not
-// estimated or removed by this integer-delay compensation.
+// reclamation. Prepared per-wire delays align contributing inputs, and the
+// output is padded to the caller-provided fixed reserve. A prepared-disabled
+// latency-bearing machine is a true MAIN bypass; its auxiliary pins are absent
+// from the plan. Donor provenance never contributes to the audible MAIN lineage.
+// EQ/LR4 and ADAA/IIR phase are not removed by integer-delay compensation.
 //
 // Thread contract: prepare/reset/destruction require audio quiescence AND
 // serialization with all control calls. requestGraph
@@ -278,36 +281,36 @@ public:
         updateTail(*active, RoutingControls{});
         reset();
     }
-    RoutingValidation requestGraph(const Graph& g) {
+    RoutingValidation requestGraph(const Graph& g, unsigned routedVoices = 0x10000u) {
         std::array<int, maxNodes> order{};
         auto result = orderGraph(g, order);
         if (!result) return result;
         if (!(rate > 0)) return {false, "prepare must precede requestGraph"};
-        if (graphLatency(g) > reserve) return {false, "Routing exceeds the prepared latency reserve; serial Spectral Morph is unsupported"};
+        const auto latency = measureLatency(g, order, false);
+        if (latency.output > reserve) return {false, "Routing exceeds the prepared latency reserve"};
         collectRetired();
         auto plan = std::make_unique<Plan>();
         plan->count = int(g.nodes.size());
+        plan->routedVoices = routedVoices;
         std::array<int, maxNodes> remap{};
 
         for (int i = 0; i < plan->count; ++i) remap[order[i]] = i;
         for (int i = 0; i < plan->count; ++i) {
             auto& step = plan->steps[i];
-            step.node = g.nodes[order[i]];
-            for (const auto& link : g.links) if (link.destination == step.node.id) {
+            const int index = order[i];
+            step.node = g.nodes[index];
+            const int declared = routingDeclaredLatency(step.node.type);
+            const int arrival = latency.paths[index] - preparedLatency(step.node);
+            for (const auto& link : g.links) if (link.destination == step.node.id && usesInput(step.node, link.inputPin)) {
                 const int source = find(g, link.source);
-                step.inputs[step.inputCount] = remap[source];
-                step.sourcePins[step.inputCount] = link.sourcePin;
-                step.inputPins[step.inputCount++] = link.inputPin;
+                const int wire = step.inputCount++;
+                step.inputs[wire] = remap[source];
+                step.sourcePins[wire] = link.sourcePin;
+                step.inputPins[wire] = link.inputPin;
+                step.delays[wire].data.resize(size_t(arrival - latency.paths[source]));
+                step.donorWired |= routingInput(step.node.type, link.inputPin).auxiliary;
             }
-            int arrival = 0;
-            for (int wire = 0; wire < step.inputCount; ++wire)
-                arrival = std::max(arrival, plan->steps[step.inputs[wire]].pathLatency);
-            step.pathLatency = arrival + (step.node.type == NodeType::spectralMorph ? SpectralMorph::latencySamples : 0);
-            for (int wire = 0; wire < step.inputCount; ++wire) {
-                step.delays[wire].data.resize(size_t(arrival - plan->steps[step.inputs[wire]].pathLatency));
-                step.donorWired |= routingInput(step.node.type, step.inputPins[wire]).auxiliary;
-            }
-            if (isEffect(step.node.type)) {
+            if (isEffect(step.node.type) && (declared == 0 || step.node.enabled)) {
                 auto& weak = machines[step.node.id];
                 step.fx = weak.lock();
                 if (!step.fx || step.fx->type != step.node.type) {
@@ -318,7 +321,6 @@ public:
                 }
             }
 
-            plan->hasCrossover |= step.node.type == NodeType::crossover;
             if (step.node.type == NodeType::output) plan->output = i;
         }
 
@@ -326,7 +328,15 @@ public:
             for (int parent = 0; parent < plan->count; ++parent)
                 if (plan->steps[parent].node.id == plan->steps[child].node.wetOwner)
                     plan->steps[parent].wetInsert = child;
-        plan->outputDelay.data.resize(size_t(reserve - plan->steps[plan->output].pathLatency));
+        plan->steps[plan->output].connected = true;
+        for (int index = plan->output; index >= 0; --index) {
+            auto& step = plan->steps[index];
+            if (!step.connected) continue;
+            plan->hasCrossover |= step.node.type == NodeType::crossover;
+            for (int wire = 0; wire < step.inputCount; ++wire)
+                plan->steps[step.inputs[wire]].connected = true;
+        }
+        plan->outputDelay.data.resize(size_t(reserve - latency.output));
         plan->revision = grainRevision.fetch_add(1, std::memory_order_acq_rel) + 1;
         delete pending.exchange(plan.release(), std::memory_order_acq_rel);
         // Do not accumulate expired machine identities after repeated editing.
@@ -335,7 +345,10 @@ public:
             // Retired/active plans may still own deleted effects. Only ID/type
             // survivors may reuse history, even when pending edits coalesce.
             const int index = find(g, it->first);
-            if (!machine || index < 0 || g.nodes[size_t(index)].type != machine->type)
+            // A true latency bypass stops the timeline. Start fresh on the
+            // next activation rather than replaying pre-bypass FFT/delay data.
+            if (!machine || index < 0 || g.nodes[size_t(index)].type != machine->type
+                || (routingDeclaredLatency(machine->type) != 0 && !g.nodes[size_t(index)].enabled))
                 it = machines.erase(it);
             else ++it;
         }
@@ -386,7 +399,7 @@ public:
         glitchOffset = 0;
         ++glitchStamp;
     }
-    StereoSample process(const RoutingSources& sources, const RoutingControls& controls) noexcept {
+    unsigned beginSpan(unsigned fallbackVoices = 0xffffu) noexcept {
         const auto write = retireWrite.load(std::memory_order_relaxed);
         // SPSC retirement queue: bounded work, no audio CAS retry loop. If the
         // control thread stops collecting, retain the current plan safely.
@@ -403,6 +416,10 @@ public:
                 transition = rendered ? transitionLength : 0;
             }
         }
+        return active && active->routedVoices != 0x10000u ? active->routedVoices : fallbackVoices;
+    }
+    StereoSample process(const RoutingSources& sources, const RoutingControls& controls, bool begin = true) noexcept {
+        if (begin) beginSpan();
         if (!active) return {};
         if (tailSamplesUntilUpdate == 0) {
             updateTail(*active, controls);
@@ -424,6 +441,7 @@ private:
         constexpr size_t lineageStride = std::tuple_size<decltype(Value{}.lineage)>::value / 10;
         for (int i = 0; i < active->count; ++i) {
             auto& step = active->steps[i];
+            if (!step.connected) continue;
             auto& ports = values[i];
             // Only crossover needs to clear every port (bypassed/unused bands).
             // Splitter overwrites both outputs with complete routed values.
@@ -552,7 +570,9 @@ private:
                     fx = slot == 0 ? FxSettings{controls.choraleOn, controls.choraleMix, controls.choraleMotion}
                                    : controls.fxSettings[slot];
                 }
-                step.fx->chorale.process(value.audio.left, value.audio.right, fx.enabled, fx.mix, fx.motion);
+                const auto target = fx.enabled ? unit(fx.mix, 0.f) : 0.f;
+                if (step.fx->clockBypass(fx.enabled, target, 1.e-6))
+                    step.fx->chorale.process(value.audio.left, value.audio.right, fx.enabled, fx.mix, fx.motion);
                 break;
             }
             case NodeType::waveshaper: {
@@ -560,7 +580,9 @@ private:
                 if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
                 auto settings = fx.waveshaper; settings.enabled = settings.enabled && fx.enabled;
-                step.fx->waveshaper.process(value.audio.left, value.audio.right, settings);
+                const auto target = settings.enabled ? unit(settings.mix, 1.f) : 0.f;
+                if (step.fx->clockBypass(settings.enabled, target, 1.e-9, true))
+                    step.fx->waveshaper.process(value.audio.left, value.audio.right, settings);
                 break;
             }
             case NodeType::equalizer: {
@@ -568,7 +590,8 @@ private:
                 if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
                 auto settings = fx.eq; settings.enabled = settings.enabled && fx.enabled;
-                step.fx->eq.process(value.audio.left, value.audio.right, settings);
+                if (step.fx->clockBypass(settings.enabled, settings.enabled ? 1. : 0., 1.e-8, true))
+                    step.fx->eq.process(value.audio.left, value.audio.right, settings);
                 break;
             }
             case NodeType::crossover: {
@@ -576,11 +599,10 @@ private:
                 if (monitoring) monitorInput = in.audio;
                 const auto fx = effectSettings(n, controls);
                 monitorBands = fx.enabled ? (fx.bandCount == 2 ? 2 : 3) : 1;
-                // Disabled crossover is full-band on port zero; other ports silent.
-                // Keep all filter histories warm even while bypassed.
+                // Crossover bypass has no fade: full-band on port zero, other ports silent.
+                if (!fx.enabled) { value = in; break; }
                 const auto bands = step.fx->crossover.process(in.audio.left, in.audio.right,
                     fx.bandCount, fx.crossoverLow, fx.crossoverHigh);
-                if (!fx.enabled) { value = in; break; }
                 const double lo = Multiband::cutoff(fx.crossoverLow, rate, 250);
                 const double hi = std::max(lo, Multiband::cutoff(fx.crossoverHigh, rate, 4000));
                 for (int port = 0; port < 3; ++port) {
@@ -601,17 +623,22 @@ private:
                 value = input(0);
                 if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
+                const float m = updateWetMix(step, fx.enabled ? unit(fx.mix, .25f) : 0.f,
+                    !fx.enabled || n.type == NodeType::convolution || n.type == NodeType::saturator);
+                if (!fx.enabled && m == 0.f) {
+                    if (fxMonitor && monitorSlot >= 0) fxMonitor->setGainReduction(size_t(monitorSlot), 0.f);
+                    break;
+                }
                 auto wet = step.fx->creative.process(value.audio.left, value.audio.right, fx.creative, controls.tempoBpm);
                 if (step.wetInsert >= 0) {
                     auto& insert = active->steps[step.wetInsert];
                     const auto settings = effectSettings(insert.node, controls);
-                    const auto processed = insert.fx->creative.process(wet[0], wet[1], settings.creative, controls.tempoBpm);
-                    const float targetMix = settings.enabled ? unit(settings.mix, 1.f) : 0.f;
-                    if (!insert.mixInitialized) { insert.smoothedMix = targetMix; insert.mixInitialized = true; }
-                    else insert.smoothedMix += mixSmoothing * (targetMix - insert.smoothedMix);
+                    const float pocketMix = updateWetMix(insert, settings.enabled ? unit(settings.mix, 1.f) : 0.f, !settings.enabled);
                     const StereoSample pocketInput{wet[0], wet[1]};
-                    wet = {blend(wet[0], processed[0], float(insert.smoothedMix)),
-                           blend(wet[1], processed[1], float(insert.smoothedMix))};
+                    if (settings.enabled || pocketMix != 0.f) {
+                        const auto processed = insert.fx->creative.process(wet[0], wet[1], settings.creative, controls.tempoBpm);
+                        wet = {blend(wet[0], processed[0], pocketMix), blend(wet[1], processed[1], pocketMix)};
+                    }
                     const int slot = routingFxSlot(insert.node.id);
                     if (fxMonitor && slot >= 0 && fxMonitor->capturing(size_t(slot)))
                         fxMonitor->capture(size_t(slot), insert.node.id, pocketInput.left, pocketInput.right,
@@ -623,12 +650,6 @@ private:
                     monitorHasWet = controls.monitorWetEnabled && fx.enabled && fx.mix > 0;
                     if (monitorHasWet) monitorWet = {wet[0], wet[1]};
                 }
-                const float target = fx.enabled ? unit(fx.mix, .25f) : 0.f;
-                if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
-                else step.smoothedMix += mixSmoothing * (target - step.smoothedMix);
-                if ((n.type == NodeType::convolution || n.type == NodeType::saturator)
-                    && std::abs(step.smoothedMix - target) < 1.e-7) step.smoothedMix = target;
-                const float m = float(step.smoothedMix);
                 value.audio = {blend(value.audio.left, wet[0], m), blend(value.audio.right, wet[1], m)};
                 if (fxMonitor && monitorSlot >= 0)
                     fxMonitor->setGainReduction(size_t(monitorSlot), fx.enabled && controls.monitorWetEnabled ? step.fx->creative.gainReductionDb() : 0.f);
@@ -641,10 +662,13 @@ private:
                 const auto fx = effectSettings(n, controls);
                 auto& glitch = *step.fx->glitch;
                 const bool enabled = fx.enabled && controls.monitorWetEnabled;
+                const float m = updateWetMix(step, enabled ? unit(fx.mix, .25f) : 0.f, true);
+                if (!fx.enabled && m == 0.f) { step.glitchStamp = 0; break; }
                 if (step.glitchStamp != glitchStamp) {
+                    const bool waking = step.glitchStamp == 0;
                     step.glitchStamp = glitchStamp;
                     const double ppq = glitchOffset == 0 ? glitchPpq : glitchPpq + glitchOffset * glitchBpm / (60.0 * rate);
-                    glitch.setClock(ppq, glitchBpm, glitchPlaying, glitchDiscontinuity || !enabled);
+                    glitch.setClock(ppq, glitchBpm, glitchPlaying, glitchDiscontinuity || !enabled || waking);
                 }
                 const auto choice = [&](P p) {
                     const auto v = fx.creative[p];
@@ -661,24 +685,25 @@ private:
                         if (bits & 2u) glitch.fire();
                     }
                 }
-                const float target = enabled ? unit(fx.mix, .25f) : 0.f;
-                if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
-                else step.smoothedMix += mixSmoothing * (target - step.smoothedMix);
-                if (std::abs(step.smoothedMix - target) < 1.e-7) step.smoothedMix = target;
                 StereoSample wet;
                 glitch.process(value.audio.left, value.audio.right, wet.left, wet.right);
-                const float m = float(step.smoothedMix);
                 value.audio = {blend(value.audio.left, wet.left, m), blend(value.audio.right, wet.right, m)};
                 break;
             }
             case NodeType::spectralMorph: {
                 value = input(0); // Only MAIN contributes audible provenance.
+                if (!n.enabled) break; // Prepared bypass wins over live automation.
                 const auto donor = input(1);
                 const auto fx = effectSettings(n, controls);
                 auto settings = fx.spectralMorph; settings.enabled = fx.enabled; settings.mix = fx.mix;
+                const auto dry = step.fx->alignedDry.process({
+                    std::isfinite(value.audio.left) ? value.audio.left : 0.f,
+                    std::isfinite(value.audio.right) ? value.audio.right : 0.f});
                 const auto wet = step.fx->spectral->process({value.audio.left, value.audio.right},
                     {donor.audio.left, donor.audio.right}, step.donorWired && donor.available, settings);
-                value.audio = {wet[0], wet[1]};
+                // While the host still owns this activation's latency, bypass
+                // to aligned dry without losing the current FFT history.
+                value.audio = fx.enabled ? StereoSample{wet[0], wet[1]} : dry;
                 break;
             }
             case NodeType::gain: case NodeType::stereo: case NodeType::gate:
@@ -686,21 +711,18 @@ private:
                 value = input(0);
                 if (monitoring) monitorInput = value.audio;
                 const auto fx = effectSettings(n, controls);
-                // Clock the wet machine even while dry so bypass preserves history.
-                const auto wet = step.fx->utility.process(value.audio.left, value.audio.right, fx.utility);
+                const float m = updateWetMix(step, fx.enabled ? unit(fx.mix, 1.f) : 0.f, true);
+                if (fx.enabled || m != 0.f) {
+                    const auto wet = step.fx->utility.process(value.audio.left, value.audio.right, fx.utility);
+                    value.audio = {blend(value.audio.left, wet[0], m), blend(value.audio.right, wet[1], m)};
+                }
                 if (monitoring && n.type == NodeType::gate) {
                     monitorHasUtilityDynamics = true;
                     monitorDynamics = step.fx->utility.dynamicsSnapshot();
                     if (!fx.enabled || fx.mix <= 0 || !controls.monitorWetEnabled) monitorDynamics.gainReductionDb = 0;
                     monitorHasGainReduction = fx.enabled && controls.monitorWetEnabled;
                 }
-                const float target = fx.enabled ? unit(fx.mix, 1.f) : 0.f;
-                if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
-                else step.smoothedMix += mixSmoothing * (target - step.smoothedMix);
-                if (std::abs(step.smoothedMix - target) < 1.e-7) step.smoothedMix = target;
-                const float m = float(step.smoothedMix);
-                value.audio = {blend(value.audio.left, wet[0], m), blend(value.audio.right, wet[1], m)};
-                if (n.type == NodeType::stereo) {
+                if (n.type == NodeType::stereo && step.fx->clockBypass(fx.enabled, fx.enabled && fx.monoAudition ? 1. : 0., 1.e-7)) {
                     const auto audition = step.fx->utility.applyMonoAudition({value.audio.left, value.audio.right}, fx.enabled && fx.monoAudition);
                     // Slot bypass already fades Mix; release audition smoothly
                     // with it. Full/global bypass selects aligned dry in the engine.
@@ -752,24 +774,62 @@ private:
     template <int Regions>
     struct RoutedValue { bool available = false; StereoSample audio; std::array<float, 10 * Regions> lineage{}; };
     using Value = RoutedValue<regionCount>;
+    struct SignalDelay {
+        std::vector<StereoSample> data; size_t next = 0;
+        StereoSample process(StereoSample in) noexcept {
+            if (data.empty()) return in;
+            const auto out = data[next]; data[next] = in; next = (next + 1) % data.size(); return out;
+        }
+        void reset() noexcept { std::fill(data.begin(), data.end(), StereoSample{}); next = 0; }
+    };
     struct Machine {
         uint64_t grainGeneration = 0;
         explicit Machine(NodeType t) : type(t) {}
+        // Track the bypass envelopes owned by DSP classes that don't expose
+        // their settled state. EQ/Shaper receive an initial tick so a machine
+        // starting bypassed still fades in on enable.
+        bool clockBypass(bool enabled, double target, double epsilon, bool adoptFirst = false) noexcept {
+            if (!bypassInitialized && adoptFirst) {
+                bypassInitialized = true;
+                bypassBlend = target;
+                return true;
+            }
+            const bool run = enabled || bypassBlend != 0.;
+            bypassBlend += bypassStep * (target - bypassBlend);
+            if (std::abs(bypassBlend - target) < epsilon) bypassBlend = target;
+            return run;
+        }
         void prepare(double sr) {
+            if (type == NodeType::chorale || type == NodeType::equalizer || type == NodeType::waveshaper) {
+                const double smoothRate = type == NodeType::chorale || (sr >= 8000 && sr <= 768000) ? sr : 48000;
+                bypassStep = -std::expm1(-1.0 / (smoothRate * (type == NodeType::waveshaper ? .010 : .025)));
+            } else if (type == NodeType::stereo) {
+                bypassStep = 1. - std::exp(-1. / (.01 * utility_detail::rate(sr)));
+            }
             switch (type) {
             case NodeType::chorale: chorale.prepare(sr); break;
             case NodeType::waveshaper: waveshaper.prepare(sr); break;
             case NodeType::equalizer: eq.prepare(sr); break;
             case NodeType::crossover: crossover.prepare(sr); break;
             case NodeType::vocalGlitch: glitch = std::make_unique<VocalGlitch>(); glitch->prepare(sr); break;
-            case NodeType::spectralMorph: spectral = std::make_unique<SpectralMorph>(); spectral->prepare(sr); break;
+            case NodeType::spectralMorph:
+                spectral = std::make_unique<SpectralMorph>(); spectral->prepare(sr);
+                alignedDry.data.resize(size_t(routingDeclaredLatency(type)));
+                break;
             default:
                 if (isCreativeEffect(type)) creative.prepare(sr, creativeKind(type));
                 else if (isUtilityEffect(type)) utility.prepare(sr, utilityKind(type));
                 break;
             }
         }
-        void reset() { chorale.reset(); waveshaper.reset(); eq.reset(); crossover.reset(); creative.reset(); utility.reset(); if (spectral) spectral->reset(); if (glitch) glitch->reset(); }
+        void reset() {
+            bypassInitialized = false; bypassBlend = 0.;
+            chorale.reset(); waveshaper.reset(); eq.reset(); crossover.reset(); creative.reset(); utility.reset();
+            if (spectral) { spectral->reset(); alignedDry.reset(); }
+            if (glitch) glitch->reset();
+        }
+        double bypassBlend = 0., bypassStep = 0.;
+        bool bypassInitialized = false;
         NodeType type;
         Chorale chorale;
         Waveshaper waveshaper;
@@ -778,6 +838,7 @@ private:
         CreativeEffect creative;
         UtilityEffect utility;
         std::unique_ptr<SpectralMorph> spectral;
+        SignalDelay alignedDry;
         std::unique_ptr<VocalGlitch> glitch;
     };
     static constexpr double moduleTailSeconds(NodeType type) noexcept {
@@ -801,20 +862,12 @@ private:
         return t == NodeType::chorale || t == NodeType::waveshaper
             || t == NodeType::equalizer || t == NodeType::crossover || isCreativeEffect(t) || isUtilityEffect(t) || t == NodeType::spectralMorph;
     }
-    struct SignalDelay {
-        std::vector<StereoSample> data; size_t next = 0;
-        StereoSample process(StereoSample in) noexcept {
-            if (data.empty()) return in;
-            const auto out = data[next]; data[next] = in; next = (next + 1) % data.size(); return out;
-        }
-        void reset() noexcept { std::fill(data.begin(), data.end(), StereoSample{}); next = 0; }
-    };
     struct Step {
         RoutingNode node;
         std::array<int, maxLinks> inputs{}, inputPins{}, sourcePins{};
         std::array<SignalDelay, maxLinks> delays;
         std::array<StereoSample, maxLinks> wireAudio{};
-        int pathLatency = 0; bool donorWired = false;
+        bool donorWired = false, connected = false;
         int wetInsert = -1;
         int inputCount = 0;
         double smoothedMix = 0;
@@ -822,9 +875,16 @@ private:
         uint64_t glitchStamp = 0;
         std::shared_ptr<Machine> fx;
     };
+    float updateWetMix(Step& step, float target, bool snap) const noexcept {
+        if (!step.mixInitialized) { step.smoothedMix = target; step.mixInitialized = true; }
+        else step.smoothedMix += mixSmoothing * (target - step.smoothedMix);
+        if (snap && std::abs(step.smoothedMix - target) < 1.e-7) step.smoothedMix = target;
+        return float(step.smoothedMix);
+    }
     struct Plan {
         SignalDelay outputDelay;
         uint64_t revision = 0;
+        unsigned routedVoices = 0x10000u;
         std::array<Step, maxNodes> steps;
         std::array<std::array<Value, 3>, maxNodes> values{};
         // Full-band graphs need ten source weights, not all 33 frequency regions.
@@ -1042,27 +1102,46 @@ private:
             done[next] = true; order[used++] = next;
             for (const auto& l : g.links) if (l.source == g.nodes[next].id) --degree[find(g, l.destination)];
         }
-        if (graphLatencyOrdered(g, order) > SpectralMorph::latencySamples)
+        if (measureLatency(g, order, true).maximum > SpectralMorph::latencySamples)
             return {false, "Serial Spectral Morph exceeds the fixed 4096-sample graph budget"};
         return {true, {}};
     }
-    static int graphLatencyOrdered(const Graph& g, const std::array<int, maxNodes>& order) {
-        std::array<int, maxNodes> latency{}; int maximum = 0;
+    static int preparedLatency(const RoutingNode& node) noexcept {
+        return node.enabled ? routingDeclaredLatency(node.type) : 0;
+    }
+    static bool usesInput(const RoutingNode& node, int pin) noexcept {
+        return node.enabled || routingDeclaredLatency(node.type) == 0 || !routingInput(node.type, pin).auxiliary;
+    }
+    struct LatencyPaths {
+        std::array<int, maxNodes> paths{};
+        int output = 0, maximum = 0;
+    };
+    // Structural validation still budgets every declared machine and every
+    // cable, irrespective of live bypass and whether a branch reaches Output.
+    static LatencyPaths measureLatency(const Graph& g, const std::array<int, maxNodes>& order, bool structural) {
+        LatencyPaths latency;
         for (size_t step = 0; step < g.nodes.size(); ++step) {
             const int i = order[step];
-            for (const auto& link : g.links) if (link.destination == g.nodes[i].id)
-                latency[i] = std::max(latency[i], latency[find(g, link.source)]);
-            if (g.nodes[i].type == NodeType::spectralMorph) latency[i] += SpectralMorph::latencySamples;
-            maximum = std::max(maximum, latency[i]);
+            const auto& node = g.nodes[i];
+            auto& path = latency.paths[i];
+            for (const auto& link : g.links)
+                if (link.destination == node.id && (structural || usesInput(node, link.inputPin)))
+                    path = std::max(path, latency.paths[find(g, link.source)]);
+            path += structural ? routingDeclaredLatency(node.type) : preparedLatency(node);
+            latency.maximum = std::max(latency.maximum, path);
+            if (node.type == NodeType::output) latency.output = path;
         }
-        return maximum;
+        return latency;
     }
 public:
-    // Includes dormant/disconnected Morph nodes: bypass, automation and wiring
-    // edits cannot change the host contract within a prepared activation.
+    // Longest prepared path into Output, before padding to the fixed reserve.
+    // Use the same effective graph for this query and requestGraph(): enabled
+    // must reflect the host target for latency-bearing nodes. Mix, source/pin
+    // silence and live automation do not change a prepared plan's latency.
+    // Invalid graphs continue to return the out-of-budget sentinel (4097).
     static int graphLatency(const Graph& g) {
         std::array<int, maxNodes> order{};
-        return orderGraph(g, order) ? graphLatencyOrdered(g, order) : SpectralMorph::latencySamples + 1;
+        return orderGraph(g, order) ? measureLatency(g, order, false).output : SpectralMorph::latencySamples + 1;
     }
 private:
     void clear() {

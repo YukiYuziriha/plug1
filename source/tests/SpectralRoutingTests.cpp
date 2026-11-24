@@ -78,6 +78,7 @@ void endpointsAndInstances() {
         g.nodes.back().spectralMorph.morph = 1; g.nodes.back().spectralMorph.freeze = true;
         g.nodes[2].spectralMorph.freeze = true;
         g.links.push_back({14,102,0}); g.links.push_back({1,102,1});
+        g.links.push_back({102,13,0}); // Both Morph instances contribute to Output.
         check(bool(executor.requestGraph(g)), "independent parallel instances rejected");
         for (int i = 0; i < 6000; ++i) executor.process(s, {});
         auto frames = executor.spectralSnapshots();

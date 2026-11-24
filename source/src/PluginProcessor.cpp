@@ -86,7 +86,7 @@ Processor::Processor()
         .withOutput("Stack Out", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, stateType, makeParameters()) {
     engine.setFxMonitor(&fxMonitor);
-    setLatencySamples(VocalEngine::defaultLatency);
+
     for (size_t i = 0; i < values.size(); ++i) {
         values[i] = parameters.getRawParameterValue(parameterIds[i]);
         rangedParameters[i] = parameters.getParameter(parameterIds[i]);
@@ -427,9 +427,11 @@ void Processor::prepareToPlay(double sampleRate, int) {
     juce::String activationError;
     // Commit deferred lifecycle cleanup only now, never against running audio.
     if (!setRoutingGraphLocked(routingDraft, activationError)) routingError = activationError;
-    preparedRoutingLatency = RoutingExecutor::graphLatency(routingActive);
-    engine.prepare(sampleRate, getMainBusNumInputChannels(), getMainBusNumOutputChannels(), settings(), preparedRoutingLatency);
-    const auto restored = engine.requestGraph(routingActive);
+    const auto runtimeGraph = processingGraph(routingActive);
+    const auto requirements = processingRequirements(runtimeGraph);
+    engine.prepare(sampleRate, getMainBusNumInputChannels(), getMainBusNumOutputChannels(), settings(),
+                   requirements.rackLatency, requirements.vocalLatency, requirements.independentVoices);
+    const auto restored = applyProcessingGraph(runtimeGraph, requirements);
     restartPending = false;
     if (!restored) routingError = juce::String(restored.message);
     grainBridge.publish(engine.grainSnapshot());
@@ -919,10 +921,12 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
     ++routingStateRevision;
     routingLayout = std::move(layout);
     routingError = graphError;
-    restartPending = prepared && RoutingExecutor::graphLatency(active) != preparedRoutingLatency;
+    const auto runtimeGraph = processingGraph(active);
+    const auto requirements = processingRequirements(runtimeGraph);
+    restartPending = prepared && latencyDiffers(requirements);
     if (!restartPending) {
         if (prepared) {
-            const auto requested = engine.requestGraph(active);
+            const auto requested = applyProcessingGraph(runtimeGraph, requirements);
             if (!requested) { routingError = juce::String(requested.message); return false; }
         }
         routingActive = std::move(active);
@@ -1021,8 +1025,96 @@ void Processor::resetParameters() {
 }
 
 void Processor::timerCallback() {
-    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
-    if (prepared) engine.collectRetiredGraphs();
+    bool requestActivation = false;
+    {
+        const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+        if (!prepared) return;
+        engine.collectRetiredGraphs();
+        const auto graph = processingGraph(routingDraft);
+        const auto requirements = processingRequirements(graph);
+        if (latencyDiffers(requirements)) {
+            requestActivation = !restartPending;
+            restartPending = true;
+        } else if (restartPending) {
+            // A second toggle can cancel a latency change before the host acts.
+            juce::String error;
+            setRoutingGraphLocked(routingDraft, error);
+        } else if (requirements.latencyEffects != activeRequirements.latencyEffects) {
+            // Parallel latency-bearing effects can change without changing PDC.
+            const auto result = applyProcessingGraph(graph, requirements);
+            if (!result) routingError = juce::String(result.message);
+        }
+    }
+    if (requestActivation)
+        updateHostDisplay(ChangeDetails{}.withLatencyChanged(true));
+}
+
+Graph Processor::processingGraph(Graph graph, const Graph* previous) const {
+    for (auto& node : graph.nodes) {
+        if (routingDeclaredLatency(node.type) == 0) continue;
+        const auto slot = routingFxSlot(node.id);
+        if (slot <= 0) continue;
+        if (previous && std::none_of(previous->nodes.begin(), previous->nodes.end(), [&](const auto& old) {
+                return old.id == node.id && old.type == node.type && old.enabled == node.enabled;
+            })) continue; // Newly added nodes and explicit graph edits initialize their slot below.
+        node.enabled = values[94 + (size_t(slot) - 1) * 3]->load(std::memory_order_relaxed) >= .5f;
+    }
+    return graph;
+}
+
+Processor::ProcessingRequirements Processor::processingRequirements(const Graph& graph) const {
+    ProcessingRequirements result;
+    result.rackLatency = RoutingExecutor::graphLatency(graph);
+    bool leadConnected = false;
+    std::array<unsigned, RoutingExecutor::maxNodes> visited{};
+    const auto visit = [&](auto&& walk, size_t index, bool mainWet) -> void {
+        const unsigned flag = mainWet ? 2u : 1u;
+        if (visited[index] & flag) return;
+        visited[index] |= flag;
+        const auto& node = graph.nodes[index];
+        if (node.type == NodeType::lead) leadConnected = true;
+        if (node.type == NodeType::voice) {
+            const auto bit = uint8_t(1u << node.voiceSlot);
+            result.connectedVoices |= bit;
+            if (!mainWet) result.independentVoices |= bit;
+        }
+        const auto declaredLatency = routingDeclaredLatency(node.type);
+        if (declaredLatency && node.enabled) {
+            const int slot = routingFxSlot(node.id);
+            if (slot > 0) result.latencyEffects |= uint16_t(1u << slot);
+        }
+        for (const auto& link : graph.links) {
+            if (link.destination != node.id) continue;
+            if (declaredLatency && !node.enabled && routingInput(node.type, link.inputPin).auxiliary) continue;
+            const auto source = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto& n) { return n.id == link.source; });
+            if (source != graph.nodes.end())
+                walk(walk, size_t(source - graph.nodes.begin()), mainWet || (node.type == NodeType::mix && node.mainControls && link.inputPin == 1));
+        }
+    };
+    for (size_t index = 0; index < graph.nodes.size(); ++index)
+        if (graph.nodes[index].type == NodeType::output) visit(visit, index, false);
+
+    const auto raw = [&](size_t i) { return values[i]->load(std::memory_order_relaxed); };
+    const auto lead = leadParameterStart;
+    if (leadConnected && raw(lead) >= .5f)
+        result.vocalLatency = raw(7) >= .5f || raw(lead + 4) != 0 || raw(lead + 5) != 0 || raw(lead + 8) != 0
+            || (raw(2) > 0 && raw(lead + 6) > 0 && raw(lead + 7) > 0);
+    const auto voices = raw(6) >= .5f ? result.connectedVoices : result.independentVoices;
+    const bool advanced = raw(10) >= .5f;
+    for (size_t slot = 0; slot < 8 && !result.vocalLatency; ++slot)
+        if (voices & (1u << slot))
+            result.vocalLatency = advanced ? raw(86 + slot) >= .5f && raw(voiceParameterIndex(slot, 0)) >= .5f : slot < 2;
+    return result;
+}
+
+bool Processor::latencyDiffers(const ProcessingRequirements& request) const noexcept {
+    return request.rackLatency != activeRequirements.rackLatency || request.vocalLatency != activeRequirements.vocalLatency;
+}
+
+RoutingValidation Processor::applyProcessingGraph(const Graph& graph, const ProcessingRequirements& requirements) {
+    const auto result = engine.requestGraph(graph, requirements.connectedVoices, requirements.independentVoices);
+    if (result) activeRequirements = requirements;
+    return result;
 }
 
 Graph Processor::qualitySnapshot(Graph graph) const {
@@ -1118,7 +1210,9 @@ bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error, b
         }
         owner = {juce::Uuid().toString(), node.type};
     }
-    const bool defer = prepared && RoutingExecutor::graphLatency(candidate) != preparedRoutingLatency;
+    const auto runtimeGraph = processingGraph(candidate, &routingDraft);
+    const auto requirements = processingRequirements(runtimeGraph);
+    const bool defer = prepared && latencyDiffers(requirements);
     if (defer) {
         // Host parameters share effect slots. A pending replacement must not
         // initialize controls belonging to a different, still-running machine.
@@ -1133,7 +1227,7 @@ bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error, b
         }
     }
     if (prepared && !defer) {
-        const auto requested = engine.requestGraph(candidate);
+        const auto requested = applyProcessingGraph(runtimeGraph, requirements);
         if (!requested) {
             error = routingError = juce::String(requested.message);
             return false;

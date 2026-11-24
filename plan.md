@@ -1,5 +1,12 @@
 # Vocal Stack: Current roadmap and release history
 
+## Adaptive DSP and latency
+
+- Stack and Routing share the same processing plan. An explicitly disabled module keeps its settings and wiring, but stops its DSP once bypass settles. Disconnected paths do not render. A simple chain does not pay for the vocal stretcher when no routed vocal processing needs it.
+- Changes that keep latency constant apply during processing. When an enable, disable, or routing change changes the required latency, HEAVEN requests automatic CLAP/VST3 reactivation and applies the new path and reported latency together. No inactive latency is reserved for these modules. Reactivation timing is host-controlled and can briefly interrupt playback.
+- The base controls determine the prepared latency; per-sample internal modulation does not schedule reactivation. Whole-plugin host bypass remains aligned to the current reported latency.
+- Offline CLAP comparison against 1.13.3: one stereo Delay with the vocal modules off used 53.5–59.4% less audio-thread CPU across 44.1/48/96 kHz and 64/512-frame blocks. The current build reported zero samples, with identical latency-aligned impulse responses. A state saved by the released 1.13.3 binary recalled the custom Delay and disabled second slot. Bitwig was not used.
+
 ## Routing-node wet pockets
 
 - First delivery: Granular owns an independent Delay insert in its wet path, before Granular's local Dry/Wet blend. Granular at 0% Wet must mute the entire pocket including Delay tails; parent bypass must return dry. Configure from the Routing node, not the Stack rack.

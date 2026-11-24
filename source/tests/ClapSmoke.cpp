@@ -285,7 +285,7 @@ void checkLayout(const clap_plugin_factory_t& factory, clap_id configId, double 
     expect(render.set(plug, CLAP_RENDER_OFFLINE), "Offline mode rejected");
     expect(plug->activate(plug, sampleRate, 1, block), "Activation failed");
     const auto latency = instance.get<clap_plugin_latency_t>(CLAP_EXT_LATENCY).get(plug);
-    expect(latency == (sampleRate == 96000. ? 2688u : 1344u), "No-Morph CLAP latency differs from the legacy engine");
+    expect(latency == 0u, "CLAP default graph should report zero latency in bypass");
     expect(plug->start_processing(plug), "Processing did not start");
 
     std::array<std::array<float, block>, 2> input{}, output{};
@@ -348,23 +348,22 @@ void checkSpectralDonor(const clap_plugin_factory_t& factory, clap_id configurat
     Instance instance(factory); const auto* plug = instance.plugin;
     const auto& configs = instance.get<clap_plugin_audio_ports_config_t>(CLAP_EXT_AUDIO_PORTS_CONFIG);
     expect(configs.select(plug, configuration), "CLAP spectral bus selection failed");
-    const std::string xml = R"(<VocalStack><PARAM id="levelOn" value="0"/><PARAM id="doubleOn" value="0"/><PARAM id="fx1Mix" value="100"/><PARAM id="fx1MorphAmount" value="100"/><PARAM id="fx1MorphSmoothing" value="0"/><RoutingGraph><Node id="1" type="0"/><Node id="14" type="22"/><Node id="100" type="23" mix="1"/><Node id="13" type="5"/><Link source="1" destination="100" inputPin="0"/><Link source="14" destination="100" inputPin="1"/><Link source="100" destination="13" inputPin="0"/></RoutingGraph></VocalStack>)";
+    const std::string xml = R"(<VocalStack><PARAM id="levelOn" value="0"/><PARAM id="doubleOn" value="0"/><PARAM id="formantOn" value="0"/><PARAM id="fx1Mix" value="100"/><PARAM id="fx1MorphAmount" value="100"/><PARAM id="fx1MorphSmoothing" value="0"/><RoutingGraph><Node id="1" type="0"/><Node id="14" type="22"/><Node id="100" type="23" mix="1"/><Node id="13" type="5"/><Link source="1" destination="100" inputPin="0"/><Link source="14" destination="100" inputPin="1"/><Link source="100" destination="13" inputPin="0"/></RoutingGraph></VocalStack>)";
     Stream preset; preset.bytes.resize(xml.size()+9);
     const uint32_t magic=0x21324356, length=uint32_t(xml.size());
     std::memcpy(preset.bytes.data(),&magic,4); std::memcpy(preset.bytes.data()+4,&length,4);
     std::memcpy(preset.bytes.data()+8,xml.data(),xml.size());
     const auto& state = instance.get<clap_plugin_state_t>(CLAP_EXT_STATE);
-    // Activating a no-Morph graph establishes the old host compensation.
-    // A state edit while active must not alter that contract until reactivation.
+    // The fresh default graph is zero-latency. Loading Morph while active
+    // must not change host compensation until reactivation.
     expect(plug->activate(plug,rate,1,512), "CLAP baseline activation failed");
     const auto& activationLatency = instance.get<clap_plugin_latency_t>(CLAP_EXT_LATENCY);
-    const uint32_t baseline = rate == 96000. ? 2688u : 1344u;
-    expect(activationLatency.get(plug) == baseline, "CLAP baseline retained Morph reserve");
+    expect(activationLatency.get(plug) == 0u, "CLAP fresh instance should report zero latency");
     expect(state.load(plug,&preset.input), "CLAP routed Morph state load failed");
     plug->on_main_thread(plug);
     expect(instance.restartRequests > 0, "CLAP pending Morph did not request automatic host reactivation");
     const int requestsBeforeActivation = instance.restartRequests;
-    expect(activationLatency.get(plug) == baseline, "CLAP active state changed host latency before reactivation");
+    expect(activationLatency.get(plug) == 0u, "CLAP active state changed host latency before reactivation");
     plug->deactivate(plug);
     const uint32_t mainChannels = configuration%3 == 0 ? 2 : 1;
     const uint32_t outChannels = configuration%3 == 2 ? 1 : 2;
@@ -375,7 +374,7 @@ void checkSpectralDonor(const clap_plugin_factory_t& factory, clap_id configurat
     const uint32_t latency = latencyExtension.get(plug);
     plug->on_main_thread(plug);
     expect(instance.restartRequests == requestsBeforeActivation, "CLAP activation caused a restart loop");
-    expect(latency == baseline + 4096, "CLAP Morph activation failed to declare the actual delay");
+    expect(latency == 4096u, "CLAP Morph-only activation should report 4096 samples");
     expect(plug->start_processing(plug), "CLAP Morph start failed");
     std::array<std::array<float,maximum>,2> main{},aux{},out{};
     main[0].fill(.1f); main[1].fill(-.1f); aux[0].fill(-.04f); aux[1].fill(.07f);
@@ -406,7 +405,8 @@ void checkSpectralDonor(const clap_plugin_factory_t& factory, clap_id configurat
     expect(state.load(plug,&saved.input), "CLAP spectral state recall failed");
     expect(plug->activate(plug,rate,1,maximum), "CLAP recalled activation failed");
     expect(latencyExtension.get(plug) == latency, "CLAP recalled Morph latency");
-    const std::string noMorphXml = "<VocalStack/>";
+    const std::string noMorphXml = "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/>"
+        "<PARAM id=\"doubleOn\" value=\"0\"/><PARAM id=\"formantOn\" value=\"0\"/></VocalStack>";
     Stream noMorph; noMorph.bytes.resize(noMorphXml.size() + 9);
     const uint32_t noMorphLength = uint32_t(noMorphXml.size());
     std::memcpy(noMorph.bytes.data(), &magic, 4); std::memcpy(noMorph.bytes.data() + 4, &noMorphLength, 4);
@@ -415,7 +415,7 @@ void checkSpectralDonor(const clap_plugin_factory_t& factory, clap_id configurat
     expect(latencyExtension.get(plug) == latency, "CLAP Morph removal changed compensation while active");
     plug->deactivate(plug);
     expect(plug->activate(plug,rate,1,maximum), "CLAP no-Morph reactivation failed");
-    expect(latencyExtension.get(plug) == baseline, "CLAP no-Morph reactivation retained the penalty");
+    expect(latencyExtension.get(plug) == 0u, "CLAP default graph reactivation should restore zero latency");
     plug->deactivate(plug);
     expect(error<2.e-3, "CLAP routed external donor/main-phase/absence/channel oracle failed");
 }
