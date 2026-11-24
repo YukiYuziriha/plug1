@@ -1,5 +1,39 @@
 # Vocal Stack: Current roadmap and release history
 
+## Planned — automatic pitch correction with transparent analysis caching (after UI polish)
+
+**User-approved conditional scope:** Do not start implementing the tuner merely because this roadmap exists. When the user asks to implement automatic pitch correction / Auto-Tune, implement the core requirements AND the advanced features below. The advanced features are explicitly requested as part of that future implementation, not optional stretch goals or features requiring another request. Plan and sequence the work as necessary, but do not silently omit them or mark the tuner complete with only basic correction.
+
+### Core requirements
+
+- [ ] Reuse and benchmark a proven open-source pitch correction engine where practical. Investigate NoteForge, Flayr Tune, OpenVoxTuner and SnapTune as potential donors; verify actual source, license compatibility, sound quality, CPU and latency before selecting one. Preserve required notices. The prior tuning work on `work/autotune-donor-integration` is historical, not an instruction to restore its implementation blindly.
+- [ ] **One normal workflow, no modes:** whenever automatic pitch correction processes audio at an uncached host timeline position, automatically detect and store its original continuous pitch analysis. When playing a previously analyzed region, read the saved analysis instead of running the detector. Cache coverage includes unvoiced/silent material. No Record/Analyze/Freeze buttons or separate live/cached modes.
+- [ ] Keep the original detected pitch contour separate from editable target notes and correction settings. Suggest target notes according to the selected key/scale; support automatic key suggestions. Apply pitch correction to the incoming audio live; do not bake corrected audio or require DAW bounce/freeze. Retune speed, correction amount, humanization and note edits remain adjustable on cached regions without repeating pitch detection.
+- [ ] Provide an editable pitch timeline for the entire analyzed recording, with host-position synchronization, navigation and selection. Deleting a selected analysis region (or clearing the entire analysis) invalidates it so normal playback automatically analyzes it again. This is how the user handles replaced/moved audio without ARA; do not require explicit capture. Distinguish deleting analysis from deleting/editing a target-note override. Handle transport stops, seeks, loops, tempo changes and partial coverage predictably.
+- [ ] Persist analysis and edits with the DAW session, independently per instance; do not make project-specific analysis part of ordinary reusable factory presets. Keep audio-thread access bounded and real-time safe.
+- [ ] Minimize CPU, especially across several independently tuned real vocal takes. Skip pitch detection completely over valid cached regions; keep correction/shifting live. Benchmark first-pass vs cached CPU across sample rates, block sizes and multiple instances, and check that unchanged settings produce equivalent correction.
+- [ ] Aim for extremely low actual latency (zero if genuinely possible). Reuse the existing pitch shifter if suitable; distinguish detection delay from unavoidable synthesis buffering. Do not claim zero latency just because analysis is cached. Use the existing adaptive latency/host-reactivation architecture, accurately compensate paths, and reserve no tuner latency when disabled. Measure latency and sound quality, not only reported values.
+
+### Advanced features — explicitly requested for the future tuner implementation
+
+All items here are required when the user requests Auto-Tune implementation, even if delivered in coordinated stages:
+
+- [ ] Per-note correction overrides: independent retune speed, correction amount and bypass.
+- [ ] Pitch drift and vibrato controls: correct note center separately from natural pitch movement.
+- [ ] Split and merge detected notes to correct segmentation.
+- [ ] Custom scales and timeline-local key/scale changes.
+- [ ] Adjustable transitions between notes.
+- [ ] Formant preservation and independent formant adjustment.
+- [ ] Show three distinguishable curves: original detected pitch, target pitch and actual corrected pitch (label estimates honestly if not measured).
+- [ ] Multi-note selection and group editing of correction parameters; undo/redo for edits and invalidation.
+- [ ] Copy/paste intended target notes between plugin instances (e.g. lead to real doubles), retaining each take's independent detected pitch. Provide explicit timing/alignment handling for differences between performances.
+- [ ] MIDI-controlled target notes overriding automatic note selection.
+
+### Acceptance
+
+- [ ] Verify automatic analysis on first playback, no detector work on cached playback, selective deletion/reanalysis, live parameter edits without analysis invalidation, session recall, and correct timeline behavior around seeks/loops and changed recordings.
+- [ ] Compare the donor and HEAVEN's tuning-only output using real vocals, including hard-tuned rap, subtle melodic correction, transitions, vibrato and consonants. Verify low CPU and honest latency in CLAP/VST3 and actual Bitwig workflow; do not substitute a corrected test tone for musical acceptance.
+
 ## Adaptive DSP and latency
 
 - Stack and Routing share the same processing plan. An explicitly disabled module keeps its settings and wiring, but stops its DSP once bypass settles. Disconnected paths do not render. A simple chain does not pay for the vocal stretcher when no routed vocal processing needs it.
