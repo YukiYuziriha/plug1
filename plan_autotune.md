@@ -50,10 +50,11 @@ observations guide donor selection, not a newly invented Antares clone.
 
 Practical configuration and recording alternatives:
 
-- **Configure through the actual Antares UI:** open its editor, select a test
-  key/scale such as C minor, set the desired hard-tune controls, and save plugin
-  state. Direct UI interaction is a normal first choice, not a last resort after
-  reverse-engineering parameter IDs. Verify the visible settings and record them.
+- **Configure programmatically when reliable; otherwise use the Antares UI:**
+  if verified parameter control can set the required conditions, use it. If not,
+  open the actual editor, select the required allowed notes/key/scale and hard-tune
+  controls directly, verify them visually, and save plugin state. Do not spend
+  time decoding opaque parameter IDs when UI interaction solves the setup.
 - **Standalone VST3 harness:** host the plugin and its native editor, feed a dry
   WAV in fixed audio blocks, and write the processed output directly to a WAV.
   Restore the UI-configured state for repeatable runs. Programmatic parameter
@@ -85,8 +86,39 @@ Practical configuration and recording alternatives:
 
 ### Material and artifact probes
 
+**Actively create the circumstances that produce the desired artifacts.** A vocal
+already close to allowed notes with little applied correction is not a meaningful
+hard-tune comparison. C minor is an example setting, not a test by itself: first
+inspect the source pitches, then choose allowed targets that force audible shifts.
+
+- [ ] Include clearly out-of-scale sung notes and sustained pitches between allowed
+  targets. Deliberately choose a mismatched key/scale or restrict allowed notes
+  where supported, creating substantial correction (including one-, two- and
+  several-semitone moves). Document the actual source-to-target intervals rather
+  than assuming a scale label guarantees them. Apply the same target restrictions
+  to donors where possible; disclose differences where not.
+- [ ] Use the fastest available retuning and minimal humanization/flex smoothing
+  for the hard reference. Verify actual applied correction and full wet output;
+  do not accidentally compare bypass, weak correction or mostly untouched vocals.
+- [ ] Include real sung scoops, slides and vibrato crossing competing target-note
+  boundaries, plus fast runs and abrupt changes. These provoke stepped movement,
+  repeated switching/warble and transition texture, not just stable transposition.
+- [ ] Keep an in-key/light-correction control and a slower-retune control alongside
+  the deliberately forced cases to distinguish correction-driven character from
+  baseline shifter coloration or unrelated faults. Keep formant/mode choices
+  documented; audition available Antares modes separately.
+
+Why: hard-tune character arises from fast changes in the correction ratio and
+quantized target selection interacting with detector tracking, voicing/onset
+handling and the shifter's period/grain/phase behavior. Large correction can expose
+timbral coloration; boundary crossings can expose switching and stepped glides.
+These are hypotheses to probe, not proof of Antares's internal algorithm. Do not
+mistake clipping, buffer underruns or accidental discontinuities for wanted texture.
+
 Use real isolated singing as the main evidence. Synthetic probes help isolate
-behavior but cannot substitute for listening to vocals.
+behavior but cannot substitute for listening to vocals. Select or construct the
+forced-correction cases before producing the comparison renders; if available dry
+samples do not expose the desired behavior, request suitable singing from the user.
 
 | Material/probe | Behavior to compare |
 | --- | --- |
