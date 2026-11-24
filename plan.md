@@ -2,7 +2,7 @@
 
 ## Planned — automatic pitch correction with transparent analysis caching (after UI polish)
 
-**User-approved conditional scope:** Do not start implementing the tuner merely because this roadmap exists. When the user asks to implement automatic pitch correction / Auto-Tune, implement the core requirements AND the advanced features below. The advanced features are explicitly requested as part of that future implementation, not optional stretch goals or features requiring another request. Plan and sequence the work as necessary, but do not silently omit them or mark the tuner complete with only basic correction.
+**Scope and authorization:** Do not start implementing the tuner merely because this roadmap exists. A request to implement automatic pitch correction / Auto-Tune authorizes the core requirements ONLY. Do NOT implement any advanced feature below unless the user separately and explicitly requests that specific feature (or explicitly authorizes the advanced feature set). A general request to implement Auto-Tune does not authorize advanced features. Core delivery is complete without them.
 
 ### Core requirements
 
@@ -14,9 +14,9 @@
 - [ ] Minimize CPU, especially across several independently tuned real vocal takes. Skip pitch detection completely over valid cached regions; keep correction/shifting live. Benchmark first-pass vs cached CPU across sample rates, block sizes and multiple instances, and check that unchanged settings produce equivalent correction.
 - [ ] Aim for extremely low actual latency (zero if genuinely possible). Reuse the existing pitch shifter if suitable; distinguish detection delay from unavoidable synthesis buffering. Do not claim zero latency just because analysis is cached. Use the existing adaptive latency/host-reactivation architecture, accurately compensate paths, and reserve no tuner latency when disabled. Measure latency and sound quality, not only reported values.
 
-### Advanced features — explicitly requested for the future tuner implementation
+### Advanced features — DO NOT IMPLEMENT unless separately and explicitly requested
 
-All items here are required when the user requests Auto-Tune implementation, even if delivered in coordinated stages:
+These are deferred ideas, not requirements for the initial tuner. Do not implement them, add speculative infrastructure for them, or treat them as acceptance criteria unless the user explicitly authorizes the relevant advanced scope:
 
 - [ ] Per-note correction overrides: independent retune speed, correction amount and bypass.
 - [ ] Pitch drift and vibrato controls: correct note center separately from natural pitch movement.
