@@ -48,6 +48,28 @@ observations guide donor selection, not a newly invented Antares clone.
 
 ### Reference setup
 
+Practical configuration and recording alternatives:
+
+- **Configure through the actual Antares UI:** open its editor, select a test
+  key/scale such as C minor, set the desired hard-tune controls, and save plugin
+  state. Direct UI interaction is a normal first choice, not a last resort after
+  reverse-engineering parameter IDs. Verify the visible settings and record them.
+- **Standalone VST3 harness:** host the plugin and its native editor, feed a dry
+  WAV in fixed audio blocks, and write the processed output directly to a WAV.
+  Restore the UI-configured state for repeatable runs. Programmatic parameter
+  control is optional; use verified names/value labels if useful, never guessed
+  normalized values. Include preroll, latency/tail handling and repeat renders.
+- **Real-time-paced hosting:** if offline processing is unsupported or produces
+  different behavior, process at real-time pace and capture the plugin output
+  directly. Label the processing mode in the results.
+- **Bitwig reference exports:** alternatively configure Antares through its UI in
+  a separate test project and export the same dry material. Use this if building
+  a custom host is unnecessary or authorization/editor/processing compatibility
+  blocks the harness. Do not modify the user's existing projects. No sound-card
+  loopback or microphone recording is needed for either direct-render approach.
+- Follow `AGENTS.md` display enumeration and non-primary-monitor rules for native
+  editor interaction. Record which route actually succeeded; none is tested yet.
+
 - [ ] Load Auto-Tune Pro in an isolated host process; use Bitwig exports if the
   offline harness cannot host it correctly. Do not alter the user's projects.
 - [ ] Record exact version, algorithm/mode (including Classic if available), input
