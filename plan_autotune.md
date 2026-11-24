@@ -15,14 +15,20 @@ current requirements; it is not a claim that tests or audio comparisons passed.
   formant behavior and shifter. Do not invent another detector/shifter hybrid.
 - **Always retain detected pitch and notes for valid analyzed material.** Reuse
   that analysis on subsequent playback rather than repeatedly detecting it.
-- The motivation is lower CPU with **five parallel autotunes**. Determine whether
-  this means five internal branches, separate plugin instances, or separate vocal
-  takes before choosing the sharing scope. Do not silently assume one of these.
+- The motivation is lower CPU with **five parallel autotunes**, including several
+  independently tuned real vocal takes. Per-instance retained analysis is core;
+  same-source sharing is only an additional optimization where valid, not a
+  substitute for caching each different take.
 - Correction and shifting remain live, with independent tuning settings where
   needed. Downstream HEAVEN processing and automation remain live too.
-- This is **not a corrected-audio render cache**, freeze feature or Melodyne-style
-  audio editor project. Do not turn it into Live/Edit/Cached audio modes or add
-  offline resynthesis/piano-roll scope without a separate request.
+- Follow the current `plan.md` core scope: an editable, host-synchronized pitch
+  timeline for the analyzed recording, target-note edits, key/scale suggestions,
+  selective analysis deletion/reanalysis and per-instance DAW-session persistence.
+  Include unvoiced/silent coverage; distinguish analysis deletion from target edits.
+- This is **not a corrected-audio render cache** or freeze feature. Do not add
+  Live/Edit/Cached audio modes or offline resynthesis. Advanced editing features
+  listed in `plan.md` require separate explicit authorization; this research plan
+  does not authorize implementation.
 
 ## 2. Research the desired artifacts using Antares as a black box
 
@@ -178,17 +184,19 @@ independent of mode and settings.
 - Record analysis configuration, engine revision, sample rate, channel policy,
   source identity/content validation, timestamps and context. Host position alone
   is not a clip identity and cannot establish cache validity.
-- Unknown or changed material uses live detection and populates valid entries.
-  Never use stale pitch just because playback is at a previously visited time.
-  Define recapture/invalidation, seeks, loops, rerecording and tempo/stretch rules.
+- Unknown or invalidated material uses live detection and populates valid entries,
+  including unvoiced/silent spans. Timeline position alone cannot detect replaced
+  audio. Provide the roadmap's selective analysis deletion/clear action so normal
+  playback reanalyzes moved/replaced material, without capture buttons. Define
+  source-validation limits, seeks, loops, rerecording and tempo/stretch rules.
 - Preserve causal availability: do not feed a first-pass estimate earlier on cached
   playback unless a separately approved behavior explicitly changes the sound.
 - Prove how detector/filter history resumes across cached/uncached boundaries and
   how correction state warms up on seeks; frames alone may not be sufficient.
-- Bound memory and make persistence explicit. Always-retained analysis is the
-  normal behavior, not a manual capture/cache mode; limits must be visible rather
-  than silently discarding valid material. Analysis belongs to session data, not
-  automatically to shareable factory presets.
+- Bound memory and persist analysis and edits with the DAW session independently
+  per instance. Always-retained analysis is normal behavior, not a manual capture
+  mode; limits must be visible rather than silently discarding valid material.
+  Project-specific analysis must not enter ordinary reusable factory presets.
 - No callback allocation, locking, disk I/O or GUI access. Publish immutable data
   through bounded lock-free ownership and retire it off the audio thread.
 - Separate instances, particularly Bitwig-sandboxed processes, do not automatically
