@@ -30,9 +30,6 @@ required to use the supplied binaries.
    lil grass block** on an audio track.
 
 The [factory preset bank](Factory-Presets.md) includes 30 patches.
-There is no Tuning tab or automatic pitch correction on main. The previous
-implementation and replacement plan are preserved on
-[`work/autotune-donor-integration`](https://github.com/YukiYuziriha/plug1/tree/work/autotune-donor-integration).
 Legacy plugin identities and preset/preferences locations remain unchanged.
 
 ## Start with Stack
@@ -67,7 +64,7 @@ up to **eight generated voices**, in addition to the independently editable Lead
 Scroll the voice-card area if needed.
 
 Each generated voice has On, gain, pan, delay, pitch, fine detune, formant, motion
-depth and rate. Pitch is musical transposition, not automatic pitch correction.
+depth and rate. Pitch is musical transposition.
 Human scales motion; it does not erase fixed offsets. Independent custom formants
 remain active when the shared Formant switch is off.
 
