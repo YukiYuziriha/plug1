@@ -8,4 +8,3 @@ Focused checks on the final build: Stack sizing fit 15 of 16 effect types withou
 
 Both Windows Release binaries were refreshed and installed. Installed SHA-256 hashes matched the delivered files. The previous installation was backed up at `.cache/installed-before-1.12.2-20261121-193056`.
 
-The previous tuning work and donor-output equivalence plan are on `work/autotune-donor-integration`.
