@@ -144,6 +144,295 @@ Stream state(int variant) {
     std::memcpy(result.bytes.data(),&magic,4); std::memcpy(result.bytes.data()+4,&length,4);
     std::memcpy(result.bytes.data()+8,xml.data(),xml.size()); return result;
 }
+// This host keeps the two VST3 objects connected for their entire lifetime.
+// A restart callback only queues work: the host stops audio after returning to
+// its event loop, never re-enters setActive from inside restartComponent.
+struct LatencyHost final : IComponentHandler {
+    Host application;
+    IComponent* component = nullptr;
+    IAudioProcessor* processor = nullptr;
+    IEditController* controller = nullptr;
+    IConnectionPoint* audioConnection = nullptr;
+    IConnectionPoint* controlConnection = nullptr;
+    uint32 refs = 1;
+    const DWORD messageThread = GetCurrentThreadId();
+    int requests = 0, activations = 0;
+    uint32 latencyAtRequest = 0;
+    bool pending = false, processing = false, active = false, inProcess = false;
+    bool componentInitialized = false, controllerInitialized = false;
+    bool callbackOnMessageThread = true, callbackOutsideProcess = true, duplicateRequest = false;
+    std::array<std::array<float, 512>, 2> main{}, donor{}, output{};
+    std::array<float*, 2> mainPointers{main[0].data(), main[1].data()};
+    std::array<float*, 2> donorPointers{donor[0].data(), donor[1].data()};
+    std::array<float*, 2> outputPointers{output[0].data(), output[1].data()};
+    AudioBusBuffers inputs[2]{}, outputs{};
+    ProcessData data{};
+
+    tresult PLUGIN_API queryInterface(const TUID interfaceId, void** out) override {
+        *out = nullptr;
+        if (equal(interfaceId, IComponentHandler_iid) || equal(interfaceId, FUnknown_iid)) {
+            *out = static_cast<IComponentHandler*>(this); addRef(); return kResultOk;
+        }
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return ++refs; }
+    uint32 PLUGIN_API release() override { return --refs; }
+    tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API performEdit(ParamID, ParamValue) override { return kResultOk; }
+    tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API restartComponent(int32 flags) override {
+        if ((flags & kLatencyChanged) != 0) {
+            ++requests;
+            duplicateRequest |= pending;
+            pending = true;
+            latencyAtRequest = processor->getLatencySamples();
+            callbackOnMessageThread &= GetCurrentThreadId() == messageThread;
+            callbackOutsideProcess &= !inProcess;
+        }
+        return kResultOk;
+    }
+
+    LatencyHost(IPluginFactory& factory, const TUID cid, double rate, int channels, bool morph) {
+        try { initialize(factory, cid, rate, channels, morph); }
+        catch (...) { shutdown(); throw; }
+    }
+    void initialize(IPluginFactory& factory, const TUID cid, double rate, int channels, bool morph) {
+        check(factory.createInstance(cid, IComponent_iid, reinterpret_cast<void**>(&component)) == kResultOk && component,
+              "callback host component creation failed");
+        check(component->initialize(&application) == kResultOk, "callback host component initialization failed");
+        componentInitialized = true;
+        check(component->queryInterface(IAudioProcessor_iid, reinterpret_cast<void**>(&processor)) == kResultOk && processor,
+              "callback host processor missing");
+        TUID controllerClass{};
+        check(component->getControllerClassId(controllerClass) == kResultOk, "callback host controller class missing");
+        check(factory.createInstance(controllerClass, IEditController_iid, reinterpret_cast<void**>(&controller)) == kResultOk && controller,
+              "callback host controller creation failed");
+        check(controller->initialize(&application) == kResultOk, "callback host controller initialization failed");
+        controllerInitialized = true;
+        check(controller->setComponentHandler(this) == kResultOk, "callback host handler installation failed");
+        check(component->queryInterface(IConnectionPoint_iid, reinterpret_cast<void**>(&audioConnection)) == kResultOk && audioConnection
+            && controller->queryInterface(IConnectionPoint_iid, reinterpret_cast<void**>(&controlConnection)) == kResultOk && controlConnection,
+              "callback host connection points missing");
+        check(audioConnection->connect(controlConnection) == kResultOk && controlConnection->connect(audioConnection) == kResultOk,
+              "callback host controller/processor connection failed");
+        const auto arrangement = channels == 1 ? SpeakerArr::kMono : SpeakerArr::kStereo;
+        SpeakerArrangement in[]{arrangement, arrangement}, out[]{arrangement};
+        check(processor->setBusArrangements(in, 2, out, 1) == kResultOk, "callback host layout rejected");
+        check(component->activateBus(kAudio, kInput, 0, true) == kResultOk
+            && component->activateBus(kAudio, kInput, 1, true) == kResultOk
+            && component->activateBus(kAudio, kOutput, 0, true) == kResultOk, "callback host bus activation failed");
+        // Disabled Morph with zero Mix gives an exact dry oracle even when on.
+        // The canonical graph contains the real Sidechain Blend node.
+        auto initial = state(morph ? 0 : 3);
+        std::string xml(initial.bytes.begin() + 8, initial.bytes.end() - 1);
+        if (morph) {
+            const auto on = xml.find("id=\"fx1On\" value=\"1\"");
+            check(on != std::string::npos, "callback Morph state fixture missing");
+            xml.replace(on, std::strlen("id=\"fx1On\" value=\"1\""), "id=\"fx1On\" value=\"0\"");
+            const auto mix = xml.find("id=\"fx1Mix\" value=\"100\"");
+            check(mix != std::string::npos, "callback Morph Mix fixture missing");
+            xml.replace(mix, std::strlen("id=\"fx1Mix\" value=\"100\""), "id=\"fx1Mix\" value=\"0\"");
+        } else {
+            // Start bypassed, rather than testing the unrelated asymptotic
+            // bypass gain ramp with a sample-exact latency oracle.
+            xml.insert(xml.find("</VocalStack>"), "<PARAM id=\"bypass\" value=\"1\"/>");
+        }
+        initial.bytes.assign(xml.size() + 9, 0);
+        const uint32 magic = 0x21324356, length = uint32(xml.size());
+        std::memcpy(initial.bytes.data(), &magic, 4); std::memcpy(initial.bytes.data() + 4, &length, 4);
+        std::memcpy(initial.bytes.data() + 8, xml.data(), xml.size());
+        check(component->setState(&initial) == kResultOk, "callback host initial state failed");
+        Stream synchronized;
+        check(component->getState(&synchronized) == kResultOk, "callback host state synchronization read failed");
+        synchronized.cursor = 0;
+        check(controller->setComponentState(&synchronized) == kResultOk, "callback host controller state synchronization failed");
+        ProcessSetup setup{};
+        setup.processMode = kOffline; setup.symbolicSampleSize = kSample32;
+        setup.maxSamplesPerBlock = 512; setup.sampleRate = rate;
+        check(processor->setupProcessing(setup) == kResultOk && component->setActive(true) == kResultOk,
+              "callback host initial activation failed");
+        active = true;
+        check(processor->getLatencySamples() == 0, "callback host must start without latency");
+        check(processor->setProcessing(true) == kResultOk, "callback host processing start failed");
+        processing = true;
+        inputs[0].numChannels = inputs[1].numChannels = outputs.numChannels = channels;
+        inputs[0].channelBuffers32 = mainPointers.data(); inputs[1].channelBuffers32 = donorPointers.data();
+        outputs.channelBuffers32 = outputPointers.data();
+        data.processMode = kOffline; data.symbolicSampleSize = kSample32;
+        data.numInputs = 2; data.numOutputs = 1; data.inputs = inputs; data.outputs = &outputs;
+        stable(0);
+    }
+    ~LatencyHost() { shutdown(); }
+    void shutdown() {
+        if (processing) processor->setProcessing(false);
+        if (active) component->setActive(false);
+        if (controller) controller->setComponentHandler(nullptr);
+        if (controlConnection && audioConnection) {
+            controlConnection->disconnect(audioConnection); audioConnection->disconnect(controlConnection);
+        }
+        if (controlConnection) controlConnection->release();
+        if (audioConnection) audioConnection->release();
+        if (controllerInitialized) controller->terminate();
+        if (controller) controller->release();
+        if (processor) processor->release();
+        if (componentInitialized) component->terminate();
+        if (component) component->release();
+    }
+    ParamID parameter(const char* title) {
+        for (int32 i = 0; i < controller->getParameterCount(); ++i) {
+            ParameterInfo info{};
+            if (controller->getParameterInfo(i, info) != kResultOk) continue;
+            std::string name;
+            for (auto c : info.title) { if (!c) break; name.push_back(char(c)); }
+            if (name == title) return info.id;
+        }
+        throw std::runtime_error(std::string("callback host parameter missing: ") + title);
+    }
+    void process(int samples, IParameterChanges* changes = nullptr) {
+        data.numSamples = samples; data.inputParameterChanges = changes;
+        inProcess = true;
+        const auto result = processor->process(data);
+        inProcess = false; data.inputParameterChanges = nullptr;
+        check(result == kResultOk, "callback host audio processing failed");
+        for (int c = 0; c < outputs.numChannels; ++c) for (int i = 0; i < samples; ++i)
+            check(std::isfinite(output[size_t(c)][size_t(i)]), "callback host nonfinite output");
+    }
+    void automate(const char* title, double plain) {
+        const auto id = parameter(title);
+        // JUCE's continuous VST3 plain range is normalized, not the displayed
+        // engineering units. Ask the released controller to parse its own text.
+        const auto text = std::to_string(plain);
+        String128 display{};
+        for (size_t i = 0; i < text.size() && i < 127; ++i) display[i] = char16(text[i]);
+        ParamValue normalized = 0;
+        check(controller->getParamValueByString(id, display, normalized) == kResultOk,
+              "callback host controller value conversion failed");
+        check(controller->setParamNormalized(id, normalized) == kResultOk, "callback host controller edit failed");
+        ParameterChanges changes;
+        changes.queue.id = id; changes.queue.value = normalized; changes.queue.offset = 0;
+        for (auto& c : main) c.fill(0);
+        process(137, &changes); // Host edits reach DSP through the actual VST3 queue.
+        check(std::abs(controller->getParamNormalized(id) - normalized) < 1.e-6, "callback controller edit not retained");
+    }
+    void pump() {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            check(message.message != WM_QUIT, "callback host received WM_QUIT");
+            TranslateMessage(&message); DispatchMessageW(&message);
+        }
+    }
+    void impulse(uint32 latency) {
+        check(processor->getLatencySamples() == latency, "callback host compensation changed before activation");
+        // Flush earlier audio without transport reset or lifecycle calls.
+        for (auto& c : main) c.fill(0);
+        for (uint32 n = 0; n < 8192; n += 512) process(512);
+        constexpr std::array<int, 5> blocks{1, 137, 3, 511, 17};
+        for (int position = 0, block = 0; position < int(latency) + 600; ++block) {
+            const int count = std::min(blocks[size_t(block) % blocks.size()], int(latency) + 600 - position);
+            for (int c = 0; c < 2; ++c) for (int i = 0; i < count; ++i)
+                main[size_t(c)][size_t(i)] = position + i == 0 ? (c ? -.25f : .4f) : 0.f;
+            process(count);
+            for (int c = 0; c < outputs.numChannels; ++c) for (int i = 0; i < count; ++i) {
+                const float expected = position + i == int(latency) ? (c ? -.25f : .4f) : 0.f;
+                if (std::abs(output[size_t(c)][size_t(i)] - expected) >= 2.e-5f) {
+                    std::cerr << "VST3 callback impulse latency=" << latency << " sample=" << position + i
+                              << " channel=" << c << " expected=" << expected
+                              << " actual=" << output[size_t(c)][size_t(i)] << '\n';
+                    check(false, "callback host exact impulse delay differs from active compensation");
+                }
+            }
+            check(processor->getLatencySamples() == latency, "callback host processing installed pending latency");
+            position += count;
+        }
+    }
+    void stable(uint32 latency) {
+        const int before = requests, restarts = activations;
+        const auto deadline = GetTickCount64() + 250;
+        do {
+            pump();
+            for (auto& c : main) c.fill(0);
+            process(137);
+            check(!pending && requests == before && activations == restarts, "callback host duplicate/looping latency restart");
+            check(processor->getLatencySamples() == latency, "callback host latency did not remain stable");
+            Sleep(2);
+        } while (GetTickCount64() < deadline);
+    }
+    void transition(const char* title, double value, uint32 before, uint32 after) {
+        std::cout << "VST3 callback " << title << '=' << value << ": " << before << " -> " << after << std::endl;
+        const int previous = requests, previousActivations = activations;
+        automate(title, value);
+        check(processor->getLatencySamples() == before, "automation changed compensation before callback");
+        if (before == after) { stable(before); check(requests == previous, "no-op edit requested latency restart"); return; }
+        const auto deadline = GetTickCount64() + 1500;
+        while (!pending && GetTickCount64() < deadline) { pump(); Sleep(2); }
+        check(pending && requests == previous + 1, "missing actual VST3 kLatencyChanged callback");
+        check(callbackOnMessageThread && callbackOutsideProcess && !duplicateRequest,
+              "VST3 latency callback duplicated or arrived inside audio/off message thread");
+        check(latencyAtRequest == before && processor->getLatencySamples() == before,
+              "VST3 latency callback must expose old compensation until host activation");
+        impulse(before); // Pending audio must still use the old plan, not only the old number.
+        check(activations == previousActivations, "host activated without servicing callback");
+        // This is the only transition restart, and cannot run without a real request.
+        check(pending, "host restart has no latency callback");
+        pending = false;
+        check(processor->setProcessing(false) == kResultOk, "callback host stop failed"); processing = false;
+        check(component->setActive(false) == kResultOk, "callback host deactivate failed"); active = false;
+        check(processor->getLatencySamples() == before, "deactivation changed compensation before activation");
+        check(component->setActive(true) == kResultOk, "callback host reactivate failed"); active = true;
+        ++activations;
+        check(processor->getLatencySamples() == after, "requested activation did not install exact new compensation");
+        check(processor->setProcessing(true) == kResultOk, "callback host resume failed"); processing = true;
+        check(requests == previous + 1 && !pending, "activation synchronously requested another restart");
+        impulse(after);
+        stable(after); // Real timers/messages plus audio must not produce a restart loop.
+        check(requests == previous + 1 && activations == previousActivations + 1,
+              "latency transition did not have exactly one callback-driven activation");
+    }
+};
+
+void automaticLatencyTransitions(IPluginFactory& factory, const TUID cid) {
+    int failures = 0, cases = 0;
+    for (double rate : {44100., 48000., 96000.}) for (int channels : {1, 2}) for (bool morph : {true, false}) {
+        try {
+            std::cout << "VST3 callback fixture rate=" << rate << " channels=" << channels
+                      << " graph=" << (morph ? "Morph" : "Sidechain Blend") << std::endl;
+            LatencyHost host(factory, cid, rate, channels, morph);
+            if (morph) {
+                for (int repeat = 0; repeat < 2; ++repeat) {
+                    host.transition("FX 1 Active", 1, 0, 4096);
+                    host.transition("FX 1 Active", 1, 4096, 4096);
+                    host.transition("FX 1 Active", 0, 4096, 0);
+                }
+            } else {
+                // Bypass is only an exact dry-delay oracle, not a latency edit.
+                host.transition("Bypass", 1, 0, 0);
+                host.transition("Sidechain Blend", 100, 0, 0);
+                host.transition("Sidechain Active", 1, 0, 0);
+                const uint32 vocalLatency = rate == 96000 ? 2688u : 1344u;
+                host.transition("Sidechain Pitch", 12, 0, vocalLatency);
+                host.transition("Sidechain Pitch", 0, vocalLatency, 0);
+                host.transition("Sidechain Pitch", 12, 0, vocalLatency);
+                host.transition("Sidechain Pitch", -5, vocalLatency, vocalLatency);
+                host.transition("Sidechain Active", 0, vocalLatency, 0);
+                host.transition("Sidechain Pitch", 7, 0, 0); // Process off keeps Pitch dormant.
+                host.transition("Sidechain Active", 1, 0, vocalLatency);
+                host.transition("Sidechain Blend", 0, vocalLatency, 0);
+                host.transition("Sidechain Pitch", 12, 0, 0); // Zero Blend keeps Pitch dormant.
+                host.transition("Sidechain Blend", 100, 0, vocalLatency);
+                host.transition("Sidechain Blend", 50, vocalLatency, vocalLatency);
+                host.transition("Sidechain Pitch", 0, vocalLatency, 0);
+            }
+            ++cases;
+        } catch (const std::exception& error) {
+            ++failures;
+            std::cerr << "VST3 callback failure rate=" << rate << " channels=" << channels
+                      << " graph=" << (morph ? "Morph" : "Sidechain Blend") << ": " << error.what() << '\n';
+        }
+    }
+    std::cout << "VST3 automatic latency callbacks: " << cases << " fixtures passed, " << failures << " failed\n";
+    check(failures == 0, "released VST3 automatic latency callback regressions failed");
+}
+
 void render(IPluginFactory& factory, const TUID cid, double rate, int mainChannels, int outputChannels, int auxChannels, int variant) {
     Host host; IComponent* component=nullptr; IAudioProcessor* processor=nullptr;
     check(factory.createInstance(cid,IComponent_iid,reinterpret_cast<void**>(&component)) == kResultOk && component,"VST3 component creation failed");
@@ -291,6 +580,7 @@ int main(int argc,char** argv) {
             if(factory->getClassInfo(i,&info)==kResultOk && std::strcmp(info.category,kVstAudioEffectClass)==0) { found=true; break; }
         }
         check(found,"VST3 audio component missing");
+        automaticLatencyTransitions(*factory, info.cid);
         int cases=0;
         for(double rate : {44100.,48000.,96000.}) for(int layout=0;layout<4;++layout)
             for(int aux=0;aux<3;++aux) for(int variant=0;variant<3;++variant) {

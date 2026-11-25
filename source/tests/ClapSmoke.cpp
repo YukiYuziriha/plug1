@@ -10,13 +10,20 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cmath>
 #include <cstring>
+#include <exception>
 #include <filesystem>
+#include <functional>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -78,15 +85,34 @@ struct Instance {
     }
 
     static Instance& from(const clap_host_t* host) { return *static_cast<Instance*>(host->host_data); }
-    static void CLAP_ABI requestRestart(const clap_host_t* host) { ++from(host).restartRequests; }
+    static void CLAP_ABI requestRestart(const clap_host_t* host) {
+        ++from(host).restartRequests;
+        from(host).restartPending.store(true);
+    }
+    static void CLAP_ABI requestCallback(const clap_host_t* host) {
+        ++from(host).callbackRequests;
+        from(host).callbackPending.store(true);
+    }
+    static bool CLAP_ABI isMainThread(const clap_host_t* host) {
+        return std::this_thread::get_id() == from(host).mainThread;
+    }
+    static bool CLAP_ABI isAudioThread(const clap_host_t* host) {
+        return std::this_thread::get_id() == from(host).audioThread;
+    }
     static void CLAP_ABI latencyChanged(const clap_host_t* host) { ++from(host).latencyChanges; }
     static const void* CLAP_ABI extension(const clap_host_t*, const char* id) {
         static const clap_host_latency_t latency{latencyChanged};
-        return std::strcmp(id, CLAP_EXT_LATENCY) == 0 ? &latency : nullptr;
+        static const clap_host_thread_check_t threads{isMainThread, isAudioThread};
+        if (std::strcmp(id, CLAP_EXT_LATENCY) == 0) return &latency;
+        if (std::strcmp(id, CLAP_EXT_THREAD_CHECK) == 0) return &threads;
+        return nullptr;
     }
-    int restartRequests = 0, latencyChanges = 0;
+    std::atomic<int> restartRequests{0}, latencyChanges{0}, callbackRequests{0};
+    std::atomic<bool> restartPending{false}, callbackPending{false};
+    const std::thread::id mainThread = std::this_thread::get_id();
+    std::thread::id audioThread = mainThread;
     clap_host_t host{CLAP_VERSION, this, "Vocal Stack Test", "Vocal Stack", "", "1.0",
-                    extension, requestRestart, noRequest, noRequest};
+                    extension, requestRestart, noRequest, requestCallback};
     const clap_plugin_t* plugin = nullptr;
 };
 
@@ -422,11 +448,283 @@ void checkSpectralDonor(const clap_plugin_factory_t& factory, clap_id configurat
     expect(error<2.e-3, "CLAP routed external donor/main-phase/absence/channel oracle failed");
 }
 
+void pumpHost(Instance& instance);
+
+// Keep CLAP audio-thread lifecycle calls off the host/message thread. Each job
+// finishes before a restart can deactivate the plugin; never restart in process().
+class AudioThread {
+public:
+    explicit AudioThread(Instance& owner) : instance(owner), worker([this] {
+        std::unique_lock lock(mutex);
+        instance.audioThread = std::this_thread::get_id();
+        for (;;) {
+            changed.wait(lock, [this] { return quit || bool(job); });
+            if (quit) return;
+            auto work = std::move(job);
+            lock.unlock();
+            try { work(); } catch (...) { failure = std::current_exception(); }
+            lock.lock();
+            done = true;
+            changed.notify_all();
+        }
+    }) {}
+    ~AudioThread() {
+        { std::lock_guard lock(mutex); quit = true; }
+        changed.notify_all();
+        worker.join();
+    }
+    void run(std::function<void()> work) {
+        std::unique_lock lock(mutex);
+        done = false;
+        failure = nullptr;
+        job = std::move(work);
+        changed.notify_all();
+        while (!changed.wait_for(lock, std::chrono::milliseconds(1), [this] { return done; })) {
+            lock.unlock();
+            pumpHost(instance);
+            lock.lock();
+        }
+        if (failure) std::rethrow_exception(failure);
+    }
+private:
+    Instance& instance;
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::function<void()> job;
+    std::exception_ptr failure;
+    bool done = false, quit = false;
+    std::thread worker;
+};
+
+void pumpHost(Instance& instance) {
+#if defined(_WIN32)
+    // JUCE AsyncUpdater/Timer callbacks use the native message queue even with
+    // no editor open. on_main_thread alone does not dispatch these messages.
+    MSG message{};
+    for (unsigned count = 0; count < 256 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++count) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+#endif
+    for (unsigned count = 0; instance.callbackPending.exchange(false); ++count) {
+        expect(count < 32, "CLAP main-thread callback loop did not settle");
+        instance.plugin->on_main_thread(instance.plugin);
+    }
+}
+
+void loadXml(Instance& instance, const std::string& xml) {
+    Stream state;
+    state.bytes.resize(xml.size() + 9);
+    const uint32_t magic = 0x21324356, length = uint32_t(xml.size());
+    std::memcpy(state.bytes.data(), &magic, 4);
+    std::memcpy(state.bytes.data() + 4, &length, 4);
+    std::memcpy(state.bytes.data() + 8, xml.data(), xml.size());
+    expect(instance.get<clap_plugin_state_t>(CLAP_EXT_STATE).load(instance.plugin, &state.input),
+           "CLAP restart fixture state load failed");
+}
+
+void checkRestartExchange(const clap_plugin_factory_t& factory, clap_id configuration, double rate) {
+    Instance instance(factory);
+    const auto* plug = instance.plugin;
+    const auto& configs = instance.get<clap_plugin_audio_ports_config_t>(CLAP_EXT_AUDIO_PORTS_CONFIG);
+    expect(configs.select(plug, configuration), "Restart host sidechain configuration failed");
+    // Start with a zero-latency dry graph, leaving the dedicated sidechain Blend
+    // path connected. The host must discover latency changes, not force them.
+    loadXml(instance, R"(<VocalStack><PARAM id="levelOn" value="0"/><PARAM id="doubleOn" value="0"/><PARAM id="formantOn" value="0"/><PARAM id="advancedOn" value="1"/><PARAM id="voice1On" value="0"/><PARAM id="voice2On" value="0"/></VocalStack>)");
+    constexpr uint32_t maximum = 512;
+    const auto& latency = instance.get<clap_plugin_latency_t>(CLAP_EXT_LATENCY);
+    AudioThread audio(instance);
+    bool active = false, processing = false;
+    const auto stop = [&] {
+        if (processing) { audio.run([&] { plug->stop_processing(plug); }); processing = false; }
+        if (active) { plug->deactivate(plug); active = false; }
+    };
+    try {
+        expect(plug->activate(plug, rate, 1, maximum), "Restart host activation failed");
+        active = true;
+        uint32_t reportedLatency = latency.get(plug);
+        expect(reportedLatency == 0, "Restart fixture should start with zero latency");
+        pumpHost(instance);
+        expect(!instance.restartPending.load(), "CLAP initialization requested an unexpected restart");
+        const int initialRequests = instance.restartRequests.load();
+        int restarts = 0;
+        audio.run([&] { expect(plug->start_processing(plug), "Restart host start failed"); });
+        processing = true;
+        const uint32_t auxiliaryChannels = configuration / 3;
+        const uint32_t mainChannels = configuration % 3 == 0 ? 2 : 1;
+        const uint32_t outputChannels = configuration % 3 == 2 ? 1 : 2;
+        std::array<std::array<float, maximum>, 2> main{}, donor{}, output{};
+        std::array<float*, 2> mp{main[0].data(), main[1].data()};
+        std::array<float*, 2> dp{donor[0].data(), donor[1].data()};
+        std::array<float*, 2> op{output[0].data(), output[1].data()};
+        std::array<clap_audio_buffer_t, 2> inputs{{{mp.data(), nullptr, mainChannels, 0, 0},
+                                                {dp.data(), nullptr, auxiliaryChannels, 0, 0}}};
+        clap_audio_buffer_t out{op.data(), nullptr, outputChannels, 0, 0};
+        Events events;
+        clap_process_t process{};
+        process.audio_inputs = inputs.data(); process.audio_inputs_count = 2;
+        process.audio_outputs = &out; process.audio_outputs_count = 1;
+        process.in_events = &events.input; process.out_events = &events.output;
+        constexpr std::array<uint32_t, 7> sizes{512, 137, 3, 511, 17, 63, 257};
+        int64_t position = 0;
+        unsigned block = 0;
+        const auto serviceRestart = [&] {
+            pumpHost(instance);
+            if (!instance.restartPending.exchange(false)) return;
+            expect(++restarts <= 24, "CLAP endless host restart loop");
+            std::cout << "  servicing request " << restarts << std::endl;
+            expect(latency.get(plug) == reportedLatency, "CLAP latency changed before host deactivation");
+            audio.run([&] { plug->stop_processing(plug); });
+            processing = false;
+            plug->deactivate(plug); active = false;
+            expect(plug->activate(plug, rate, 1, maximum), "CLAP requested reactivation failed");
+            active = true;
+            reportedLatency = latency.get(plug);
+            std::cout << "  reactivated at latency " << reportedLatency << std::endl;
+            expect(reportedLatency <= uint32_t(rate), "CLAP reported unbounded latency");
+            audio.run([&] { expect(plug->start_processing(plug), "CLAP requested resume failed"); });
+            processing = true;
+            std::cout << "  audio resumed" << std::endl;
+        };
+        const auto renderBlock = [&] {
+            process.frames_count = sizes[block++ % sizes.size()];
+            process.steady_time = position;
+            for (uint32_t i = 0; i < process.frames_count; ++i) {
+                const double t = double(position + i) / rate;
+                main[0][i] = main[1][i] = float(.12 * std::sin(6.283185307179586 * 220 * t));
+                donor[0][i] = donor[1][i] = float(.10 * std::sin(6.283185307179586 * 330 * t));
+            }
+
+            audio.run([&] { expect(plug->process(plug, &process) != CLAP_PROCESS_ERROR,
+                                   "CLAP restart exchange process failed"); });
+            events.items.clear();
+            double energy = 0;
+            for (uint32_t c = 0; c < outputChannels; ++c)
+                for (uint32_t i = 0; i < process.frames_count; ++i) {
+                    const float value = output[c][i];
+                    expect(std::isfinite(value) && std::abs(value) < 4.f,
+                           "CLAP restart exchange produced nonfinite/unbounded audio");
+                    energy += double(value) * value;
+                }
+            position += process.frames_count;
+            serviceRestart();
+
+            return energy;
+        };
+        int previousRequests = initialRequests;
+        const auto settle = [&](const char* label, bool requireRestart) {
+            std::cout << "Restart exchange begin " << configuration << ", " << rate << " Hz, " << label << std::endl;
+            const int before = restarts, requests = previousRequests;
+            const int64_t end = position + int64_t(rate * 2);
+            // Include real timer periods as well as sustained audio. Sleeping
+            // per tiny block is much slower on Windows' default timer quantum.
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(150);
+            while (position < end || std::chrono::steady_clock::now() < deadline) renderBlock();
+            expect(restarts - before <= 2 && instance.restartRequests.load() - requests <= 2,
+                   "CLAP change caused repeated restart requests");
+            if (requireRestart) {
+                expect(restarts > before && instance.restartRequests.load() > requests,
+                       "CLAP latency change did not request host restart");
+            } else {
+                expect(restarts == before && instance.restartRequests.load() == requests,
+                       "CLAP unchanged latency caused an unnecessary restart");
+            }
+            const int settled = restarts, settledRequests = instance.restartRequests.load();
+            double energy = 0;
+            const int64_t holdEnd = position + int64_t(rate * 2);
+            const auto holdDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(150);
+            while (position < holdEnd || std::chrono::steady_clock::now() < holdDeadline) energy += renderBlock();
+            expect(restarts == settled && instance.restartRequests.load() == settledRequests,
+                   "CLAP sustained configured audio caused a restart loop");
+            expect(energy > .01, "CLAP audio stayed silent after restart settling");
+            expect(latency.get(plug) == reportedLatency, "CLAP settled latency changed without restart");
+            std::cout << "Restart exchange " << configuration << ", " << rate << " Hz, " << label
+                      << ": requests=" << instance.restartRequests.load() - requests
+                      << ", restarts=" << restarts - before << ", latency=" << reportedLatency << '\n';
+            previousRequests = instance.restartRequests.load();
+        };
+        const auto set = [&](const char* name, double value) {
+            const auto parameter = getParameter(instance, name);
+            double hostValue = value;
+            // The wrapper can expose normalized continuous ranges. Use its
+            // public text conversion for semitones/percent, not guessed scaling.
+            if ((parameter.flags & CLAP_PARAM_IS_STEPPED) == 0)
+                expect(instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS).text_to_value(
+                           plug, parameter.id, std::to_string(value).c_str(), &hostValue),
+                       "Restart automation text conversion failed");
+            expect(hostValue >= parameter.min_value && hostValue <= parameter.max_value,
+                   "Restart automation outside parameter range");
+            events.set(parameter.id, hostValue);
+        };
+        settle("sidechain configured", false);
+        set("Sidechain Pitch", 7); set("Sidechain Blend", 50);
+        settle("pitch/Blend with Process off", false);
+        expect(reportedLatency == 0, "Bypassed sidechain processing introduced vocal latency");
+        set("Sidechain Active", 1);
+        settle("Process on", true);
+        expect(reportedLatency > 0, "Processed sidechain pitch did not acquire automatic latency");
+        set("Sidechain Active", 0);
+        settle("Process off", true);
+        expect(reportedLatency == 0, "Process off did not release automatic latency");
+        set("Sidechain Active", 1); set("Sidechain Blend", 0);
+        settle("Blend zero", false);
+        expect(reportedLatency == 0, "Zero Blend introduced vocal latency");
+        set("Sidechain Blend", 50);
+        settle("Blend restored", true);
+        set("Sidechain Blend", 0);
+        settle("live Blend zero", true);
+        expect(reportedLatency == 0, "Live zero Blend did not release automatic latency");
+        set("Sidechain Blend", 50);
+        settle("live Blend restored", true);
+        set("Sidechain Pitch", -5);
+        settle("live pitch", false);
+        set("Sidechain Pitch", 0);
+        settle("pitch zero", true);
+        expect(reportedLatency == 0, "Zero pitch did not release automatic latency");
+        set("Sidechain Pitch", 7);
+        settle("pitch restored", true);
+        set("Sidechain Active", 0);
+        settle("sidechain bypass before voices", true);
+        set("Advanced Doubler", 1); set("Voice 1 Active", 1);
+        set("Voice 1 Pitch", 5);
+        // Existing stable voice slots are host-exposed, unlike UI-only Add.
+        set("Voice 1 Present", 1);
+        set("Doubler Active", 1);
+        settle("voice on", true);
+        set("Voice 1 Present", 0);
+        settle("voice removed", true);
+        expect(reportedLatency == 0, "Removed voice retained automatic latency");
+        set("Voice 1 Present", 1);
+        settle("voice restored", true);
+        set("Voice 1 Active", 0); set("Voice 2 Active", 0);
+        settle("voices off", true);
+
+        // State recall installs a Morph graph through the public CLAP API;
+        // subsequent off/on uses actual FX automation while processing.
+        std::cout << "Restart exchange loading Morph" << std::endl;
+        loadXml(instance, R"(<VocalStack><PARAM id="levelOn" value="0"/><PARAM id="doubleOn" value="0"/><PARAM id="formantOn" value="0"/><PARAM id="fx1Mix" value="100"/><PARAM id="fx1MorphAmount" value="100"/><RoutingGraph sidechainBlendRouting="1"><Node id="1" type="0"/><Node id="14" type="22"/><Node id="100" type="23" mix="1"/><Node id="13" type="5"/><Link source="1" destination="100" inputPin="0"/><Link source="14" destination="100" inputPin="1"/><Link source="100" destination="13" inputPin="0"/></RoutingGraph></VocalStack>)");
+        settle("Morph installed", true);
+        expect(reportedLatency == 4096, "Morph restart latency should be 4096 samples");
+        set("FX 1 Active", 0);
+        settle("Morph off", true);
+        expect(reportedLatency == 0, "Morph off did not release latency");
+        set("FX 1 Active", 1);
+        settle("Morph on", true);
+        expect(reportedLatency == 4096, "Morph on did not restore latency");
+        expect(instance.restartRequests.load() - initialRequests <= 24, "CLAP restart request budget exceeded");
+        stop();
+    } catch (...) {
+        stop();
+        throw;
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::cerr << "Usage: vocalstack_clap_smoke <plugin.clap>\n";
+    const bool restartOnly = argc == 3 && std::string_view(argv[2]) == "--restart-only";
+    if (argc != 2 && !restartOnly) {
+        std::cerr << "Usage: vocalstack_clap_smoke <plugin.clap> [--restart-only]\n";
         return 2;
     }
     try {
@@ -439,8 +737,17 @@ int main(int argc, char** argv) {
                    && std::string_view(descriptor->version) == VOCALSTACK_EXPECTED_VERSION,
                "CLAP descriptor version does not match the source release");
         std::cout << "CLAP version " << descriptor->version << " verified\n";
-        checkHostControls(*factory);
-        checkState(*factory);
+        if (!restartOnly) {
+            checkHostControls(*factory);
+            checkState(*factory);
+        }
+        for (clap_id configuration : {3u, 6u})
+            for (double rate : {44100., 48000., 96000.})
+                checkRestartExchange(*factory, configuration, rate);
+        if (restartOnly) {
+            std::cout << "CLAP live host restart exchange checks passed\n";
+            return 0;
+        }
         for (clap_id configuration = 0; configuration < 9; ++configuration)
             for (double rate : {44100., 48000., 96000.}) { checkLayout(*factory, configuration, rate); checkSpectralDonor(*factory, configuration, rate); }
         std::cout << "CLAP state, latency, bypass, automation and offline layout checks passed\n";
