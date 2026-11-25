@@ -36,7 +36,7 @@ public:
         surfaceMaterial.paint(g, getLocalBounds(), device ? juce::Colour(0xff202421) : palette.panel,
                     palette.accent, fluidAnimationSeconds(*this), .25f);
         auto plot = plotBounds();
-        g.setFont(juce::Font(pixelFontOptions(11.0f)));
+        g.setFont(themeFont(componentTheme(*this, neon), 11.0f));
         g.setColour(device ? juce::Colour(0xffaebaca) : palette.muted);
         g.drawText("VOICE MOTION   /   fine detune +/-150 ct", 10, 2, 330, 18, juce::Justification::centredLeft);
         const auto axis = plot.toNearestInt().withHeight(14).translated(0, -15);

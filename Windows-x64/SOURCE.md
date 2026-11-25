@@ -1,9 +1,11 @@
 # HEAVEN: licenses, corresponding source and build provenance
 
-Current delivery: **HEAVEN by lil grass block 1.13.4**, with adaptive DSP and
-latency based on enabled processing. Release-build evidence and exact binary and
-source-input hashes are in `BUILD-PROVENANCE.json`; see
-[the release record](../docs/Release-1.13.4-Validation.md).
+This notice covers **HEAVEN by lil grass block 1.14.0**. See
+[Getting Started](../docs/Getting-Started.md) for Sidechain Blend, the independent
+Sidechain card, Gain Rider and the four skins. Use `BUILD-PROVENANCE.json` from
+an archive of this version to check its build evidence and exact binary and
+source-input hashes. See the [v1.14.0 validation record](../docs/Release-1.14.0-Validation.md)
+for the checks run on this build.
 
 These CLAP/VST3 binaries combine GPLv3-covered Vocal Stack/Vital code with JUCE
 8.0.12 under **AGPLv3**, using the combination permission in section 13 of both
@@ -11,8 +13,8 @@ licenses. GPL-covered parts retain GPLv3; third-party components retain their
 own terms. This is not a GPLv3-only binary or a claim of a commercial JUCE license.
 
 Keep `LICENSE.txt`, `COPYING.AGPLv3`, `PixelifySans-OFL.txt`, this file and the
-complete `ThirdParty` folder with redistributed copies. The software is supplied
-without warranty, as detailed in those licenses.
+complete `ThirdParty` folder (including `Oxanium-OFL.txt`) with redistributed
+copies. The software is supplied without warranty, as detailed in those licenses.
 
 Project source: <https://github.com/YukiYuziriha/plug1>. See
 [Building](../docs/Building.md) and [Licensing](../docs/Licensing.md) in the full
@@ -20,13 +22,13 @@ repository and corresponding-source ZIP for build and license details.
 
 ## Release source and evidence
 
-The release pairs `HEAVEN-1.13.4-Windows-x64.zip` with
-`HEAVEN-1.13.4-corresponding-source.zip` and `SHA256SUMS.txt`, providing source
-access at no extra charge under GPLv3/AGPLv3 section 6(d). The archive root is
-`HEAVEN-1.13.4/`; other versions use their selected version.
+The release assets are named `HEAVEN-1.14.0-Windows-x64.zip`,
+`HEAVEN-1.14.0-corresponding-source.zip` and `SHA256SUMS.txt`. Corresponding
+source is offered at no extra charge under GPLv3/AGPLv3 section 6(d). The source
+archive root is `HEAVEN-1.14.0/`; other versions use their selected version.
 
 The source ZIP includes the editable project, build/patch scripts, retained
-Vital subset, font, licenses/notices, and complete pinned external sources for
+Vital subset, embedded fonts, licenses/notices, and complete pinned sources for
 JUCE, CLAP JUCE extensions (including enabled CLAP submodules), Signalsmith
 Linear and Signalsmith Stretch. Dependencies are exported from pinned Git caches
 or hash-verified upstream archives, not from potentially patched cache contents.
@@ -56,12 +58,12 @@ containing `0`. Use the actual build/log locations for your build.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Test-Release-Bundles.py
 ```
 
-After completing and validating the 1.13.4 Release build:
+After completing and validating the 1.14.0 Release build:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Refresh-Windows-Package.py --build-directory source/build --build-log source/build/release-build.log --build-exit-file source/build/release-build.exit --version 1.13.4
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Release-Assets.py --working-tree --version 1.13.4 --deps-cache source/build/_deps --output-directory source/build/publication-1.13.4
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Verify-Release-Assets.py --directory source/build/publication-1.13.4 --version 1.13.4
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Refresh-Windows-Package.py --build-directory source/build --build-log source/build/release-build.log --build-exit-file source/build/release-build.exit --version 1.14.0
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Release-Assets.py --working-tree --version 1.14.0 --deps-cache source/build/_deps --output-directory source/build/publication-1.14.0
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Verify-Release-Assets.py --directory source/build/publication-1.14.0 --version 1.14.0
 ```
 
 Refresh changes repository delivery files only, never installed plugins. It
@@ -77,7 +79,7 @@ documents; it includes the selected release validation document if present.
 Use a new output directory; existing ZIPs are not overwritten. Source-only export:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Corresponding-Source.py --working-tree --deps-cache source/build/_deps --output source/build/HEAVEN-1.13.2-corresponding-source.zip
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Corresponding-Source.py --working-tree --deps-cache source/build/_deps --output source/build/HEAVEN-1.14.0-corresponding-source.zip
 ```
 
 `--revision COMMIT` is available for an exact, independently established

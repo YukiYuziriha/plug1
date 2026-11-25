@@ -228,8 +228,15 @@ inline const auto stereoMonoIdStorage = [] {
 inline juce::String stereoMonoParameterId(size_t slot) {
     return slot > 0 && slot < 16 ? juce::String(stereoMonoIdStorage[slot - 1]) : juce::String();
 }
+inline constexpr size_t sidechainBlendParameterIndex = vocalGlitchParameterStart + 15 * vocalGlitchParameterCount;
+static_assert(sidechainBlendParameterIndex == 2447);
+inline constexpr size_t sidechainParameterStart = sidechainBlendParameterIndex + 1;
+inline constexpr std::array<const char*, 9> sidechainParameterIds{
+    "sidechainOn", "sidechainGain", "sidechainPan", "sidechainDelay", "sidechainDetune",
+    "sidechainFormant", "sidechainDepth", "sidechainRate", "sidechainPitch"
+};
 inline const auto parameterIds = [] {
-    std::array<const char*, vocalGlitchParameterStart + 15 * vocalGlitchParameterCount> ids{};
+    std::array<const char*, sidechainParameterStart + sidechainParameterIds.size()> ids{};
         static_assert(utilityParameterStart + 15 * utilityParameterCount == newCreativeParameterStart);
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
@@ -253,6 +260,8 @@ inline const auto parameterIds = [] {
         ids[utilityParameterStart + i] = utilityParameterIdStorage[i].c_str();
     for (size_t i = 0; i < spectralMorphIdStorage.size(); ++i) ids[spectralMorphParameterStart + i] = spectralMorphIdStorage[i].c_str();
     for (size_t i = 0; i < stereoMonoIdStorage.size(); ++i) ids[stereoMonoParameterStart + i] = stereoMonoIdStorage[i].c_str();
+    ids[sidechainBlendParameterIndex] = "sidechainBlend";
+    for (size_t i = 0; i < sidechainParameterIds.size(); ++i) ids[sidechainParameterStart + i] = sidechainParameterIds[i];
     return ids;
 }();
 static_assert(parameterIds.size() <= ModulationBackend::maxTargets);
@@ -355,6 +364,7 @@ public:
 
     Graph getRoutingGraph() const;
     bool setRoutingGraph(const Graph&, juce::String& error);
+    bool ensureSidechainBlend(juce::String& error);
     // Bit n is unavailable for new allocation in disposable FX slot n (1..15).
     unsigned spentFxSlots() const;
     juce::String getRoutingError() const;
@@ -451,7 +461,7 @@ private:
     int64_t glitchExpectedSamplePosition = 0;
     std::atomic<uint32_t> glitchRequests{0};
     std::atomic<double> hostTempo{120};
-    std::atomic<int> skin{0};
+    std::atomic<int> skin{1};
     std::atomic<bool> advancedVisible{false}, advancedInitialized{false};
     MeterBridge metering;
     std::atomic<bool> meterResetRequested{false};
@@ -459,7 +469,7 @@ private:
     // Never acquired by render/settings/parameterChanged. Hosts may restore state
     // on a non-message control thread; all engine control calls are serialized.
     mutable std::recursive_mutex controlMutex;
-    Graph routingDraft = defaultGraph(false), routingActive = routingDraft;
+    Graph routingDraft = defaultGraph(false, true), routingActive = routingDraft;
     // Retain owners even when their nodes are absent. Graph history may restore
     // an owner but can never roll these records back.
     FxSlotOwners fxSlotOwners{};

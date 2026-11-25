@@ -160,13 +160,15 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
     const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
-    expect(params.count(instance.plugin) == 2447, "Expected 2357 preserved + 90 Vocal Glitch parameters");
+    expect(params.count(instance.plugin) == 2457, "Expected 2447 legacy parameters, Sidechain Blend, and nine Sidechain card parameters");
     for (uint32_t i = 0; i < params.count(instance.plugin); ++i) {
         clap_param_info_t info{};
         expect(params.get_info(instance.plugin, i, &info), "Host parameter metadata missing");
         expect((info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0, "Appended host parameter cannot be automated");
         if (i < names.size()) expect(names[i] == info.name, "Original parameter index/name changed");
         if (i == 10) expect(std::string_view(info.name) == "Advanced Doubler", "Legacy Advanced index changed");
+        if (i == 2447) expect(std::string_view(info.name) == "Sidechain Blend" && info.default_value == info.min_value,
+                              "Sidechain Blend must stay at index 2447 and default to 0%");
         if (i >= 11 && i < 43) {
             constexpr std::array<std::string_view, 8> fields{"Active", "Gain", "Pan", "Delay", "Detune", "Formant", "Depth", "Rate"};
             const auto expected = "Voice " + std::to_string(1 + (i - 11) / 8) + " " + std::string(fields[(i - 11) % 8]);
@@ -205,7 +207,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
            "Output remote controls are mapped incorrectly");
     for (size_t i = 2; i < CLAP_REMOTE_CONTROLS_COUNT; ++i)
         expect(page.param_ids[i] == CLAP_INVALID_ID, "An unused Output remote slot is not empty");
-    std::cout << "2447 automatable parameters and two remote pages verified; original indices unchanged\n";
+    std::cout << "2457 automatable parameters and two remote pages verified; original indices unchanged\n";
 }
 
 void checkState(const clap_plugin_factory_t& factory) {

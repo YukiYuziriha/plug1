@@ -6,19 +6,19 @@ HEAVEN is an open-source audio effect for **Windows x64 · CLAP and VST3**. Turn
 
 [Download the latest release](https://github.com/YukiYuziriha/plug1/releases/latest) · [Install](#download--install) · [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase)
 
-## v1.13.4 — Less CPU when you just want an effect
+## v1.14.0 — Bring your own double
 
-**53.5–59.4% less audio-thread CPU than v1.13.3** in a single stereo Delay patch with the vocal modules off. The patch reported **0 samples of latency** and matched the latency-aligned impulse response. Measured offline in Windows CLAP at **44.1, 48 and 96 kHz**, with **64- and 512-frame blocks** and **five paired runs per configuration**. State recall from released v1.13.3 was also verified offline.
+Send a recorded double to HEAVEN’s host sidechain and blend it with your Lead right from Stack. **Sidechain Blend** comes wired in the standard patch, and the independent **Sidechain card** lets you tune, pan and shape the double without touching the Lead. Leave **Process** off to blend the raw take instead. The card follows the host-enabled bus, not whether a track is routed to it or making sound.
 
-Disabled vocal modules and rack FX stop processing without losing their settings or wiring. When a patch changes the required latency, HEAVEN requests automatic reactivation in CLAP and VST3; the host decides when to apply it.
+The Lead card now houses **Gain Rider**, with a live dB readout so you can see what it adds or cuts. **Neon** is the default for fresh instances, and **Grass Block** adds a pixel-style skin. [Set up a sidechain double](docs/Getting-Started.md#blend-a-recorded-double-with-sidechain).
 
 ## What you can make
 
 - **Doubles and layered harmonies.** Shape pitch, fine detune, formant, gain, pan, delay and motion per generated voice, with independent Lead edits. Start clean or pick from [30 factory presets](docs/Factory-Presets.md).
 - **Parallel and multiband effects.** Give voices their own FX, split signals into two or three bands, and recombine branches with Dry/Wet mixers. Main Bus FX tabs edit the same nodes as Routing.
-- **Spectral crossbreeds.** Blend a donor’s spectrum into your vocal with Spectral Morph’s **MAIN** and **DONOR** inputs, Magnitude and Envelope modes, and donor Freeze. Feed it an internal branch or a mono/stereo host sidechain.
+- **Spectral crossbreeds.** Blend a donor’s spectrum into your vocal with Spectral Morph’s **MAIN** and **DONOR** inputs, Magnitude and Envelope modes, and donor Freeze. Feed it an internal branch or the raw mono/stereo host sidechain, independent of the Sidechain card.
 - **Glitch fills and grain echoes.** Grab a phrase and fire reverses or ratchets with Vocal Glitch, including MIDI triggering. Give Granular its own Delay on the wet path so the echoes follow Granular’s Mix.
-- **Tone, space and movement.** EQ8, Waveshaper, Chorale, Delay, Reverb, synthetic-IR Convolution, Saturator, Compressor, Bitcrusher, Granular, Gain, Stereo, Gate/Expander, XP Filter and Synth Filter. Animate patches with LFO or Random modulation, save full-patch presets, and switch between Device, Neon and Spectral themes. Routing has Undo/Redo, and input/output meters show RMS and sample peaks.
+- **Tone, space and movement.** EQ8, Waveshaper, Chorale, Delay, Reverb, synthetic-IR Convolution, Saturator, Compressor, Bitcrusher, Granular, Gain, Stereo, Gate/Expander, XP Filter and Synth Filter. Animate patches with LFO or Random modulation, save full-patch presets, and switch between Device, Neon, Spectral and Grass Block themes. Routing has Undo/Redo, and input/output meters show RMS and sample peaks.
 
 ## Showcase
 
@@ -49,7 +49,7 @@ Get the **Windows x64 ZIP**, **SHA256 checksums**, and **corresponding source** 
 | CLAP | `HEAVEN by lil grass block.clap` | `%LOCALAPPDATA%\Programs\Common\CLAP\` or `C:\Program Files\Common Files\CLAP\` |
 | VST3 | The **entire** `HEAVEN by lil grass block.vst3` folder, including `Contents` | `%LOCALAPPDATA%\Programs\Common\VST3\` or `C:\Program Files\Common Files\VST3\` |
 
-Close hosts that have HEAVEN loaded before replacing it. Add the install location to your host’s scan paths if needed, rescan, and insert **HEAVEN by lil grass block** as an audio effect. Keep the included license files, source notice, font license and third-party notices with your copy. No macOS, Linux or standalone binaries are supplied.
+Close hosts that have HEAVEN loaded before replacing it. Add the install location to your host’s scan paths if needed, rescan, and insert **HEAVEN by lil grass block** as an audio effect. Keep the included license files, source notice, font licenses and third-party notices with your copy. No macOS, Linux or standalone binaries are supplied.
 
 ## First patch
 
@@ -64,4 +64,4 @@ Close hosts that have HEAVEN loaded before replacing it. Add the install locatio
 
 Open source under **GPLv3 + AGPLv3**: project-owned code retains [GPLv3](LICENSE), with JUCE used under its [AGPLv3](COPYING.AGPLv3) option. See [licensing and corresponding source](docs/Licensing.md) for combined-work and redistribution terms, and [historical source downloads](docs/Historical-Source.md) for older releases.
 
-[Third-party notices](ThirdParty) cover JUCE, CLAP/CLAP JUCE Extensions, the VST3 SDK, Signalsmith Stretch/Linear, the GPL-covered [Vital filter subset](ThirdParty/Vital/README.md), and Pixelify Sans under the [SIL Open Font License 1.1](ThirdParty/PixelifySans-OFL.txt). Embedded dependency notices also apply. Convolution uses original synthetic Church, Hall, Room and Plate IRs.
+[Third-party notices](ThirdParty) cover JUCE, CLAP/CLAP JUCE Extensions, the VST3 SDK, Signalsmith Stretch/Linear, the GPL-covered [Vital filter subset](ThirdParty/Vital/README.md), and [Pixelify Sans](ThirdParty/PixelifySans-OFL.txt) and [Oxanium](ThirdParty/Oxanium-OFL.txt) under the SIL Open Font License 1.1. Embedded dependency notices also apply. Convolution uses original synthetic Church, Hall, Room and Plate IRs.

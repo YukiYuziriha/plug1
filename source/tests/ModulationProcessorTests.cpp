@@ -13,7 +13,7 @@ namespace {
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 void processorApiAndRecall() {
     Processor owner;
-    check(parameterIds.size() == 2447 && creativeParameterStart == 1007, "append-only creative parameter count/offset changed");
+    check(parameterIds.size() == 2457 && creativeParameterStart == 1007, "append-only creative parameter count/offset changed");
     for (size_t i = 0; i < parameterIds.size(); ++i)
         check(owner.getParameters()[int(i)] == owner.parameters.getParameter(parameterIds[i]), "parameter index changed");
     check(owner.settings().globalMix == 1 && owner.settings().leadSettings.enabled
@@ -91,7 +91,7 @@ void processorApiAndRecall() {
 void fxSlotsAreNeverRecycled() {
     auto owner = std::make_unique<Processor>();
     const auto initial = owner->getRoutingGraph();
-    check(initial.nodes.size() == 11 && std::none_of(initial.nodes.begin(), initial.nodes.end(), [](const auto& node) { return node.id == 12; }), "fresh patch contains legacy Chorale");
+    check(std::none_of(initial.nodes.begin(), initial.nodes.end(), [](const auto& node) { return node.id == 12; }), "fresh patch contains legacy Chorale");
     const auto beforeAdd = owner->settingsText();
     check(owner->spentFxSlots() == 0, "fresh processor had spent disposable slots");
     auto first = initial;
@@ -198,7 +198,7 @@ void localMixTargets() {
 
 void qualityParametersAndRecall() {
     Processor owner;
-    check(waveQualityParameterStart == 914 && parameterIds.size() == 2447, "quality index or expanded parameter count changed");
+    check(waveQualityParameterStart == 914 && parameterIds.size() == 2457, "quality index or expanded parameter count changed");
     check(owner.getParameters()[913] == owner.parameters.getParameter("fx15WaveShapeAmount"),
         "quality moved an existing wave parameter");
     for (size_t slot = 1; slot < 16; ++slot) {

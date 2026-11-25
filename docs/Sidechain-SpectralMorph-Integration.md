@@ -1,4 +1,6 @@
-# SIDECHAIN / Spectral Morph integration
+# SIDECHAIN / Spectral Morph integration (v1.11.0 archive)
+
+For current [Sidechain Blend and Spectral Morph setup](Getting-Started.md#blend-a-recorded-double-with-sidechain), use Getting Started. The validation and fixed-reserve design below describe the v1.11.0 preview, not v1.14.0.
 
 The initial source-only checkpoint is superseded by the implemented, Release-built
 **1.11.0 source preview**. The parent explicitly completed the visual handoff;

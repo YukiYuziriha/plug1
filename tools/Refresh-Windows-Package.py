@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import tempfile
 
+from release_fonts import require_oxanium_files
+
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT_NAME = 'HEAVEN by lil grass block'
 
@@ -58,6 +60,7 @@ def main():
         inputs += [p for p in (ROOT / directory).rglob('*') if p.is_file()]
     if f'PRODUCT_NAME "{PRODUCT_NAME}"' not in cmake:
         raise RuntimeError('Source product name differs from HEAVEN delivery')
+    require_oxanium_files(cmake, {p.relative_to(ROOT).as_posix() for p in inputs}.__contains__)
     newest_input = max(p.stat().st_mtime_ns for p in inputs)
     hashes = {}
     for name, binary in binaries.items():

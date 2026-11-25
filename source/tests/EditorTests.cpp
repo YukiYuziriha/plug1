@@ -86,7 +86,7 @@ void advancedParameterContract() {
     Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 2447, "Expected 2357 preserved + 90 Vocal Glitch parameters");
+    expect(owner.getParameters().size() == 2457, "Expected 2447 legacy parameters, Sidechain Blend, and nine Sidechain card parameters");
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
             const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
@@ -644,7 +644,7 @@ void editorSkin(int theme) {
     editor->setVisible(true);
     expectPassiveControls(*editor);
 
-    constexpr std::array<const char*, 7> names{"Leveler", "Lead / Stack", "Human", "Width", "Formant", "Output", "Mix"};
+    constexpr std::array<const char*, 7> names{"Sidechain", "Lead / Stack", "Human", "Width", "Formant", "Output", "Mix"};
     std::array<juce::Slider*, names.size()> knobs{};
     std::vector<juce::Component*> controls;
     MeterPanel* meters = nullptr;
@@ -691,7 +691,8 @@ void editorSkin(int theme) {
     for (size_t i = 0; i < knobs.size(); ++i) {
         expect(knobs[i] != nullptr, skin + " is missing knob " + names[i]);
         expect(knobs[i]->isDoubleClickReturnEnabled(), skin + " knob does not reset on double-click: " + names[i]);
-        const auto& target = parameter(owner, i < vocalstack::knobParameterIds.size() ? vocalstack::knobParameterIds[i] : "globalMix");
+        const auto& target = parameter(owner, i == 0 ? "sidechainBlend" :
+            i < vocalstack::knobParameterIds.size() ? vocalstack::knobParameterIds[i] : "globalMix");
         const auto expected = i == 4 || i == 5 ? 0.0f : target.convertFrom0to1(target.getDefaultValue());
         expectNear(knobs[i]->getDoubleClickReturnValue(), expected, skin + " knob double-click default: " + names[i]);
     }
@@ -714,9 +715,10 @@ void editorSkin(int theme) {
     for (auto* control : controls)
         if (auto* button = dynamic_cast<juce::Button*>(control);
             button != nullptr && button->getButtonText().startsWith("SKIN")) {
-            for (int step = 1; step <= 3; ++step) {
+            constexpr int themeCount = int(vocalstack::Theme::grass) + 1;
+            for (int step = 1; step <= themeCount; ++step) {
                 button->onClick();
-                expect(owner.getSkin() == (theme + step) % 3, "Skin button must cycle all three themes");
+                expect(owner.getSkin() == (theme + step) % themeCount, "Skin button must cycle all four themes");
                 expect(int(editor->getProperties()[vocalstack::vocalstackThemeProperty]) == owner.getSkin(),
                        "Editor root theme did not follow skin button");
                 expectPassiveControls(*editor);

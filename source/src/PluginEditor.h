@@ -43,7 +43,7 @@ private:
         FluidBackground arcTexture{FluidBackground::Material::control};
         juce::Label* createSliderTextBox(juce::Slider& slider) override {
             auto* label = createPassiveSliderTextBox(juce::LookAndFeel_V4::createSliderTextBox(slider));
-            label->setFont(juce::Font(pixelFontOptions(14.f)));
+            label->setFont(themeFont(slider, 14.f));
             label->setMinimumHorizontalScale(1.f);
             return label;
         }
@@ -56,12 +56,15 @@ private:
     void visibilityChanged() override;
     void applyTheme();
     void updateBypassControls(float bypassValue);
+    void updateGainRiderReadout(float correctionDb);
+    void syncSidechain(bool force = false);
+    void updateSidechainAppearance(bool available);
     void syncDrawer();
     void layoutStackRack();
     void openRouting();
     void drawDevice(juce::Graphics&);
-    void drawFlash(juce::Graphics&);
-        void drawSpectral(juce::Graphics&);
+    void drawGrid(juce::Graphics&);
+    void drawSpectral(juce::Graphics&);
     void rememberWindow();
     void revealParameter(const juce::String&);
     bool keyPressed(const juce::KeyPress&) override;
@@ -88,7 +91,11 @@ private:
     int selectedVoiceSlot = -1;
     std::array<ModulationSlider, knobParameterIds.size()> knobs;
     ParameterKnob globalMix;
-    juce::Label assignmentBanner;
+    ModulationSlider sidechainBlend;
+    juce::Label assignmentBanner, sidechainLabel, gainRiderReadout;
+    juce::Component gainRiderControls;
+    bool sidechainInsertionChecked = false;
+    double nextSidechainPollMs = 0.0;
     juce::TextButton endAssignment;
     std::array<juce::Label, knobParameterIds.size()> labels;
     std::array<modulationui::Button, switchParameterIds.size()> switches;
@@ -100,6 +107,7 @@ private:
     MainBusFxRackPanel mainBusFxRack;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, knobParameterIds.size()> knobLinks;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, switchParameterIds.size()> switchLinks;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sidechainLink;
     std::unique_ptr<juce::ParameterAttachment> bypassUiLink;
     juce::TooltipWindow tips{this, 530};
     juce::BubbleMessageComponent revealBubble;

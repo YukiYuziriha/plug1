@@ -26,13 +26,14 @@ public:
     }
     static void label(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& s, juce::Colour c,
                       juce::Justification align = juce::Justification::centredLeft) {
-        g.setColour(c); g.setFont(juce::Font(pixelFontOptions(12.f))); g.drawText(s, r, align, false);
+        g.setColour(c); g.drawText(s, r, align, false);
     }
     void paint(juce::Graphics& g, juce::Rectangle<float> bounds, const FxMonitorFrame& frame,
-               const reactiveVisual::GainReductionField& gr, bool active, Model model, Colours c) {
+               const reactiveVisual::GainReductionField& gr, bool active, Model model, Colours c, Theme theme = Theme::device) {
         const auto r = plotBounds(bounds);
         if (r.isEmpty()) return;
         g.setColour(c.background); g.fillRect(r);
+        g.setFont(themeFont(theme, 12.f));
         label(g, {bounds.getX(), bounds.getY(), bounds.getWidth()-52, 15},
                       bounds.getWidth()<290 ? "dBFS / RMS" : "Output dBFS / RMS", c.text);
                 label(g, {bounds.getRight()-48, bounds.getY(), 48, 15}, "GR dB", c.gr, juce::Justification::centredRight);

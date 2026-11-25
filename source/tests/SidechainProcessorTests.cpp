@@ -9,6 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 namespace { thread_local bool audioThread = false; unsigned allocations=0, destructions=0; }
 void* operator new(std::size_t n) { if(audioThread) ++allocations; if(auto* p=std::malloc(n ? n : 1)) return p; throw std::bad_alloc(); }
@@ -160,6 +161,156 @@ void busMatrix() {
         owner->processBlock(silence, midi);
         for (int c = 0; c < outputChannels; ++c) check(silence.getSample(c, 0) == 0, "reprepare leaked auxiliary history");
     }
+}
+
+void sidechainBlendContract() {
+    static_assert(sidechainBlendParameterIndex == 2447 && parameterIds.size() == 2457);
+    static_assert(int(NodeType::sidechainBlend) == 25 && sidechainBlendNodeId == 15);
+    const auto setPercent = [](Processor& owner, const char* id, float percent) {
+        auto* p = owner.parameters.getParameter(id);
+        check(p != nullptr, "Sidechain Blend fixture parameter missing");
+        p->setValueNotifyingHost(p->convertTo0to1(percent));
+    };
+    const auto topology = [](const Graph& graph) {
+        return processorRouting::encode(graph, "RoutingGraph");
+    };
+    const auto canonical = defaultGraph(false);
+    auto owner = std::make_unique<Processor>();
+    auto* blend = owner->parameters.getParameter("sidechainBlend");
+    check(blend && owner->getParameters().size() == 2457 && owner->getParameters()[2447] == blend
+        && blend->isAutomatable() && blend->getDefaultValue() == 0.f, "Sidechain Blend host contract changed");
+    juce::String error;
+    check(topology(owner->getRoutingGraph()).isEquivalentTo(topology(defaultGraph(false, true))),
+        "Fresh processor missing canonical Sidechain Blend routing");
+    check(owner->setRoutingGraph(canonical, error) && owner->ensureSidechainBlend(error),
+        "Sidechain Blend insertion failed on canonical Lead wiring");
+    const auto inserted = owner->getRoutingGraph();
+    check(inserted.nodes.size() == canonical.nodes.size() + 2 && inserted.links.size() == canonical.links.size() + 2,
+        "Sidechain Blend insertion changed unrelated topology");
+    const auto hasLink = [&](uint32_t src, uint32_t dst, int pin) {
+        return std::any_of(inserted.links.begin(), inserted.links.end(), [&](const auto& link) {
+            return link.source == src && link.destination == dst && link.inputPin == pin && link.sourcePin == 0;
+        });
+    };
+    check(hasLink(1, sidechainBlendNodeId, 0) && hasLink(sidechainNodeId, sidechainBlendNodeId, 1)
+        && hasLink(sidechainBlendNodeId, 11, 0) && !hasLink(1, 11, 0), "Sidechain Blend pin wiring changed");
+    check(owner->ensureSidechainBlend(error) && topology(owner->getRoutingGraph()).isEquivalentTo(topology(inserted)),
+        "Sidechain Blend insertion is not idempotent");
+
+    const auto roundTrip = [&] {
+        juce::MemoryBlock state;
+        owner->getStateInformation(state);
+        auto copy = std::make_unique<Processor>();
+        copy->setStateInformation(state.getData(), int(state.getSize()));
+        check(copy->getRoutingError().isEmpty()
+            && topology(copy->getRoutingGraph()).isEquivalentTo(topology(owner->getRoutingGraph())),
+            "Sidechain Blend state recall changed routing");
+        return copy;
+    };
+    setPercent(*owner, "sidechainBlend", 63.f);
+    check(std::abs(roundTrip()->settings().sidechainBlend - .63f) < 1.e-6f, "Sidechain Blend automation did not round-trip");
+    // A hand-wired Lead path must not be replaced on bus activation or recall.
+    auto custom = canonical;
+    custom.nodes.push_back({300, NodeType::splitter});
+    for (auto& link : custom.links) if (link.source == 1 && link.destination == 11) link.source = 300;
+    custom.links.push_back({1, 300, 0});
+    check(owner->setRoutingGraph(custom, error), "Custom Lead wiring rejected");
+    const auto before = topology(owner->getRoutingGraph());
+    check(!owner->ensureSidechainBlend(error) && error.isNotEmpty()
+        && topology(owner->getRoutingGraph()).isEquivalentTo(before), "Sidechain Blend disturbed custom Lead wiring");
+    roundTrip();
+    check(owner->setRoutingGraph(canonical, error), "Could not remove Sidechain Blend for recall fixture");
+    roundTrip(); // An intentional removal must not opt into legacy insertion.
+    const auto recallLegacy = [&](const Graph& graph) {
+        juce::ValueTree legacy("VocalStack");
+        legacy.addChild(topology(graph), -1, nullptr);
+        auto copy = std::make_unique<Processor>();
+        check(copy->pasteSettings(legacy.toXmlString()) && copy->getRoutingError().isEmpty()
+            && copy->settings().sidechainBlend == 0.f, "Pre-blend state did not restore with a safe default");
+        return topology(copy->getRoutingGraph());
+    };
+    check(recallLegacy(canonical).isEquivalentTo(topology(inserted)), "Pre-blend canonical routing was not migrated");
+    check(recallLegacy(custom).isEquivalentTo(before), "Pre-blend custom routing was modified on migration");
+
+    for (const int channels : {1, 2}) {
+        const auto render = [&](bool withBlend, int auxChannels, bool silent, float percent,
+                                bool cardOn = false, float cardGain = 0.f) {
+            auto proc = std::make_unique<Processor>();
+            auto layout = proc->getBusesLayout();
+            layout.inputBuses.set(0, juce::AudioChannelSet::canonicalChannelSet(channels));
+            layout.inputBuses.set(1, juce::AudioChannelSet::canonicalChannelSet(auxChannels));
+            layout.outputBuses.set(0, juce::AudioChannelSet::canonicalChannelSet(channels));
+            check(proc->setBusesLayout(layout), "Sidechain Blend bus layout rejected");
+            setPercent(*proc, "double", 0.f);
+            setPercent(*proc, "levelOn", 0.f);
+            setPercent(*proc, "formantOn", 0.f);
+            setPercent(*proc, "sidechainBlend", percent);
+            setPercent(*proc, "sidechainOn", cardOn ? 1.f : 0.f);
+            setPercent(*proc, "sidechainGain", cardGain);
+            check(proc->setRoutingGraph(canonical, error), "Sidechain Blend baseline routing rejected");
+            proc->prepareToPlay(channels == 1 ? 44100. : 48000., 137);
+            const int latency = proc->getLatencySamples();
+            if (withBlend) check(proc->ensureSidechainBlend(error), "Sidechain Blend live insertion rejected");
+            check(latency == 0 && !proc->routingRestartPending() && proc->getLatencySamples() == latency,
+                "Sidechain Blend added latency or requested a restart");
+            constexpr std::array<int, 5> blocks{1, 137, 3, 71, 17};
+            std::vector<float> output;
+            juce::MidiBuffer midi;
+            int position = 0;
+            for (const int count : blocks) {
+                juce::AudioBuffer<float> audio(channels + auxChannels, count);
+                audio.clear();
+                for (int c = 0; c < channels; ++c)
+                    for (int i = 0; i < count; ++i)
+                        audio.setSample(c, i, c == 0 ? .25f : -.2f);
+                if (!silent) for (int c = 0; c < auxChannels; ++c)
+                    for (int i = 0; i < count; ++i)
+                        audio.setSample(channels + c, i, donorSample(c, position + i));
+                audioThread = true; proc->processBlock(audio, midi); audioThread = false;
+                for (int i = 0; i < count; ++i) for (int c = 0; c < channels; ++c)
+                    output.push_back(audio.getSample(c, i));
+                position += count;
+            }
+            proc->releaseResources();
+            return output;
+        };
+        const auto lead = render(false, 0, true, 0.f);
+        check(std::abs(lead.back()) > .05f, "Sidechain Blend dry reference was silent");
+        check(render(true, 0, true, 100.f) == lead, "Absent sidechain altered Lead at 100% blend");
+        check(render(true, channels, false, 0.f) == lead, "0% Sidechain Blend was not exact Lead");
+        const auto silent = render(true, channels, true, 100.f);
+        check(std::all_of(silent.begin(), silent.end(), [](float sample) { return sample == 0.f; }),
+            "Configured silent sidechain did not produce wet silence");
+        const auto half = render(true, channels, false, 50.f);
+        const auto wet = render(true, channels, false, 100.f);
+        check(render(true, channels, false, 100.f, true) == wet, "Neutral Sidechain card did not preserve the wet signal");
+        check(render(true, channels, false, 100.f, false, -6.f) == wet, "Bypassed Sidechain card changed the wet signal");
+        check(render(true, channels, false, 0.f, true, -6.f) == lead, "Sidechain card touched Lead at 0% blend");
+        const auto trimmed = render(true, channels, false, 100.f, true, -6.f);
+        for (size_t i = 0; i < wet.size(); ++i) {
+            const float donor = donorSample(int(i % channels), int(i / channels));
+            check(std::abs(trimmed[i] - donor * std::pow(10.f, -.3f)) < 2.e-5f, "Sidechain gain did not trim only the wet signal");
+            check(std::abs(wet[i] - donor) < 2.e-5f, "100% Sidechain Blend altered or delayed the donor");
+            check(std::abs(half[i] - .5f * (lead[i] + donor)) < 2.e-5f, "50% Sidechain Blend was not linear");
+        }
+    }
+    auto layout = owner->getBusesLayout();
+    layout.inputBuses.set(1, juce::AudioChannelSet::stereo());
+    check(owner->setBusesLayout(layout) && owner->setRoutingGraph(inserted, error), "Sidechain card latency fixture");
+    setPercent(*owner, "sidechainPitch", 12.f);
+    setPercent(*owner, "sidechainBlend", 100.f);
+    const auto preparedLatency = [&] {
+        owner->prepareToPlay(48000., 137);
+        const auto latency = owner->getLatencySamples();
+        owner->releaseResources();
+        return latency;
+    };
+    check(preparedLatency() == 0, "Bypassed Sidechain Pitch reserved latency");
+    setPercent(*owner, "sidechainOn", 1.f);
+    check(preparedLatency() > 0, "Audible Sidechain Pitch didn't request vocal latency");
+    check(roundTrip()->settings().sidechainSettings.pitchSemitones == 12.f, "Sidechain Pitch didn't round-trip");
+    setPercent(*owner, "sidechainBlend", 0.f);
+    check(preparedLatency() == 0, "Sidechain Pitch at 0% blend reserved latency");
 }
 
 void monoAuditionAndGateBridge() {
@@ -401,7 +552,7 @@ void legacyLatencyStateRecall() {
 
 void spectralContract() {
     auto owner=std::make_unique<Processor>();
-    check(spectralMorphParameterStart==2252 && owner->getParameters().size()==2447, "append-only Morph parameter count");
+    check(spectralMorphParameterStart==2252 && owner->getParameters().size()==2457, "append-only Morph parameter count");
     for(size_t i=0;i<parameterIds.size();++i) {
         auto* p=dynamic_cast<juce::RangedAudioParameter*>(owner->getParameters()[int(i)]);
         check(p && p->paramID==parameterIds[i], "host index differs from explicit parameter map");
@@ -487,14 +638,25 @@ void spectralContract() {
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI juce;
     try {
+        if (argc == 2 && juce::String(argv[1]) == "--gain-rider-check") {
+            workflowUiTests::gainRiderReadout();
+            return 0;
+        }
+        if (argc == 2 && juce::String(argv[1]) == "--sidechain-blend-check") {
+            sidechainBlendContract();
+            check(!allocations && !destructions, "Sidechain Blend callback allocated/reclaimed");
+            workflowUiTests::sidechainBlendControls();
+            return 0;
+        }
         if (argc == 2 && juce::String(argv[1]) == "--workflow-check") {
             activationLatencyPolicy(); delayOnlyAndVocalLatency(); morphAutomationLatency(); legacyLatencyStateRecall();
-            spectralContract(); workflowUiTests::run();
+            spectralContract(); sidechainBlendContract(); workflowUiTests::run();
+            workflowUiTests::sidechainBlendControls();
             check(!allocations && !destructions, "workflow callback allocated/reclaimed");
             std::cout << "Sidechain activation and wet-pocket workflow checks passed\n"; return 0;
         }
         busMatrix(); monoAuditionAndGateBridge(); activationLatencyPolicy(); delayOnlyAndVocalLatency();
-        morphAutomationLatency(); legacyLatencyStateRecall(); spectralContract();
+        morphAutomationLatency(); legacyLatencyStateRecall(); spectralContract(); sidechainBlendContract();
         check(!allocations && !destructions, "processor callback allocated/reclaimed");
         std::cout << "Sidechain JUCE processor bus/state tests passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

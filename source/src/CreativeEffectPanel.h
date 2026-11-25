@@ -162,7 +162,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             toggle.setBounds(getLocalBounds().withSizeKeepingCentre(juce::jmin(toggle.getComponentID().endsWith("saturator_level_match") ? 90 : 58, getWidth()), 28));
         }
         int captionHeight(int width) const {
-            juce::AttributedString text; text.append(label.getText(), label.getFont());
+            juce::AttributedString text; text.append(label.getText(), themeFont(label, ParameterKnob::controlFontSize));
             juce::TextLayout layout;
             layout.createLayout(text, float(juce::jmax(1, width - 10)));
             return juce::jmax(16, int(std::ceil(layout.getHeight())) + 2);
@@ -193,6 +193,7 @@ class CreativeEffectPanel final : public juce::Component, private juce::Timer {
             toggle.setColour(juce::TextButton::buttonOnColourId, accent);
             toggle.setColour(juce::TextButton::textColourOffId, palette.text);
             toggle.setColour(juce::TextButton::textColourOnId, palette.background);
+            if (!getLocalBounds().isEmpty()) resized();
         }
         ParameterKnob::Style style;
         juce::Label label;
@@ -332,6 +333,7 @@ public:
             group.heading->setColour(juce::Label::textColourId, accent());
             for (auto& row : group.rows) row->setNeon(neon);
         }
+        if (!getLocalBounds().isEmpty()) resized();
         repaint();
     }
     void setInspectorLayout(bool enabled) {
@@ -369,7 +371,7 @@ public:
         const int visualHeight = glitch ? 86 : split ? 254 : (width < 280 ? 216 : 238);
         visual.setBounds(8, visualY, visualWidth, visualHeight);
         juce::AttributedString descriptionText;
-        descriptionText.append(overview.getText(), overview.getFont());
+        descriptionText.append(overview.getText(), themeFont(overview, 12.f));
         juce::TextLayout descriptionLayout;
         descriptionLayout.createLayout(descriptionText, float(visualWidth));
         const int overviewHeight = juce::jmax(32, int(std::ceil(descriptionLayout.getHeight())) + 6);

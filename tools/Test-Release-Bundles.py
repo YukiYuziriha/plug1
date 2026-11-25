@@ -33,6 +33,8 @@ VST3 = 'VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil gr
 NOTICES = ('JUCE.md', 'CLAP.txt', 'CLAP-Helpers.txt', 'CLAP-JUCE-Extensions.txt',
            'VST3-SDK.txt', 'Signalsmith-Linear.txt', 'Signalsmith-Stretch.txt',
            'PixelifySans-OFL.txt', 'Vital/LICENSE', 'Vital/src/reference.cpp')
+OXANIUM_NOTICE = 'ThirdParty/Oxanium-OFL.txt'
+OXANIUM_FONTS = ('source/assets/OxaniumMedium.ttf', 'source/assets/OxaniumSemiBold.ttf')
 CMAKE = ('project(VocalStack VERSION 1.12.2 LANGUAGES CXX)\n'
          'juce_add_plugin(VocalStack PRODUCT_NAME "HEAVEN by lil grass block")\n'
          + ''.join(f'FetchContent_Declare({name} GIT_REPOSITORY https://example.invalid/{name} '
@@ -103,6 +105,12 @@ class PackageFixture(unittest.TestCase):
              contextlib.redirect_stdout(io.StringIO()):
             source.main()
 
+    def add_oxanium(self):
+        self.put('source/CMakeLists.txt', CMAKE + 'juce_add_binary_data(VocalStackFonts SOURCES\n'
+                 + '\n'.join(name.removeprefix('source/') for name in OXANIUM_FONTS) + ')\n')
+        for name in (OXANIUM_NOTICE, *OXANIUM_FONTS):
+            self.put(name, 'fixture ' + name)
+
     def prepare_build(self):
         for name in (CLAP, VST3):
             self.put('build/VocalStack_artefacts/Release/' + name, b'new binary fixture')
@@ -151,7 +159,10 @@ class PackageFixture(unittest.TestCase):
         with zipfile.ZipFile(path) as archive:
             files = {name: archive.read(name) for name in archive.namelist()}
         for name, value in changes.items():
-            files[PREFIX + name] = value
+            if value is None:
+                del files[PREFIX + name]
+            else:
+                files[PREFIX + name] = value
         with zipfile.ZipFile(path, 'w') as archive:
             for name, data in files.items():
                 archive.writestr(name, data)
@@ -193,6 +204,18 @@ class SourceTests(PackageFixture):
             self.bundle_source('--working-tree')
         self.assertFalse(self.output.exists())
 
+    def test_missing_oxanium_input_is_rejected(self):
+        self.add_oxanium()
+        for name in (OXANIUM_NOTICE, *OXANIUM_FONTS):
+            with self.subTest(name=name):
+                path = self.root / name
+                data = path.read_bytes()
+                path.unlink()
+                with self.assertRaisesRegex(RuntimeError, 'Missing Oxanium release inputs: ' + name):
+                    self.bundle_source('--working-tree')
+                self.assertFalse(self.output.exists())
+                self.put(name, data)
+
     def test_binary_and_build_outputs_excluded(self):
         for name in ('source/build/generated.cpp', 'source/build-release/cache.txt',
                      'source/src/accidental.dll', 'tools/__pycache__/script.pyc'):
@@ -229,6 +252,28 @@ class ReleaseTests(PackageFixture):
             self.assertIn(PREFIX + 'Windows-x64/' + CLAP, archive.namelist())
             self.assertFalse(any('Tuning' in name or 'MXTune' in name for name in archive.namelist()))
         self.assertNotIn('source-history', (self.publication / 'SHA256SUMS.txt').read_text())
+
+    def test_oxanium_round_trip_and_verification(self):
+        self.add_oxanium()
+        self.prepare_release()
+        self.bundle()
+        self.verify()
+        with zipfile.ZipFile(self.publication / f'HEAVEN-{VERSION}-Windows-x64.zip') as windows, \
+             zipfile.ZipFile(self.publication / f'HEAVEN-{VERSION}-corresponding-source.zip') as source_zip:
+            provenance = json.loads(windows.read(PREFIX + 'Windows-x64/BUILD-PROVENANCE.json'))
+            for name in (OXANIUM_NOTICE, *OXANIUM_FONTS):
+                data = (self.root / name).read_bytes()
+                self.assertEqual(source_zip.read(PREFIX + name), data)
+                self.assertEqual(provenance['source_inputs_sha256'][name], hashlib.sha256(data).hexdigest())
+                delivered = 'Windows-x64/' + name if name == OXANIUM_NOTICE else name
+                self.assertEqual(windows.read(PREFIX + delivered), data)
+        self.rewrite_zip('Windows-x64', {'Windows-x64/' + OXANIUM_NOTICE: None})
+        with self.assertRaisesRegex(RuntimeError, 'Third-party notice inventory mismatch'):
+            self.verify()
+        self.rewrite_zip('Windows-x64', {'Windows-x64/' + OXANIUM_NOTICE: (self.root / OXANIUM_NOTICE).read_bytes(),
+                                         OXANIUM_FONTS[1]: b'different font'})
+        with self.assertRaisesRegex(RuntimeError, 'Missing or changed Windows font asset'):
+            self.verify()
 
     def test_changed_source_is_rejected(self):
         self.prepare_release()
@@ -319,6 +364,15 @@ class RefreshTests(PackageFixture):
         self.assertIn('ThirdParty/Vital/src/reference.cpp', provenance['source_inputs_sha256'])
         for name, checksum in provenance['packaged_binaries_sha256'].items():
             self.assertEqual(refresh.sha256(self.root / name), checksum)
+
+    def test_missing_oxanium_notice_preserves_delivery(self):
+        self.add_oxanium()
+        self.prepare_build()
+        (self.root / OXANIUM_NOTICE).unlink()
+        with self.assertRaisesRegex(RuntimeError, 'Missing Oxanium release inputs: ' + OXANIUM_NOTICE):
+            self.run_refresh()
+        self.assertTrue((self.root / 'Windows-x64/CLAP/Vocal Stack.clap').exists())
+        self.assertFalse((self.root / 'Windows-x64/BUILD-PROVENANCE.json').exists())
 
     def test_nonzero_exit_is_rejected(self):
         self.put('build.exit', '1')

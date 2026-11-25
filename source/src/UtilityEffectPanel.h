@@ -138,7 +138,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             } else {
                 if (!textured) {
                     juce::AttributedString caption;
-                    caption.append(label.getText(), label.getFont());
+                    caption.append(label.getText(), themeFont(label, ParameterKnob::controlFontSize));
                     juce::TextLayout layout;
                     layout.createLayout(caption, float(juce::jmax(1, b.getWidth() - 10)));
                     label.setBounds(b.removeFromBottom(juce::jmax(30, int(std::ceil(layout.getHeight())) + 2)));
@@ -164,6 +164,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
             toggle.setColour(juce::TextButton::buttonOnColourId, c.accent);
             toggle.setColour(juce::TextButton::textColourOffId, c.text);
             toggle.setColour(juce::TextButton::textColourOnId, c.background);
+            if (!getLocalBounds().isEmpty()) resized();
         }
         UtilityEffectPanel& panel;
         juce::String id;
@@ -232,7 +233,7 @@ class UtilityEffectPanel final : public juce::Component, private juce::Timer {
         }
         void paint(juce::Graphics& g) override {
             const auto c = themePalette(*this, neon);
-            g.fillAll(c.inset); g.setFont(juce::Font(pixelFontOptions(10.f)));
+            g.fillAll(c.inset); g.setFont(themeFont(componentTheme(*this, neon), 10.f));
             if (!panel.isFilter()) { paintBackground(g); paintMeters(g, c); return; }
             auto b = getLocalBounds().reduced(7);
             const double rate = responseSampleRate();
@@ -711,6 +712,7 @@ public:
         monoAudition.setColour(juce::TextButton::buttonOnColourId, c.accent);
         monoAudition.setColour(juce::TextButton::textColourOffId, c.text);
         monoAudition.setColour(juce::TextButton::textColourOnId, c.background);
+        if (!getLocalBounds().isEmpty()) resized();
         repaint();
     }
     void revealParameter(const juce::String& id) {
@@ -733,7 +735,7 @@ public:
         const int visualHeight = isFilter() ? 238 : kind == UtilityKind::gate ? 292 : kind == UtilityKind::stereo ? 188 : 84;
         visual.setBounds(8, y, visualWidth, visualHeight); y += visualHeight + 6;
         juce::AttributedString descriptionText;
-        descriptionText.append(overview.getText(), overview.getFont());
+        descriptionText.append(overview.getText(), themeFont(overview, 11.5f));
         juce::TextLayout descriptionLayout;
         descriptionLayout.createLayout(descriptionText, float(juce::jmax(1, visualWidth - 10)));
         const int overviewHeight = juce::jmax(54, int(std::ceil(descriptionLayout.getHeight())) + 8);

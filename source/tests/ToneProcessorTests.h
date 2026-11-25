@@ -41,7 +41,7 @@ inline Graph graph(NodeType type) {
 inline void parameterContract() {
     auto processor = std::make_unique<Processor>();
     auto& p = *processor;
-    require(p.getParameters().size() == 2447 && parameterIds.size() == 2447 && creativeParameterStart == 1007
+    require(p.getParameters().size() == 2457 && parameterIds.size() == 2457 && creativeParameterStart == 1007
         && legacyCreativeParameterCount == 48 && creativeParameterCount == 68
         && utilityParameterStart == 1772 && utilityParameterCount == 21,
             "Incorrect host count or appended parameter layout");

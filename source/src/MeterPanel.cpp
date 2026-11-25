@@ -8,9 +8,9 @@ using namespace juce;
 
 Colour rgb(uint32_t hex) { return Colour(0xff000000u | hex); }
 
-void text(Graphics& g, const String& value, Rectangle<float> area, Colour colour,
+void text(Theme theme, Graphics& g, const String& value, Rectangle<float> area, Colour colour,
           float size, bool bold = false) {
-    g.setFont(Font(readableFontOptions(size, bold ? Font::bold : Font::plain)));
+    g.setFont(themeFont(theme, size, bold ? Font::bold : Font::plain));
     g.setColour(colour);
     g.drawText(value, area, Justification::centred, false);
 }
@@ -41,7 +41,7 @@ MeterPanel::MeterPanel() {
                "amber HOLD = DSP-supplied 1.5 s sample-peak hold.\n"
                "MAX = highest sample peak in the active channels since reset. "
                "Red CLIP = latched sample overload. MONO uses one M lane, stereo uses L/R.\n"
-               "LVL = leveler gain correction, not the Output trim.\n"
+
                "Click anywhere here to request clearing "
                "held peaks, maximum peaks and clip latches. Live RMS/PK continue.");
     setOpaque(true);
@@ -99,15 +99,15 @@ void MeterPanel::paint(Graphics& g) {
         return bottom - (jlimit(floorDb, ceilingDb, db) - floorDb)
                         / (ceilingDb - floorDb) * (bottom - top);
     };
-    text(g, "SAMPLE", {100, 8, 44, 16}, muted, 9.5f, true);
-    text(g, "dBFS", {100, 25, 44, 17}, foreground, 11.0f, true);
+    text(selectedTheme, g, "SAMPLE", {100, 8, 44, 16}, muted, 8.5f, true);
+    text(selectedTheme, g, "dBFS", {100, 25, 44, 17}, foreground, 11.0f, true);
 
     for (const int db : scaleDb) {
         const auto y = yForDb(static_cast<float>(db));
         g.setColour(db == 0 ? muted.withAlpha(0.65f) : border);
         for (const float x : {14.0f, 154.0f})
             g.drawHorizontalLine(roundToInt(y), x, x + 68.0f);
-        text(g, db > 0 ? "+" + String(db) : String(db), {102, y - 7.0f, 40, 14},
+        text(selectedTheme, g, db > 0 ? "+" + String(db) : String(db), {102, y - 7.0f, 40, 14},
              db >= 0 ? holdColour : muted, 9.5f, db == 0);
     }
 
@@ -122,15 +122,15 @@ void MeterPanel::paint(Graphics& g) {
                 maximum = std::max(maximum, reading.maxPeak);
             clipped = clipped || reading.clipped;
         }
-        text(g, name + (channels == 1 ? " / MONO" : channels == 2 ? " / STEREO" : " / OFF"),
+        text(selectedTheme, g, name + (channels == 1 ? " / MONO" : channels == 2 ? " / STEREO" : " / OFF"),
              {x, 8, 96, 18}, foreground, 11.0f, true);
-        text(g, channels == 0 ? String("MAX --") : maximumText(maximum),
+        text(selectedTheme, g, channels == 0 ? String("MAX --") : maximumText(maximum),
              {x, 27, 96, 18}, clipped ? overload : foreground, 11.0f, true);
 
         for (int i = 0; i < channels; ++i) {
             const auto& reading = readings[static_cast<size_t>(i)];
             const float laneX = x + (channels == 1 ? 35.0f : 18.0f + 34.0f * i);
-            text(g, channels == 1 ? "M" : i == 0 ? "L" : "R",
+            text(selectedTheme, g, channels == 1 ? "M" : i == 0 ? "L" : "R",
                  {laneX - 3, 45, 24, 17}, muted, 10.0f, true);
             const Rectangle<float> lane{laneX, top, 18.0f, bottom - top};
             g.setColour(track);
@@ -168,26 +168,25 @@ void MeterPanel::paint(Graphics& g) {
         const Rectangle<float> clipBadge{x + 24, 197, 48, 16};
         g.setColour(clipped ? overload : track);
         g.fillRect(clipBadge);
-        text(g, "CLIP", clipBadge, clipped ? rgb(0x17171c) : muted, 10.0f, true);
+        text(selectedTheme, g, "CLIP", clipBadge, clipped ? rgb(0x17171c) : muted, 10.0f, true);
     };
     drawGroup(meters.input, meters.inputChannels, 4.0f, "IN");
     drawGroup(meters.output, meters.outputChannels, 144.0f, "OUT");
-    text(g, "CLEAR", {99, 197, 46, 16}, muted, 9.5f, true);
+    text(selectedTheme, g, "CLEAR", {99, 197, 46, 16}, muted, 9.5f, true);
 
     g.setColour(good);
     g.fillRect(13.0f, 218.0f, 8.0f, 8.0f);
-    text(g, "RMS", {24, 214, 34, 16}, muted, 10.0f);
+    text(selectedTheme, g, "RMS", {24, 214, 34, 16}, muted, 10.0f);
     g.setColour(foreground);
     g.drawLine(65.0f, 222.0f, 76.0f, 222.0f, 1.4f);
-    text(g, "PK", {80, 214, 25, 16}, muted, 10.0f);
+    text(selectedTheme, g, "PK", {80, 214, 25, 16}, muted, 10.0f);
     g.setColour(holdColour);
     g.drawLine(114.0f, 222.0f, 130.0f, 222.0f, 2.0f);
-    text(g, "HOLD 1.5s", {133, 214, 97, 16}, muted, 10.0f);
+    text(selectedTheme, g, "HOLD 1.5s", {133, 214, 97, 16}, muted, 10.0f);
 
     g.setColour(border);
     g.drawHorizontalLine(231, 8.0f, 236.0f);
-    const auto correction = std::isfinite(meters.correctionDb) ? meters.correctionDb : 0.0f;
-    text(g, "LVL " + signedDb(correction) + " dB  /  leveler", {8, 231, 228, 15},
+    text(selectedTheme, g, "RMS / SAMPLE PEAK", {8, 231, 228, 15},
          foreground, 10.5f, true);
 }
 

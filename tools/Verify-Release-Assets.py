@@ -6,6 +6,8 @@ from pathlib import Path, PurePosixPath
 import re
 import zipfile
 
+from release_fonts import require_oxanium_files
+
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -76,6 +78,9 @@ def main():
             raise RuntimeError('Source project version mismatch')
         if 'PRODUCT_NAME "HEAVEN by lil grass block"' not in cmake:
             raise RuntimeError('Source product name mismatch')
+        for name in require_oxanium_files(cmake, source_names.__contains__):
+            if name not in windows_names or digest(windows.read(prefix + name)) != manifest['files_sha256'][name]:
+                raise RuntimeError(f'Missing or changed Windows font asset: {name}')
         provenance_bytes = windows.read(prefix + 'Windows-x64/BUILD-PROVENANCE.json')
         if source.read(prefix + 'Windows-x64/BUILD-PROVENANCE.json') != provenance_bytes:
             raise RuntimeError('Source and Windows build provenance differ')

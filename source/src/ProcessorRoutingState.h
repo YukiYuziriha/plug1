@@ -159,11 +159,12 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
             RoutingNode n;
             n.id = static_cast<std::uint32_t>(static_cast<juce::int64>(child.getProperty("id", 0)));
             const int type = child.getProperty("type", -1);
-            if (type < 0 || type > int(NodeType::vocalGlitch)) return false;
+            if (type < 0 || type > int(NodeType::sidechainBlend)) return false;
             n.type = static_cast<NodeType>(type);
             n.voiceSlot = child.getProperty("voiceSlot", 0);
             n.enabled = child.getProperty("enabled", true);
-            n.mix = child.getProperty("mix", isUtilityEffect(n.type) ? 1.0f : 0.25f);
+            const float defaultMix = isUtilityEffect(n.type) ? 1.0f : n.type == NodeType::sidechainBlend ? 0.0f : 0.25f;
+            n.mix = child.getProperty("mix", defaultMix);
             n.motion = child.getProperty("motion", 0.35f);
             n.mainControls = child.getProperty("mainControls", false);
             n.referencePower = child.getProperty("referencePower", 1.0f);
@@ -241,6 +242,46 @@ inline RoutingValidation validate(const Graph& graph) {
             return {false, "Effect IDs must be 100..114 (FX slots 1..15); ID 12 is legacy Chorale only"};
     }
     return RoutingExecutor::validate(graph);
+}
+
+// Replace only a single direct Lead cable into the unique main Mix's dry pin.
+// Keep all other cables, including any existing uses of the Sidechain source.
+inline RoutingValidation insertSidechainBlend(Graph& graph) {
+    std::uint32_t lead = 0, sidechain = 0, mainMix = 0;
+    for (const auto& node : graph.nodes) {
+        if (node.type == NodeType::sidechainBlend) return {true, {}};
+        if (node.type == NodeType::lead) lead = node.id;
+        if (node.type == NodeType::sidechain) sidechain = node.id;
+        if (node.type == NodeType::mix && node.mainControls) {
+            if (mainMix) return {false, "Choose where to put Sidechain Blend in Routing: multiple main Mix nodes"};
+            mainMix = node.id;
+        }
+    }
+    auto direct = graph.links.size();
+    for (size_t i = 0; i < graph.links.size(); ++i) {
+        const auto& wire = graph.links[i];
+        if (wire.destination != mainMix || wire.inputPin != 0) continue;
+        if (direct != graph.links.size() || wire.source != lead || wire.sourcePin != 0)
+            return {false, "Choose where to put Sidechain Blend in Routing: main Mix has custom Lead wiring"};
+        direct = i;
+    }
+    if (!lead || !mainMix || direct == graph.links.size())
+        return {false, "Choose where to put Sidechain Blend in Routing: no direct Lead-to-main Mix cable"};
+    for (const auto& node : graph.nodes) {
+        if (node.id == sidechainBlendNodeId || (!sidechain && node.id == sidechainNodeId))
+            return {false, "Sidechain Blend cannot be inserted: a dedicated node ID is in use"};
+    }
+    auto next = graph;
+    if (!sidechain) {
+        sidechain = sidechainNodeId;
+        next.nodes.push_back({sidechain, NodeType::sidechain});
+    }
+    next.nodes.push_back({sidechainBlendNodeId, NodeType::sidechainBlend});
+    next.links[direct].source = sidechainBlendNodeId;
+    next.links.insert(next.links.end(), {{lead, sidechainBlendNodeId, 0}, {sidechain, sidechainBlendNodeId, 1}});
+    const auto validation = validate(next);
+    if (validation) graph = std::move(next);
+    return validation;
 }
 
 // Fixed legacy controls are shared by all effect types. Slot zero remains

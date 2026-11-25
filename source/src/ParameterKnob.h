@@ -89,7 +89,7 @@ inline juce::Label* createPassiveSliderTextBox(juce::Label* originalTextBox) {
             const auto accent = slider->findColour(juce::Slider::trackColourId);
             const auto text = slider->getName() + " " + getText().trim().replace(" %", "%");
             const auto area = getLocalBounds().reduced(2, 0);
-            g.setFont(getFont()); g.setColour(palette.text);
+            g.setFont(getLookAndFeel().getLabelFont(*this)); g.setColour(palette.text);
             g.drawText(text, area, juce::Justification::centred);
             const auto track = slider->getLookAndFeel().getSliderLayout(*slider).sliderBounds;
             const float valueX = float(track.getX()) + float(track.getWidth()) * float(slider->valueToProportionOfLength(slider->getValue()));
@@ -472,7 +472,7 @@ public:
                 const auto id = slider.getComponentID();
                 const auto caption = id == "outputGain" || id == "globalOutput" ? "Output"
                     : id == "double" ? "Blend" : "Mix";
-                g.setFont(juce::Font(pixelFontOptions(controlFontSize)));
+                g.setFont(themeFont(slider, controlFontSize));
                 g.setColour(palette.text);
                 g.drawText(caption, track.reduced(4, 0), juce::Justification::centred, false);
             }
@@ -568,7 +568,7 @@ public:
     }
     int captionHeightForWidth(int width) const {
         juce::AttributedString caption;
-        caption.append(label.getText(), label.getFont());
+        caption.append(label.getText(), themeFont(label, controlFontSize));
         juce::TextLayout layout;
         layout.createLayout(caption, float(juce::jmax(1, width - 10)));
         return juce::jmax(30, int(std::ceil(layout.getHeight())) + 2);
@@ -594,6 +594,7 @@ public:
         for (auto* child : slider.getChildren()) {
             child->setWantsKeyboardFocus(false); child->setMouseClickGrabsKeyboardFocus(false);
         }
+        if (!getLocalBounds().isEmpty()) resized();
     }
     ModulationSlider slider;
 private:

@@ -25,7 +25,9 @@ namespace vocalstack {
 
 // Serializable model. IDs identify machines, not positions in nodes[]. Changing
 // an effect ID or type creates fresh state; retaining both retains DSP history.
-enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19, convolution = 20, saturator = 21, sidechain = 22, spectralMorph = 23, vocalGlitch = 24 };
+enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19, convolution = 20, saturator = 21, sidechain = 22, spectralMorph = 23, vocalGlitch = 24, sidechainBlend = 25 };
+inline constexpr std::uint32_t sidechainNodeId = 14;
+inline constexpr std::uint32_t sidechainBlendNodeId = 15;
 
 // Named signal inputs are shared by validation, prepared plans and presentation.
 // Additional multi-input effects extend this declaration, not host-buffer access.
@@ -36,10 +38,11 @@ struct EffectInputDeclaration {
 inline constexpr int routingInputCount(NodeType type) noexcept {
     if (type == NodeType::lead || type == NodeType::voice || type == NodeType::sidechain) return 0;
     if (type == NodeType::sum) return 16;
-    return type == NodeType::mix || type == NodeType::spectralMorph ? 2 : 1;
+    return type == NodeType::mix || type == NodeType::spectralMorph || type == NodeType::sidechainBlend ? 2 : 1;
 }
 inline constexpr EffectInputDeclaration routingInput(NodeType type, int pin) noexcept {
     if (type == NodeType::spectralMorph) return {pin == 0 ? "MAIN" : "DONOR", pin == 1};
+    if (type == NodeType::sidechainBlend) return {pin == 0 ? "LEAD" : "SIDECHAIN", pin == 1};
     return type == NodeType::mix ? EffectInputDeclaration{pin == 0 ? "DRY" : "WET", false}
                                  : EffectInputDeclaration{"MAIN", false};
 }
@@ -68,7 +71,7 @@ struct RoutingNode {
     NodeType type = NodeType::lead;
     int voiceSlot = 0; // zero-based, stable 0..7
     bool enabled = true; // effect bypass; crossover bypass routes full-band to port zero
-    float mix = isUtilityEffect(type) ? 1.0f : 0.25f, motion = 0.35f;
+    float mix = isUtilityEffect(type) ? 1.0f : type == NodeType::sidechainBlend ? 0.0f : 0.25f, motion = 0.35f;
     bool mainControls = false; // Mix: main Mix; Chorale: legacy Chorale controls
     float referencePower = 1.0f; // legacy Sum only; main Mix wet pin has a 2-voice budget
     int latencySamples = 0; // nonzero is unsupported, rejected rather than misaligned
@@ -82,6 +85,9 @@ struct RoutingNode {
     bool monoAudition = false;
     std::uint32_t wetOwner = 0; // Owned insert, processed before its parent's local Mix.
 };
+inline constexpr bool routingUsesInput(const RoutingNode& node, int pin) noexcept {
+    return node.enabled || !routingInput(node.type, pin).auxiliary;
+}
 struct RoutingLink {
     std::uint32_t source = 0, destination = 0;
     int inputPin = 0; // Mix dry=0/wet=1, Sum=0..15, other processors=0
@@ -95,7 +101,7 @@ struct RoutingValidation {
     explicit operator bool() const noexcept { return valid; }
 };
 
-inline Graph defaultGraph(bool legacyChorale = true) {
+inline Graph defaultGraph(bool legacyChorale = true, bool withSidechainBlend = false) {
     Graph g;
     g.nodes.push_back({1, NodeType::lead});
     for (int i = 0; i < 8; ++i) g.nodes.push_back({std::uint32_t(i + 2), NodeType::voice, i});
@@ -105,7 +111,12 @@ inline Graph defaultGraph(bool legacyChorale = true) {
     if (legacyChorale) g.nodes.push_back(fx);
     g.nodes.push_back({13, NodeType::output});
     for (int i = 0; i < 8; ++i) g.links.push_back({std::uint32_t(i + 2), 11, 1});
-    g.links.push_back({1, 11, 0});
+    if (withSidechainBlend) {
+        g.nodes.push_back({sidechainNodeId, NodeType::sidechain});
+        g.nodes.push_back({sidechainBlendNodeId, NodeType::sidechainBlend});
+        g.links.insert(g.links.end(), {{1, sidechainBlendNodeId, 0},
+            {sidechainNodeId, sidechainBlendNodeId, 1}, {sidechainBlendNodeId, 11, 0}});
+    } else g.links.push_back({1, 11, 0});
     if (legacyChorale) g.links.insert(g.links.end(), {{11, 12, 0}, {12, 13, 0}});
     else g.links.push_back({11, 13, 0});
     return g;
@@ -144,6 +155,8 @@ struct RoutingSources {
     StereoSample sidechain; // Already aligned to source-engine latency; absent is silence.
     // Smoothed enabled/present weights, independent of intentional voice gain.
     std::array<float, 8> activity{};
+    bool sidechainVoiceAvailable = false;
+    StereoSample sidechainVoice; // Same algorithmic latency as the raw sidechain tap.
 };
 struct FxSettings {
     bool enabled = true;
@@ -174,6 +187,8 @@ struct RoutingControls {
     std::array<float, 48> localMix{};
     bool localMixAutomation = false;
     double tempoBpm = 120;
+    float sidechainBlend = 0.0f;
+    bool sidechainBlendAutomation = false;
 };
 
 // Fan-in contract: distinct source voices are orthogonal, duplicate paths are
@@ -301,7 +316,7 @@ public:
             step.node = g.nodes[index];
             const int declared = routingDeclaredLatency(step.node.type);
             const int arrival = latency.paths[index] - preparedLatency(step.node);
-            for (const auto& link : g.links) if (link.destination == step.node.id && usesInput(step.node, link.inputPin)) {
+            for (const auto& link : g.links) if (link.destination == step.node.id && routingUsesInput(step.node, link.inputPin)) {
                 const int source = find(g, link.source);
                 const int wire = step.inputCount++;
                 step.inputs[wire] = remap[source];
@@ -309,6 +324,9 @@ public:
                 step.inputPins[wire] = link.inputPin;
                 step.delays[wire].data.resize(size_t(arrival - latency.paths[source]));
                 step.donorWired |= routingInput(step.node.type, link.inputPin).auxiliary;
+                if (step.node.type == NodeType::sidechainBlend && link.inputPin == 1
+                    && g.nodes[source].type == NodeType::sidechain)
+                    step.sidechainVoiceWire = wire;
             }
             if (isEffect(step.node.type) && (declared == 0 || step.node.enabled)) {
                 auto& weak = machines[step.node.id];
@@ -333,6 +351,7 @@ public:
             auto& step = plan->steps[index];
             if (!step.connected) continue;
             plan->hasCrossover |= step.node.type == NodeType::crossover;
+            if (step.sidechainVoiceWire >= 0) plan->sidechainVoiceStep = index;
             for (int wire = 0; wire < step.inputCount; ++wire)
                 plan->steps[step.inputs[wire]].connected = true;
         }
@@ -418,6 +437,13 @@ public:
         }
         return active && active->routedVoices != 0x10000u ? active->routedVoices : fallbackVoices;
     }
+    // Audio thread, after beginSpan. Use the target, not the smoothing tail,
+    // so an automated zero stops the voice immediately.
+    bool usesSidechainVoice(bool automation, float blendTarget) const noexcept {
+        if (!active || active->sidechainVoiceStep < 0) return false;
+        return unit(automation ? blendTarget : active->steps[active->sidechainVoiceStep].node.mix, 0) > 0;
+    }
+
     StereoSample process(const RoutingSources& sources, const RoutingControls& controls, bool begin = true) noexcept {
         if (begin) beginSpan();
         if (!active) return {};
@@ -456,8 +482,12 @@ private:
             bool monitorHasWet = false, monitorHasGainReduction = false, monitorHasUtilityDynamics = false;
             UtilityDynamicsSnapshot monitorDynamics{};
             int monitorBands = 0;
-            for (int wire = 0; wire < step.inputCount; ++wire)
-                step.wireAudio[wire] = step.delays[wire].process(values[step.inputs[wire]][step.sourcePins[wire]].audio);
+            for (int wire = 0; wire < step.inputCount; ++wire) {
+                // Substitute only this edge; the source value and lineage stay raw.
+                const auto audio = wire == step.sidechainVoiceWire && sources.sidechainVoiceAvailable
+                    ? sources.sidechainVoice : values[step.inputs[wire]][step.sourcePins[wire]].audio;
+                step.wireAudio[wire] = step.delays[wire].process(audio);
+            }
             const auto incomingValue = [&](int wire) {
                 auto incoming = values[step.inputs[wire]][step.sourcePins[wire]];
                 incoming.audio = step.wireAudio[wire];
@@ -549,6 +579,28 @@ private:
                 value.available = dry.available || wet.available;
                 value.audio = {blend(dry.audio.left, wet.audio.left, m), blend(dry.audio.right, wet.audio.right, m)};
                 for (size_t s = 0; s < value.lineage.size(); ++s) value.lineage[s] = blend(dry.lineage[s], wet.lineage[s], m);
+                break;
+            }
+            case NodeType::sidechainBlend: {
+                value = input(0);
+                if (!n.enabled || !sources.sidechainAvailable || !step.donorWired) {
+                    step.mixInitialized = false;
+                    break;
+                }
+                const float m = updateWetMix(step, unit(controls.sidechainBlendAutomation ? controls.sidechainBlend : n.mix, 0), true);
+                if (m == 0.0f) break;
+                const auto wet = input(1);
+                if (!wet.available) {
+                    step.mixInitialized = false;
+                    break;
+                }
+                if (m == 1.0f) {
+                    value = wet;
+                    break;
+                }
+                value.available = true;
+                value.audio = {blend(value.audio.left, wet.audio.left, m), blend(value.audio.right, wet.audio.right, m)};
+                for (size_t s = 0; s < value.lineage.size(); ++s) value.lineage[s] = blend(value.lineage[s], wet.lineage[s], m);
                 break;
             }
             case NodeType::splitter:
@@ -868,7 +920,7 @@ private:
         std::array<SignalDelay, maxLinks> delays;
         std::array<StereoSample, maxLinks> wireAudio{};
         bool donorWired = false, connected = false;
-        int wetInsert = -1;
+        int wetInsert = -1, sidechainVoiceWire = -1;
         int inputCount = 0;
         double smoothedMix = 0;
         bool mixInitialized = false;
@@ -893,6 +945,7 @@ private:
         std::array<double, regionCount> boundaries{};
         int regions = 1, count = 0, output = 0;
         std::array<double, maxNodes> pathTails{};
+        int sidechainVoiceStep = -1;
         bool hasCrossover = false;
     };
     static FxSettings effectSettings(const RoutingNode& n, const RoutingControls& controls) noexcept {
@@ -1058,6 +1111,9 @@ private:
                 }
                 ++effects; break;
             case NodeType::output: ++outputs; break;
+            case NodeType::sidechainBlend:
+                if (n.id != sidechainBlendNodeId) return {false, "Sidechain Blend requires its dedicated node ID"};
+                break;
             case NodeType::sum: case NodeType::mix: case NodeType::splitter: break;
             default: return {false, "unknown node type"};
             }
@@ -1109,9 +1165,7 @@ private:
     static int preparedLatency(const RoutingNode& node) noexcept {
         return node.enabled ? routingDeclaredLatency(node.type) : 0;
     }
-    static bool usesInput(const RoutingNode& node, int pin) noexcept {
-        return node.enabled || routingDeclaredLatency(node.type) == 0 || !routingInput(node.type, pin).auxiliary;
-    }
+
     struct LatencyPaths {
         std::array<int, maxNodes> paths{};
         int output = 0, maximum = 0;
@@ -1125,7 +1179,7 @@ private:
             const auto& node = g.nodes[i];
             auto& path = latency.paths[i];
             for (const auto& link : g.links)
-                if (link.destination == node.id && (structural || usesInput(node, link.inputPin)))
+                if (link.destination == node.id && (structural || routingUsesInput(node, link.inputPin)))
                     path = std::max(path, latency.paths[find(g, link.source)]);
             path += structural ? routingDeclaredLatency(node.type) : preparedLatency(node);
             latency.maximum = std::max(latency.maximum, path);

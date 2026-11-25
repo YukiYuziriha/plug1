@@ -36,16 +36,29 @@ Settings boundedSettings(Settings s) {
     s.outputGainDb = std::isfinite(s.outputGainDb) ? s.outputGainDb : 0;
     s.globalMix = unit(s.globalMix, 1);
     s.leadSettings = bounded(s.leadSettings);
+    if (s.sidechainSettings.enabled) {
+        auto& sidechain = s.sidechainSettings;
+        sidechain = bounded(sidechain);
+        // Stopping the clock should fade out motion, not hold a random offset.
+        if (sidechain.rateHz == 0.0f) sidechain.depth = 0.0f;
+    }
     return s;
 }
 
 constexpr float spectralEpsilon = 0.00001f;
 
+bool localSpectralRequested(const VoiceSettings& v, float human) {
+    return v.pitchSemitones != 0.0f || v.detuneCents != 0.0f || v.formantSemitones != 0.0f
+        || (v.depth > 0.0f && v.rateHz > 0.0f && human > 0.0f);
+}
+
 bool leadSpectralRequested(const Settings& settings) {
-    const auto& v = settings.leadSettings;
-    return v.enabled && ((settings.formantOn && settings.formant != 0.0f)
-        || v.pitchSemitones != 0.0f || v.detuneCents != 0.0f || v.formantSemitones != 0.0f
-        || (v.depth > 0.0f && v.rateHz > 0.0f && settings.human > 0.0f));
+    return settings.leadSettings.enabled && ((settings.formantOn && settings.formant != 0.0f)
+        || localSpectralRequested(settings.leadSettings, settings.human));
+}
+
+float localSpectralBlend(float formant, float fine, float pitch) {
+    return std::min(1.0f, 5.0f * (std::abs(formant) + std::abs(fine) + std::abs(pitch)));
 }
 
 float sampleAt(const float* input, int index) {
@@ -124,20 +137,23 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
     // 100 ms user delay plus up to 14 ms of Human motion.
     maxDoubleDelay = static_cast<int>(std::ceil(rate * 0.115));
     if (needsVocalLatency) {
-        lead.configure(inChannels, window, hop);
-        latencySamples = lead.inputLatency() + lead.outputLatency();
+        leadSpectral.stretch.configure(inChannels, window, hop);
+        latencySamples = leadSpectral.stretch.inputLatency() + leadSpectral.stretch.outputLatency();
+        sidechainSpectral.stretch.configure(2, window, hop);
         for (auto& voice : voices) {
             voice.stretch.configure(1, window, hop);
             voice.delay.prepare(maxDoubleDelay + 2);
             voice.harmony.prepare(rate, latencySamples);
         }
-        for (auto& harmony : leadHarmony) harmony.prepare(rate, latencySamples);
+        for (auto* spectral : {&leadSpectral, &sidechainSpectral})
+            for (auto& harmony : spectral->harmony) harmony.prepare(rate, latencySamples);
         articulationDelay.prepare(latencySamples + maxDoubleDelay + 2);
     }
     for (auto* delays : {&dryDelay, &levelDelay, &auxiliaryDelay})
         for (auto& delay : *delays)
             delay.prepare(latencySamples + 2);
-    for (auto& delay : leadLocalDelay) delay.prepare(maxDoubleDelay + 2);
+    for (auto* delays : {&leadLocalDelay, &sidechainLocalDelay})
+        for (auto& delay : *delays) delay.prepare(maxDoubleDelay + 2);
 
     parameterStep = coefficient(0.018);
     rmsStep = coefficient(0.043);
@@ -164,9 +180,10 @@ void VocalEngine::prepare(double sampleRate, int inputChannels, int outputChanne
 void VocalEngine::reset(const Settings& requested) {
     const auto settings = boundedSettings(requested);
     if (latencySamples != 0) {
-        lead.reset();
-        lead.setFormantBase(static_cast<float>(150.0 / rate));
+        leadSpectral.stretch.reset();
+        leadSpectral.stretch.setFormantBase(static_cast<float>(150.0 / rate));
     }
+    sidechainRunning = false; // Start fresh when a donor next reaches the Blend.
     leadMotion.controls = settings.leadSettings;
     leadMotion.amplitude = settings.leadSettings.enabled ? dbToGain(settings.leadSettings.gainDb) : 0;
     leadMotion.delaySamples = float(rate * 0.001) * settings.leadSettings.delayMs;
@@ -176,15 +193,15 @@ void VocalEngine::reset(const Settings& requested) {
     leadMotion.appliedPitch = leadMotion.appliedDetune = leadMotion.appliedFormant = 0;
     leadMotion.measuredEnergy = 0;
     leadLocalBlend = 0;
-    leadSpectralRunning = latencySamples != 0 && leadSpectralRequested(settings);
-    leadWakeBlend = leadSpectralRunning ? 1.0f : 0.0f;
-    leadWakeRemaining = 0;
-    leadHarmonyRunning = leadSpectralRunning && settings.leadSettings.pitchSemitones != 0;
-    leadPitchBlend = leadHarmonyRunning ? 1.0f : 0.0f;
-    leadHarmonyWarmup = 0;
+    leadSpectral.running = latencySamples != 0 && leadSpectralRequested(settings);
+    leadSpectral.wakeBlend = leadSpectral.running ? 1.0f : 0.0f;
+    leadSpectral.wakeRemaining = 0;
+    leadSpectral.harmonyRunning = leadSpectral.running && settings.leadSettings.pitchSemitones != 0;
+    leadSpectral.pitchBlend = leadSpectral.harmonyRunning ? 1.0f : 0.0f;
+    leadSpectral.harmonyWarmup = 0;
     globalMix = settings.globalMix;
     for (size_t channel = 0; channel < 2; ++channel) {
-        if (latencySamples != 0) leadHarmony[channel].reset();
+        if (latencySamples != 0) leadSpectral.harmony[channel].reset();
         leadLocalDelay[channel].clear();
     }
     const auto initialVoices = settings.advanced ? settings.voiceSettings : basicVoiceSettings(settings.human);
@@ -222,7 +239,7 @@ void VocalEngine::reset(const Settings& requested) {
     leadState = {true, settings.leadSettings.enabled, leadMotion.controls.pan, 0, 0,
         leadMotion.controls.delayMs, 0, leadMotion.controls.gainDb, 0};
     resetLeveler();
-    leadMatch = {};
+    leadSpectral.match = {};
     lowPass = edgeEnergy = bodyEnergy = 0;
     articulation = 1;
     untilUpdate = 0;
@@ -338,25 +355,122 @@ float VocalEngine::matchedGain(LevelMatch& state, float referencePower, float re
     return state.gain;
 }
 
+void VocalEngine::advanceLocalVoice(Voice& voice, float seconds) {
+    const auto& v = voice.controls;
+    voice.advance(seconds * v.rateHz, controls.human);
+    voice.finePitch = v.detuneCents * 0.01f + voice.pitch * 0.245f * controls.human * v.depth;
+    voice.appliedPitch = v.pitchSemitones;
+    voice.appliedDetune = voice.finePitch * 100.0f;
+    voice.appliedFormant = v.formantSemitones + voice.tone * 0.36f * controls.human * v.depth;
+}
+
+void VocalEngine::smoothLocalVoice(VoiceSettings& v, const VoiceSettings& target, bool snap) const {
+    for (auto member : {&VoiceSettings::gainDb, &VoiceSettings::pan, &VoiceSettings::delayMs,
+                        &VoiceSettings::detuneCents, &VoiceSettings::formantSemitones,
+                        &VoiceSettings::depth, &VoiceSettings::rateHz, &VoiceSettings::pitchSemitones}) {
+        v.*member = mix(v.*member, target.*member, parameterStep);
+        if (snap && std::abs(v.*member - target.*member) < spectralEpsilon) v.*member = target.*member;
+    }
+}
+
+void VocalEngine::renderStereoSpectral(StereoSpectral& state, const Voice& voice, bool wanted,
+                                       bool independentFormant, bool update, int channels, int count) {
+    if (!wanted) {
+        state.running = state.harmonyRunning = false;
+        state.pitchBlend = 0;
+        return;
+    }
+    const bool waking = !state.running;
+    if (waking) {
+        state.stretch.reset();
+        state.stretch.setFormantBase(static_cast<float>(150.0 / rate));
+        state.match = {};
+        state.wakeRemaining = latencySamples;
+        state.wakeBlend = 0;
+    }
+    state.running = true;
+    if (waking || update) {
+        state.stretch.setTransposeSemitones(voice.finePitch);
+        state.stretch.setFormantSemitones(voice.appliedFormant, independentFormant);
+    }
+    const float* in[] = {state.input[0].data(), state.input[1].data()};
+    float* out[] = {state.rendered[0].data(), state.rendered[1].data()};
+    state.stretch.process(in, count, out, count);
+
+    const bool musical = std::abs(voice.appliedPitch) > spectralEpsilon;
+    if (musical && !state.harmonyRunning) {
+        for (auto& harmony : state.harmony) harmony.reset();
+        state.harmonyRunning = true;
+        state.harmonyWarmup = latencySamples;
+    }
+    if (state.harmonyRunning) {
+        // Reset clears ratios as well as history. Restore controls before processing.
+        for (auto& harmony : state.harmony)
+            harmony.setSemitones(voice.appliedPitch + voice.appliedDetune * 0.01f, voice.appliedFormant);
+        const float target = musical ? 1.0f : 0.0f;
+        for (int i = 0; i < count; ++i) {
+            if (state.harmonyWarmup) --state.harmonyWarmup;
+            else state.pitchBlend = mix(state.pitchBlend, target, parameterStep);
+            if (std::abs(state.pitchBlend - target) < spectralEpsilon) state.pitchBlend = target;
+            for (int channel = 0; channel < channels; ++channel)
+                state.rendered[channel][i] = mix(state.rendered[channel][i],
+                    state.harmony[channel].process(state.input[channel][i]), state.pitchBlend);
+        }
+        if (!musical && state.pitchBlend == 0) state.harmonyRunning = false;
+    }
+}
+
+StereoSample VocalEngine::blendStereoSpectral(StereoSpectral& state, StereoSample reference,
+                                              int sample, int rightChannel, float& amount) {
+    if (!state.running) {
+        amount = 0;
+        return reference;
+    }
+    // Keep aligned clean audio audible until the spectral history is primed.
+    if (state.wakeRemaining > 0) --state.wakeRemaining;
+    else {
+        state.wakeBlend = mix(state.wakeBlend, 1.0f, parameterStep);
+        if (1.0f - state.wakeBlend < spectralEpsilon) state.wakeBlend = 1.0f;
+    }
+    amount *= state.wakeBlend;
+    const auto left = state.rendered[0][sample], right = state.rendered[rightChannel][sample];
+    const float spectralGain = matchedGain(state.match,
+        0.5f * (reference.left * reference.left + reference.right * reference.right),
+        0.5f * (left * left + right * right));
+    if (amount <= 0.0f) return reference;
+    return {mix(reference.left, left * spectralGain, amount), mix(reference.right, right * spectralGain, amount)};
+}
+
+StereoSample VocalEngine::applyLocalVoice(Voice& voice, std::array<DelayLine, 2>& delay,
+                                          StereoSample sample, float timeStep) {
+    const auto& v = voice.controls;
+    voice.time = mix(voice.time, voice.targetTime, std::min(1.0f, timeStep * v.rateHz));
+    const float delayTarget = std::clamp(float(rate * 0.001) *
+        (v.delayMs + voice.time * 7.0f * controls.human * v.depth), 0.0f, float(maxDoubleDelay));
+    voice.delaySamples += std::clamp(delayTarget - voice.delaySamples, -0.125f, 0.125f);
+    delay[0].push(sample.left);
+    delay[1].push(sample.right);
+    return {
+        delay[0].read(voice.delaySamples) * voice.amplitude * std::min(1.0f, 1.0f - v.pan),
+        delay[1].read(voice.delaySamples) * voice.amplitude * std::min(1.0f, 1.0f + v.pan)};
+}
+
 void VocalEngine::process(const float* const* input, float* const* output, int count,
                           const Settings& settings, bool hostBypass,
                           const float* const* auxiliary, int auxiliaryChannels) {
     updateControls(settings, hostBypass);
+    if (!auxiliary || auxiliaryChannels <= 0 || !auxiliary[0] || (auxiliaryChannels > 1 && !auxiliary[1]))
+        auxiliaryChannels = 0;
     for (int offset = 0; offset < count;) {
         if (untilUpdate == 0) {
             const float seconds = static_cast<float>(quantum / rate);
-            auto& lv = leadMotion.controls;
-            leadMotion.advance(seconds * lv.rateHz, controls.human);
-            const float fine = lv.detuneCents * 0.01f + leadMotion.pitch * 0.245f * controls.human * lv.depth;
-            const float localFormant = lv.formantSemitones + leadMotion.tone * 0.36f * controls.human * lv.depth;
-            const bool local = std::abs(localFormant) > 0.00001f || std::abs(lv.pitchSemitones + fine) > 0.00001f;
-            const float color = (local ? controls.formant * controls.formantMix : controls.formant) + localFormant;
+            advanceLocalVoice(leadMotion, seconds);
+            const float fine = leadMotion.finePitch, localFormant = leadMotion.appliedFormant;
+            const float pitch = leadMotion.appliedPitch;
+            const bool local = std::abs(localFormant) > spectralEpsilon || std::abs(pitch + fine) > spectralEpsilon;
             leadIndependentFormant = local;
-            leadMotion.finePitch = fine;
-            leadMotion.appliedPitch = lv.pitchSemitones;
-            leadMotion.appliedDetune = fine * 100.0f;
-            leadMotion.appliedFormant = color;
-            leadLocalBlend = std::min(1.0f, 5.0f * (std::abs(localFormant) + std::abs(fine) + std::abs(lv.pitchSemitones)));
+            leadMotion.appliedFormant = (local ? controls.formant * controls.formantMix : controls.formant) + localFormant;
+            leadLocalBlend = localSpectralBlend(localFormant, fine, pitch);
             for (size_t index = 0; latencySamples != 0 && index < voices.size(); ++index) {
                 auto& voice = voices[index];
                 const auto& v = voice.controls;
@@ -387,6 +501,29 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
                                const float* const* auxiliary, int auxiliaryChannels) {
     routedVoices = routing.beginSpan(defaultRoutedVoices);
     const bool updateSpectral = untilUpdate == quantum;
+    const auto& sidechainTarget = targets.sidechainSettings;
+    const bool renderSidechain = sidechainTarget.enabled && auxiliaryChannels > 0
+        && routing.usesSidechainVoice(targets.sidechainBlendAutomation, targets.sidechainBlend);
+    const bool sidechainWaking = renderSidechain && !sidechainRunning;
+    sidechainRunning = renderSidechain;
+    if (sidechainWaking) {
+        sidechainMotion.controls = sidechainTarget;
+        sidechainMotion.amplitude = dbToGain(sidechainTarget.gainDb);
+        sidechainMotion.delaySamples = float(rate * 0.001) * sidechainTarget.delayMs;
+        sidechainMotion.random = sidechainMotion.initialSeed;
+        sidechainMotion.time = sidechainMotion.pitch = sidechainMotion.tone = sidechainMotion.remaining = 0;
+        sidechainMotion.targetTime = sidechainMotion.targetPitch = sidechainMotion.targetTone = 0;
+        sidechainSpectral.running = sidechainSpectral.harmonyRunning = false;
+        sidechainSpectral.pitchBlend = 0;
+        for (auto& delay : sidechainLocalDelay) delay.clear();
+    }
+    if (renderSidechain && (sidechainWaking || updateSpectral)) {
+        advanceLocalVoice(sidechainMotion, static_cast<float>(quantum / rate));
+        sidechainLocalBlend = localSpectralBlend(sidechainMotion.appliedFormant,
+            sidechainMotion.finePitch, sidechainMotion.appliedPitch);
+    }
+    const bool sidechainWanted = renderSidechain && latencySamples != 0
+        && (localSpectralRequested(sidechainTarget, targets.human) || sidechainLocalBlend > spectralEpsilon);
     const float mixTarget = targets.doubleOn ? targets.doubles : 0.0f;
     const bool mainMixActive = mixTarget > 0.0f || controls.doubles > 0.0f;
     const auto chunkTargets = targets.advanced ? targets.voiceSettings : basicVoiceSettings(controls.human);
@@ -448,20 +585,21 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         for (int channel = 0; channel < inChannels; ++channel) {
             const float sample = channel == 0 ? left : right;
             inputMeters[channel].process(sample);
-            leadInput[channel][i] = sample * multiplier;
+            leadSpectral.input[channel][i] = sample * multiplier;
             if (latencySamples != 0) {
                 dryDelay[channel].push(sample);
-                levelDelay[channel].push(leadInput[channel][i]);
+                levelDelay[channel].push(leadSpectral.input[channel][i]);
                 alignedDry[channel][i] = dryDelay[channel].read(static_cast<float>(latencySamples));
                 alignedLevel[channel][i] = levelDelay[channel].read(static_cast<float>(latencySamples));
             } else {
                 alignedDry[channel][i] = sample;
-                alignedLevel[channel][i] = leadInput[channel][i];
+                alignedLevel[channel][i] = leadSpectral.input[channel][i];
             }
         }
         for (int channel = 0; channel < 2; ++channel) {
             const float sample = auxiliary && auxiliaryChannels > 0
                 ? sampleAt(auxiliary[auxiliaryChannels == 1 ? 0 : channel], offset + i) : 0.f;
+            if (sidechainWanted) sidechainSpectral.input[channel][i] = sample;
             alignedAuxiliary[channel][i] = sample;
             if (latencySamples != 0) {
                 auxiliaryDelay[channel].push(sample);
@@ -478,49 +616,11 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
     const bool leadWanted = latencySamples != 0 && (leadSpectralRequested(targets)
         || (leadMotion.amplitude > 0.0f && (leadLocalBlend > spectralEpsilon
             || controls.formantMix * std::min(1.0f, std::abs(controls.formant) * 5.0f) > spectralEpsilon)));
-    const bool leadWaking = leadWanted && !leadSpectralRunning;
-    if (leadWaking) {
-        lead.reset();
-        lead.setFormantBase(static_cast<float>(150.0 / rate));
-        leadMatch = {};
-        leadWakeRemaining = latencySamples;
-        leadWakeBlend = 0;
-    } else if (!leadWanted) {
-        leadHarmonyRunning = false;
-        leadPitchBlend = 0;
-    }
-    leadSpectralRunning = leadWanted;
-    if (leadSpectralRunning) {
-        if (leadWaking || updateSpectral) {
-            lead.setTransposeSemitones(leadMotion.finePitch);
-            lead.setFormantSemitones(leadMotion.appliedFormant, leadIndependentFormant);
-        }
-        const float* leadIn[] = {leadInput[0].data(), leadInput[1].data()};
-        float* leadOut[] = {leadRendered[0].data(), leadRendered[1].data()};
-        lead.process(leadIn, count, leadOut, count);
-    }
-    const bool leadMusical = leadSpectralRunning && std::abs(leadMotion.appliedPitch) > spectralEpsilon;
-    if (leadMusical && !leadHarmonyRunning) {
-        for (auto& harmony : leadHarmony) harmony.reset();
-        leadHarmonyRunning = true;
-        leadHarmonyWarmup = latencySamples;
-    }
-    if (leadHarmonyRunning) {
-        // reset() clears ratios as well as history; restore the cached controls
-        // immediately, not up to one control quantum later.
-        for (auto& harmony : leadHarmony)
-            harmony.setSemitones(leadMotion.appliedPitch + leadMotion.appliedDetune * 0.01f,
-                                  leadMotion.appliedFormant);
-        for (int i = 0; i < count; ++i) {
-            if (leadHarmonyWarmup) --leadHarmonyWarmup;
-            else leadPitchBlend = mix(leadPitchBlend, leadMusical ? 1.0f : 0.0f, parameterStep);
-            if (std::abs(leadPitchBlend - (leadMusical ? 1.0f : 0.0f)) < 0.00001f)
-                leadPitchBlend = leadMusical ? 1.0f : 0.0f;
-            for (int channel = 0; channel < inChannels; ++channel)
-                leadRendered[channel][i] = mix(leadRendered[channel][i], leadHarmony[size_t(channel)].process(leadInput[channel][i]), leadPitchBlend);
-        }
-        if (!leadMusical && leadPitchBlend == 0) leadHarmonyRunning = false;
-    }
+    renderStereoSpectral(leadSpectral, leadMotion, leadWanted, leadIndependentFormant,
+                         updateSpectral, inChannels, count);
+    if (renderSidechain)
+        renderStereoSpectral(sidechainSpectral, sidechainMotion, sidechainWanted, true,
+                             updateSpectral, 2, count);
     const float* voiceIn[] = {monoInput.data()};
     for (auto& voice : voices) {
         if (!voice.running) continue;
@@ -559,6 +659,8 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
     routingControls.localMix = targets.localMix;
     routingControls.localMixAutomation = targets.localMixAutomation;
     routingControls.tempoBpm = targets.tempoBpm;
+    routingControls.sidechainBlend = targets.sidechainBlend;
+    routingControls.sidechainBlendAutomation = targets.sidechainBlendAutomation;
     for (int i = 0; i < count; ++i) {
         controls.doubles = mix(controls.doubles, mixTarget, parameterStep);
         if (std::abs(controls.doubles - mixTarget) < 0.00001f)
@@ -579,59 +681,45 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
 
         auto& lv = leadMotion.controls;
         const auto lt = targets.leadSettings;
-        for (auto member : {&VoiceSettings::gainDb, &VoiceSettings::pan, &VoiceSettings::delayMs,
-                            &VoiceSettings::detuneCents, &VoiceSettings::formantSemitones,
-                            &VoiceSettings::depth, &VoiceSettings::rateHz, &VoiceSettings::pitchSemitones})
-            lv.*member = mix(lv.*member, lt.*member, parameterStep);
+        smoothLocalVoice(lv, lt);
         const float leadAmplitudeTarget = lt.enabled ? dbToGain(lv.gainDb) : 0;
         leadMotion.amplitude = mix(leadMotion.amplitude, leadAmplitudeTarget, parameterStep);
         if (std::abs(leadMotion.amplitude - leadAmplitudeTarget) < 0.000001f) leadMotion.amplitude = leadAmplitudeTarget;
         const int rightChannel = inChannels == 2 ? 1 : 0;
         const float referenceLeft = alignedLevel[0][i];
         const float referenceRight = alignedLevel[rightChannel][i];
-        float leadLeft = referenceLeft, leadRight = referenceRight, formantBlend = 0;
-        if (leadSpectralRunning) {
-            // Keep aligned clean Lead audible until the spectral history is primed.
-            if (leadWakeRemaining > 0) --leadWakeRemaining;
-            else {
-                leadWakeBlend = mix(leadWakeBlend, 1.0f, parameterStep);
-                if (1.0f - leadWakeBlend < spectralEpsilon) leadWakeBlend = 1.0f;
-            }
-            formantBlend = leadWakeBlend * std::max(leadLocalBlend,
-                controls.formantMix * std::min(1.0f, std::abs(controls.formant) * 5.0f));
-            const float renderedLeft = leadRendered[0][i];
-            const float renderedRight = leadRendered[rightChannel][i];
-            const float leadGain = matchedGain(leadMatch,
-                0.5f * (referenceLeft * referenceLeft + referenceRight * referenceRight),
-                0.5f * (renderedLeft * renderedLeft + renderedRight * renderedRight));
-            if (formantBlend > 0.0f) {
-                leadLeft = mix(referenceLeft, renderedLeft * leadGain, formantBlend);
-                leadRight = mix(referenceRight, renderedRight * leadGain, formantBlend);
-            }
-        }
+        float formantBlend = std::max(leadLocalBlend,
+            controls.formantMix * std::min(1.0f, std::abs(controls.formant) * 5.0f));
+        const auto leadSample = blendStereoSpectral(leadSpectral, {referenceLeft, referenceRight},
+                                                    i, rightChannel, formantBlend);
         const float referenceMono = 0.5f * (referenceLeft + referenceRight);
         const float timeStep = (6.0f + 5.0f * controls.human) / static_cast<float>(rate);
         const auto voiceTargets = targets.advanced ? targets.voiceSettings : basicVoiceSettings(controls.human);
         RoutingSources sources;
         sources.sidechainAvailable = auxiliary && auxiliaryChannels > 0;
         sources.sidechain = {alignedAuxiliary[0][i], alignedAuxiliary[1][i]};
-        const float timeStepLead = (6.0f + 5.0f * controls.human) / float(rate);
-        leadMotion.time = mix(leadMotion.time, leadMotion.targetTime, std::min(1.0f, timeStepLead * lv.rateHz));
-        const float leadDelayTarget = std::clamp(float(rate * 0.001) *
-            (lv.delayMs + leadMotion.time * 7.0f * controls.human * lv.depth), 0.0f, float(maxDoubleDelay));
-        leadMotion.delaySamples += std::clamp(leadDelayTarget - leadMotion.delaySamples, -0.125f, 0.125f);
-        leadLocalDelay[0].push(leadLeft);
-        leadLocalDelay[1].push(leadRight);
-        sources.lead = {
-            leadLocalDelay[0].read(leadMotion.delaySamples) * leadMotion.amplitude * std::min(1.0f, 1.0f - lv.pan),
-            leadLocalDelay[1].read(leadMotion.delaySamples) * leadMotion.amplitude * std::min(1.0f, 1.0f + lv.pan)};
+        sources.lead = applyLocalVoice(leadMotion, leadLocalDelay, leadSample, timeStep);
+        if (renderSidechain) {
+            auto& sv = sidechainMotion.controls;
+            smoothLocalVoice(sv, sidechainTarget, true);
+            const float amplitude = dbToGain(sv.gainDb);
+            sidechainMotion.amplitude = mix(sidechainMotion.amplitude, amplitude, parameterStep);
+            if (std::abs(sidechainMotion.amplitude - amplitude) < 0.000001f)
+                sidechainMotion.amplitude = amplitude;
+            float spectralBlend = sidechainLocalBlend;
+            const auto donor = blendStereoSpectral(sidechainSpectral, sources.sidechain, i, 1, spectralBlend);
+            sources.sidechainVoice = applyLocalVoice(sidechainMotion, sidechainLocalDelay, donor, timeStep);
+            // Keep the delay history ready for automation, but route the raw tap at unity.
+            sources.sidechainVoiceAvailable = spectralBlend > 0.0f || sidechainMotion.delaySamples != 0.0f
+                || sidechainMotion.amplitude != 1.0f || sv.pan != 0.0f;
+        }
         // Meter the actual stereo lead source after its delay, envelope and pan,
         // before graph routing (like generated voices, independent of final Mix).
         const float leadPower = 0.5f * (sources.lead.left * sources.lead.left
             + sources.lead.right * sources.lead.right);
         leadMotion.measuredEnergy = mix(leadMotion.measuredEnergy, leadPower, activityStep);
         leadState = {true, lt.enabled, lv.pan,
-            formantBlend > 0 && leadPitchBlend > 0 ? leadMotion.appliedPitch : 0,
+            formantBlend > 0 && leadSpectral.pitchBlend > 0 ? leadMotion.appliedPitch : 0,
             formantBlend > 0 ? leadMotion.appliedDetune : 0,
             leadMotion.delaySamples * static_cast<float>(1000.0 / rate),
             formantBlend > 0 ? leadMotion.appliedFormant : 0, lv.gainDb,

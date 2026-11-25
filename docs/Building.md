@@ -93,8 +93,10 @@ history. Ordinary builds and source archives do not require that baseline option
 The configure step fetches these sources and applies the repository's CLAP
 patches for host integration, including bus layouts, state, tails and sidechain.
 The DSP also contains an attributed GPL-covered scalar
-[Vital filter integration](../ThirdParty/Vital/README.md). Pixelify Sans is embedded
-from `source/assets` under its [OFL license](../ThirdParty/PixelifySans-OFL.txt).
+[Vital filter integration](../ThirdParty/Vital/README.md). Pixelify Sans and
+Oxanium Medium and SemiBold are embedded from `source/assets` under their
+[Pixelify Sans](../ThirdParty/PixelifySans-OFL.txt) and
+[Oxanium](../ThirdParty/Oxanium-OFL.txt) OFL notices.
 
 This distribution selects **JUCE's open-source AGPLv3 route**. The combined
 plugin uses the GPLv3/AGPLv3 section 13 combination permission, retaining GPLv3

@@ -11,12 +11,14 @@ import tempfile
 import urllib.request
 import zipfile
 
+from release_fonts import require_oxanium_files
+
 ROOT = Path(__file__).resolve().parents[1]
 LEGAL_OVERLAYS = (
     "COPYING.AGPLv3", "README.md", "docs/Building.md", "docs/Licensing.md",
     "Windows-x64/SOURCE.md", "tools/Bundle-Corresponding-Source.py",
     "tools/Bundle-Release-Assets.py", "tools/Refresh-Windows-Package.py",
-    "tools/Verify-Release-Assets.py", "tools/Test-Release-Bundles.py",
+    "tools/Verify-Release-Assets.py", "tools/Test-Release-Bundles.py", "tools/release_fonts.py",
 )
 
 
@@ -109,6 +111,7 @@ def main():
         else:
             with zipfile.ZipFile(io.BytesIO(git(ROOT, "archive", "--format=zip", revision, "--", *paths))) as archive:
                 archive.extractall(stage)
+        require_oxanium_files(cmake, lambda name: (stage / name).is_file())
         overlays = LEGAL_OVERLAYS
         if args.working_tree and (ROOT / "Windows-x64/BUILD-PROVENANCE.json").is_file():
             overlays += ("Windows-x64/BUILD-PROVENANCE.json",)

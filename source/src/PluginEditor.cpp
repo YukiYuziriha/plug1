@@ -4,9 +4,46 @@
 namespace vocalstack {
 namespace {
 using namespace juce;
+constexpr auto sidechainParameterId = "sidechainBlend";
 Colour rgb(uint32_t hex) { return Colour(0xff000000u | hex); }
-Font font(float height, bool bold = false) {
-    return Font(pixelFontOptions(height, bold ? Font::bold : Font::plain));
+
+Colour sidechainAccent(Theme theme) {
+    const auto p = themePalette(theme);
+    if (theme == Theme::neon) return rgb(0x63dfff);
+    return theme == Theme::device ? p.secondary : p.accent;
+}
+
+bool hasUsableSidechainBlend(const Graph& graph) {
+    const auto blend = std::find_if(graph.nodes.begin(), graph.nodes.end(), [](const auto& node) {
+        return node.id == sidechainBlendNodeId && node.type == NodeType::sidechainBlend && node.enabled;
+    });
+    if (blend == graph.nodes.end()) return false;
+    const auto source = std::find_if(graph.nodes.begin(), graph.nodes.end(), [](const auto& node) {
+        return node.type == NodeType::sidechain;
+    });
+    const auto output = std::find_if(graph.nodes.begin(), graph.nodes.end(), [](const auto& node) {
+        return node.type == NodeType::output;
+    });
+    if (source == graph.nodes.end() || output == graph.nodes.end()) return false;
+
+    // Accept edited routes, but require an external donor and an Output path.
+    const auto reaches = [&](uint32_t from, uint32_t to, int destinationPin) {
+        std::vector<uint32_t> visited{from};
+        for (size_t i = 0; i < visited.size(); ++i) {
+            const auto next = visited[i];
+            for (const auto& wire : graph.links) {
+                if (wire.source != next) continue;
+                if (wire.destination == to) {
+                    if (destinationPin < 0 || wire.inputPin == destinationPin) return true;
+                    continue;
+                }
+                if (std::find(visited.begin(), visited.end(), wire.destination) == visited.end())
+                    visited.push_back(wire.destination);
+            }
+        }
+        return false;
+    };
+    return reaches(source->id, blend->id, 1) && reaches(blend->id, output->id, -1);
 }
 
 using namespace editorLayout;
@@ -14,21 +51,23 @@ const std::array<Rectangle<int>, 4> controlPlates{{
     {18, 76, 104, 214}, {132, 76, 306, 214},
     {448, 76, 104, 214}, {562, 76, 104, 214}
 }};
-constexpr uint32_t night = 0x090d17, panel = 0x111827, outline = 0x2b3a53;
+constexpr std::array<const char*, 4> controlCaptions{"", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"};
+constexpr int knobLabelWidth = 100, leadStackLabelPadding = 4;
+constexpr uint32_t night = 0x090d17, outline = 0x2b3a53;
 constexpr uint32_t signPink = 0xff4ca0, signCyan = 0x64f5e3, signYellow = 0xf8de6b;
-constexpr uint32_t nightText = 0xf1f5ff, nightMuted = 0x9eafc8;
+
 constexpr std::array<const char*, knobParameterIds.size()> knobNames{
-    "Leveler", "Lead / Stack", "Human", "Width", "Formant", "Output"
+    "Gain Rider", "Lead / Stack", "Human", "Width", "Formant", "Output"
 };
 constexpr std::array<const char*, knobParameterIds.size()> knobTips{
-    "Make quiet and loud phrases more even. 0% is off. This does not prevent clipping.",
+    "Set how strongly HEAVEN evens out phrases. The live dB readout shows the gain added or cut before the rack. 0% is off; this is not a limiter.",
     "Blend the processed lead with generated voices. Use Mix for the untouched input.",
     "How far the doubles vary in timing, pitch and tone",
     "How widely the generated takes are panned",
     "Make the voice tone deeper or brighter without changing the note. Double-click to reset.",
     "Turn the final output up or down. Double-click for 0 dB (no change)."
 };
-constexpr std::array<const char*, switchParameterIds.size()> switchNames{"LEVEL", "DOUBLE", "FORMANT", "BYPASS"};
+constexpr std::array<const char*, switchParameterIds.size()> switchNames{"RIDE", "DOUBLE", "FORMANT", "BYPASS"};
 
 // The Routing owner supplies this small public bridge; never fall back to a
 // processor-only write that would silently bypass the graph's Undo history.
@@ -50,18 +89,34 @@ void leaveKeyboardToHost(Component& component) {
         leaveKeyboardToHost(*component.getChildComponent(i));
 }
 
-void text(Graphics& g, const String& value, Rectangle<int> box, Colour color,
+void text(const Component& source, Graphics& g, const String& value, Rectangle<int> box, Colour color,
           float size, bool bold = false, Justification align = Justification::centredLeft) {
-    g.setFont(font(size, bold));
+    g.setFont(themeFont(source, size, bold ? Font::bold : Font::plain));
     g.setColour(color);
     g.drawText(value, box, align, false);
+}
+
+Font fitTextWidth(Font font, const String& value, int width) {
+    const int textWidth = GlyphArrangement::getStringWidthInt(font, value);
+    return textWidth > width ? font.withHeight(font.getHeight() * float(width) / float(textWidth)) : font;
+}
+
+void drawControlCaption(const Component& source, Graphics& g, size_t index, Colour colour) {
+    const auto& plate = controlPlates[index];
+    const Rectangle<int> bounds{plate.getX() + 3, 267, plate.getWidth() - 6, 18};
+    const String caption(controlCaptions[index]);
+    g.setFont(fitTextWidth(themeFont(source, 11.5f), caption, bounds.getWidth() - 2));
+    g.setColour(colour);
+    g.drawText(caption, bounds, Justification::centred, false);
 }
 }
 
 Editor::Editor(Processor& processor)
     : AudioProcessorEditor(processor), owner(processor), presets(processor), globalMix(processor, "globalMix", "Mix", "%"), routingPanel(processor),
       advancedPanel(processor), mainBusFxRack(processor) {
+    style.setTooltipThemeSource(*this);
     setLookAndFeel(&style);
+    tips.setLookAndFeel(&style);
     getProperties().set(vocalstackAnimationTimeProperty, 0.0);
     addAndMakeVisible(stackViewport);
     stackViewport.setComponentID("stackViewport");
@@ -69,8 +124,9 @@ Editor::Editor(Processor& processor)
     stackViewport.setViewedComponent(&layoutCanvas, false);
     stackViewport.setScrollBarsShown(true, false);
     layoutCanvas.draw = [this](Graphics& g) {
-        if (componentTheme(*this) == Theme::spectral) drawSpectral(g);
-        else if (style.flash) drawFlash(g);
+        const auto skin = componentTheme(*this);
+        if (skin == Theme::spectral) drawSpectral(g);
+        else if (skin == Theme::neon || skin == Theme::grass) drawGrid(g);
         else drawDevice(g);
     };
     addAndMakeVisible(presets);
@@ -108,14 +164,33 @@ Editor::Editor(Processor& processor)
     globalMix.slider.setTooltip("Untouched input / complete processed output. Bypass preserves this setting");
     assignmentBanner.setComponentID("stackAssignmentBanner");
     assignmentBanner.setInterceptsMouseClicks(false, false);
-    assignmentBanner.setFont(font(12, true));
+
     layoutCanvas.addChildComponent(assignmentBanner);
     endAssignment.setComponentID("stackAssignmentDone");
     endAssignment.setButtonText("Done");
     endAssignment.onClick = [this] { owner.endModulationAssignment(); };
     layoutCanvas.addChildComponent(endAssignment);
+    // Host automation only; keep the passive slider behavior without binding modulation.
+    sidechainBlend.setComponentID(sidechainParameterId);
+    sidechainBlend.setScrollWheelEnabled(false);
+    sidechainBlend.setName("Sidechain");
+    sidechainBlend.setTitle("Sidechain");
+    sidechainBlend.setSliderStyle(Slider::RotaryHorizontalVerticalDrag);
+    sidechainBlend.setTextBoxStyle(Slider::TextBoxBelow, false, 96, 26);
+    sidechainBlend.setDoubleClickReturnValue(true, 0.0);
+    sidechainBlend.setTooltip("Blend the Lead branch with the host sidechain. 0% leaves the Lead unchanged.");
+    layoutCanvas.addAndMakeVisible(sidechainBlend);
+    sidechainLink = std::make_unique<AudioProcessorValueTreeState::SliderAttachment>(
+        owner.parameters, sidechainParameterId, sidechainBlend);
+    sidechainLabel.setComponentID("sidechainBlendLabel");
+    sidechainLabel.setJustificationType(Justification::centred);
+    sidechainLabel.setInterceptsMouseClicks(false, false);
+    layoutCanvas.addAndMakeVisible(sidechainLabel);
+    updateSidechainAppearance(false);
+
     for (size_t i = 0; i < knobs.size(); ++i) {
         auto& knob = knobs[i];
+        auto& parent = i == 0 ? gainRiderControls : static_cast<Component&>(layoutCanvas);
         knob.bindModulation(owner, knobParameterIds[i]);
         knob.setName(knobNames[i]);
         knob.setTitle(knobNames[i]);
@@ -123,7 +198,7 @@ Editor::Editor(Processor& processor)
         knob.setSliderStyle(Slider::RotaryHorizontalVerticalDrag);
         knob.setTextBoxStyle(Slider::TextBoxBelow, false, 96, 26);
         knob.setScrollWheelEnabled(false);
-        layoutCanvas.addAndMakeVisible(knob);
+        parent.addAndMakeVisible(knob);
         knobLinks[i] = std::make_unique<AudioProcessorValueTreeState::SliderAttachment>(
             owner.parameters, knobParameterIds[i], knob);
         if (i == 1) configureCrossfadeDisplay(knob, true);
@@ -134,8 +209,14 @@ Editor::Editor(Processor& processor)
         labels[i].setText(knobNames[i], dontSendNotification);
         labels[i].setJustificationType(Justification::centred);
         labels[i].setInterceptsMouseClicks(false, false);
-        layoutCanvas.addAndMakeVisible(labels[i]);
+        parent.addAndMakeVisible(labels[i]);
     }
+    gainRiderReadout.setComponentID("gainRiderReadout");
+    gainRiderReadout.setName("Gain Rider correction");
+    gainRiderReadout.setJustificationType(Justification::centred);
+
+    gainRiderReadout.setInterceptsMouseClicks(false, false);
+    gainRiderControls.addAndMakeVisible(gainRiderReadout);
     for (size_t i = 0; i < switches.size(); ++i) {
         auto& button = switches[i];
         button.setModulationOwner(owner);
@@ -145,15 +226,16 @@ Editor::Editor(Processor& processor)
         button.setClickingTogglesState(true);
         button.setTooltip(i == 3 ? "Bypass the whole effect with latency compensation"
                                  : "Toggle this module on or off");
-        layoutCanvas.addAndMakeVisible(button);
+        auto& parent = i == 0 ? gainRiderControls : static_cast<Component&>(layoutCanvas);
+        parent.addAndMakeVisible(button);
         switchLinks[i] = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
             owner.parameters, switchParameterIds[i], button);
     }
 
     for (auto* button : {&theme, &reset, &copy, &paste})
         layoutCanvas.addAndMakeVisible(*button);
-    theme.setTooltip("Cycle skins: Device / Neon / Spectral");
-    theme.onClick = [this] { owner.setSkin((owner.getSkin() + 1) % 3); applyTheme(); };
+    theme.setTooltip("Cycle skins: Device / Neon / Spectral / Grass");
+    theme.onClick = [this] { owner.setSkin((owner.getSkin() + 1) % (int(Theme::grass) + 1)); applyTheme(); };
     reset.setButtonText("Reset");
     reset.setTooltip("Restore the default effect parameters");
     reset.onClick = [this] { owner.resetParameters(); };
@@ -182,6 +264,7 @@ Editor::Editor(Processor& processor)
     addChildComponent(routingPanel);
 
     layoutCanvas.addChildComponent(advancedPanel);
+    advancedPanel.setLeadExtras(gainRiderControls);
     advancedPanel.onVoiceSelected = [this](int slot) {
         selectedVoiceSlot = slot;
         auto tree = owner.getRoutingLayout();
@@ -221,6 +304,7 @@ Editor::~Editor() {
     motion.setLookAndFeel(nullptr);
     bypassUiLink.reset();
     rememberWindow();
+    tips.setLookAndFeel(nullptr);
     setLookAndFeel(nullptr);
 }
 
@@ -238,6 +322,10 @@ void Editor::applyTheme() {
     getProperties().set(vocalstackThemeProperty, int(selectedTheme));
     style.flash = selectedTheme == Theme::neon;
     const auto palette = themePalette(*this);
+    auto& stackScrollBar = stackViewport.getVerticalScrollBar();
+    const auto scrollAccent = selectedTheme == Theme::neon ? palette.secondary : palette.accent;
+    stackScrollBar.setColour(ScrollBar::thumbColourId, palette.border.interpolatedWith(scrollAccent, .55f));
+    stackScrollBar.setColour(ScrollBar::backgroundColourId, palette.inset);
     style.setColour(TooltipWindow::backgroundColourId, palette.inset);
     style.setColour(TooltipWindow::textColourId, palette.text);
     style.setColour(TooltipWindow::outlineColourId, palette.border);
@@ -251,29 +339,42 @@ void Editor::applyTheme() {
     motion.setColour(Slider::textBoxTextColourId, palette.text);
     motion.setColour(Slider::textBoxBackgroundColourId, Colours::transparentBlack);
     motion.setColour(Slider::textBoxOutlineColourId, Colours::transparentBlack);
-    assignmentBanner.setColour(Label::textColourId, selectedTheme == Theme::spectral ? palette.accent : rgb(0xb798ff));
+    const bool usePalette = selectedTheme == Theme::spectral || selectedTheme == Theme::grass;
+    assignmentBanner.setFont(themeFont(*this, 12.f, Font::bold));
+    assignmentBanner.setColour(Label::textColourId, usePalette ? palette.accent : rgb(0xb798ff));
     meterPanel.setNeon(style.flash);
     advancedPanel.setNeon(style.flash);
     mainBusFxRack.setNeon(style.flash);
     routingPanel.setNeon(style.flash);
     const auto foreground = palette.text;
     const auto muted = palette.muted;
-    theme.setButtonText(selectedTheme == Theme::spectral ? "SKIN / SPECTRAL"
-                       : style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
+    theme.setButtonText(selectedTheme == Theme::grass ? "SKIN / GRASS"
+                     : selectedTheme == Theme::spectral ? "SKIN / SPECTRAL"
+                     : style.flash ? "SKIN  /  NEON" : "SKIN  /  DEVICE");
     for (auto& label : labels) {
         label.setColour(Label::textColourId, foreground);
-        label.setFont(font(14.0f, false));
+        label.setFont(themeFont(*this, 14.f));
     }
-    for (auto& knob : knobs) {
+    auto& leadStackLabel = labels[1];
+    leadStackLabel.setBorderSize({0, leadStackLabelPadding, 0, leadStackLabelPadding});
+    leadStackLabel.setFont(fitTextWidth(leadStackLabel.getFont(), leadStackLabel.getText(),
+                                      knobLabelWidth - 2 * leadStackLabelPadding - 2));
+    const auto themeKnob = [&](Slider& knob) {
         knob.setColour(Slider::trackColourId, palette.accent);
         knob.setColour(Slider::thumbColourId, palette.text);
         knob.setColour(Slider::textBoxTextColourId, muted);
         knob.setColour(Slider::textBoxOutlineColourId, Colours::transparentBlack);
         knob.setColour(Slider::textBoxBackgroundColourId, Colours::transparentBlack);
-        knob.setColour(Slider::textBoxHighlightColourId, selectedTheme == Theme::spectral
+        knob.setColour(Slider::textBoxHighlightColourId, usePalette
                     ? palette.accent.withAlpha(0.3f) : rgb(style.flash ? 0x34496a : 0x4b5175));
         knob.repaint();
-    }
+    };
+    for (auto& knob : knobs) themeKnob(knob);
+    themeKnob(sidechainBlend);
+    sidechainLabel.setFont(themeFont(*this, 14.f));
+    updateSidechainAppearance(sidechainBlend.isEnabled());
+    gainRiderReadout.setFont(themeFont(*this, 11.5f, Font::bold));
+    updateGainRiderReadout(owner.getMeters().correctionDb);
     for (auto* button : {&theme, &reset, &copy, &paste, &stackTab, &routingTab}) {
         button->setColour(TextButton::textColourOffId, foreground);
         button->setColour(TextButton::textColourOnId, rgb(0x17171c));
@@ -305,11 +406,16 @@ void Editor::resized() {
         layoutStackRack();
     }
     constexpr std::array<int, 6> centers{70, 183, 285, 387, 500, 614};
-    for (size_t i = 0; i < knobs.size(); ++i) {
-        labels[i].setBounds(centers[i] - 50, 120, 100, 24);
+    for (size_t i = 1; i < knobs.size(); ++i) {
+        labels[i].setBounds(centers[i] - knobLabelWidth / 2, 120, knobLabelWidth, 24);
         knobs[i].setBounds(centers[i] - 50, 148, 100, 116);
     }
-    switches[0].setBounds(30, 86, 80, 28);
+    sidechainLabel.setBounds(centers[0] - 50, 120, 100, 24);
+    sidechainBlend.setBounds(centers[0] - 50, 148, 100, 116);
+    switches[0].setBounds(10, 4, 80, 28);
+    labels[0].setBounds(0, 37, 100, 24);
+    knobs[0].setBounds(0, 65, 100, 116);
+    gainRiderReadout.setBounds(0, 184, 100, 18);
     switches[1].setBounds(242, 86, 86, 28);
     switches[2].setBounds(456, 86, 88, 28);
     const int right = routingVisible ? getWidth() - 18 : 922;
@@ -343,9 +449,13 @@ void Editor::layoutStackRack() {
 
 void Editor::syncDrawer() {
 
-    for (auto& knob : knobs) knob.setVisible(!routingVisible);
-    for (auto& label : labels) label.setVisible(!routingVisible);
-    for (size_t i = 0; i < switches.size() - 1; ++i)
+    for (size_t i = 1; i < knobs.size(); ++i) {
+        knobs[i].setVisible(!routingVisible);
+        labels[i].setVisible(!routingVisible);
+    }
+    sidechainBlend.setVisible(!routingVisible);
+    sidechainLabel.setVisible(!routingVisible);
+    for (size_t i = 1; i < switches.size() - 1; ++i)
         switches[i].setVisible(!routingVisible);
     for (auto* button : {&theme, &reset, &copy, &paste})
         button->setVisible(!routingVisible);
@@ -360,6 +470,7 @@ void Editor::syncDrawer() {
         const auto tree = owner.getRoutingLayout();
         selectedVoiceSlot = jlimit(-1, 7, int(tree.getProperty("selectedVoiceSlot", selectedVoiceSlot)));
         advancedPanel.selectVoice(selectedVoiceSlot, true, false);
+        syncSidechain(true);
         mainBusFxRack.sync();
     }
     resized();
@@ -372,6 +483,55 @@ void Editor::updateBypassControls(float bypassValue) {
     const bool bypassed = bypassValue >= 0.5f;
     globalMix.setEnabled(!bypassed);
     globalMix.setAlpha(bypassed ? 0.35f : 1.0f);
+}
+
+void Editor::updateGainRiderReadout(float correctionDb) {
+    const auto p = themePalette(*this);
+    const bool unity = !std::isfinite(correctionDb) || std::abs(correctionDb) < 0.05f;
+    const auto signedGain = unity ? String("0.0")
+        : (correctionDb > 0.f ? "+" : "") + String(correctionDb, 1);
+    gainRiderReadout.setText("Ride " + signedGain + " dB", dontSendNotification);
+    gainRiderReadout.setColour(Label::textColourId, unity ? p.muted : p.text);
+}
+
+void Editor::syncSidechain(bool force) {
+    if (owner.externalSidechainChannels() <= 0) {
+        sidechainInsertionChecked = false;
+        nextSidechainPollMs = 0.0;
+        if (sidechainBlend.isEnabled()) updateSidechainAppearance(false);
+        return;
+    }
+
+    // Keep bus changes responsive without copying the routing snapshot at meter rate.
+    const double now = Time::getMillisecondCounterHiRes();
+    if (!force && now < nextSidechainPollMs) return;
+    nextSidechainPollMs = now + 100.0;
+    bool available = false;
+    if (!owner.routingRestartPending()) {
+        const bool newlyEnabled = !sidechainInsertionChecked;
+        sidechainInsertionChecked = true;
+        auto graph = owner.getRoutingGraph();
+        // Only offer automatic insertion on bus activation. Do not fight subsequent Routing edits.
+        if (newlyEnabled && std::none_of(graph.nodes.begin(), graph.nodes.end(), [](const auto& node) {
+                return node.id == sidechainBlendNodeId && node.type == NodeType::sidechainBlend;
+            })) {
+            String ignored;
+            if (owner.ensureSidechainBlend(ignored)) graph = owner.getRoutingGraph();
+        }
+        available = hasUsableSidechainBlend(graph) && !owner.routingRestartPending();
+    }
+    if (available != sidechainBlend.isEnabled()) updateSidechainAppearance(available);
+}
+
+void Editor::updateSidechainAppearance(bool available) {
+    const auto accent = sidechainAccent(componentTheme(*this));
+    sidechainBlend.setEnabled(available);
+    sidechainBlend.setColour(Slider::trackColourId, available ? accent : rgb(0x717171));
+    sidechainBlend.setColour(Slider::textBoxTextColourId, available ? accent : rgb(0xa5a5a5));
+    sidechainLabel.setEnabled(available);
+    sidechainLabel.setText(available ? "Sidechain" : "Sidechain?", dontSendNotification);
+    sidechainLabel.setColour(Label::textColourId, available ? accent : rgb(0xa5a5a5));
+    layoutCanvas.repaint(controlPlates[0]);
 }
 
 void Editor::visibilityChanged() {
@@ -418,7 +578,12 @@ void Editor::timerCallback() {
         copy.setButtonText("Copy settings");
         paste.setButtonText("Paste");
     }
-    meterPanel.setMeters(owner.getMeters());
+    const auto meters = owner.getMeters();
+    meterPanel.setMeters(meters);
+    if (!routingVisible) {
+        syncSidechain();
+        updateGainRiderReadout(meters.correctionDb);
+    }
     updateBypassControls(owner.parameters.getRawParameterValue("bypass")->load());
     const auto assigning = owner.modulationAssignmentId();
     const auto modulationState = owner.getModulationState();
@@ -449,10 +614,15 @@ void Editor::revealParameter(const String& id) {
     if (target == nullptr) return;
     routingVisible = false;
     syncDrawer();
+    if (gainRiderControls.isParentOf(target)) {
+        advancedPanel.selectVoice(-1);
+        const auto bounds = layoutCanvas.getLocalArea(target, target->getLocalBounds());
+        stackViewport.setViewPosition(0, jmax(0, bounds.getBottom() - stackViewport.getHeight() + 12));
+    }
     revealBubble.toFront(false);
     AttributedString text;
     text.append("Target: " + (target->getName().isNotEmpty() ? target->getName() : id),
-                font(12.0f), Colours::white);
+                themeFont(*this, 12.f), Colours::white);
     revealBubble.showAt(target, text, 1600, true, false);
     leaveKeyboardToHost(revealBubble);
 }
@@ -475,7 +645,8 @@ bool Editor::keyPressed(const KeyPress& key) {
 
 void Editor::paint(Graphics& g) {
     const auto palette = themePalette(*this);
-    rootBackground.paint(g, getLocalBounds(), palette.background, palette.accent, fluidAnimationSeconds(*this));
+    const auto tint = componentTheme(*this) == Theme::grass ? palette.secondary : palette.accent;
+    rootBackground.paint(g, getLocalBounds(), palette.background, tint, fluidAnimationSeconds(*this));
 }
 
 void Editor::drawDevice(Graphics& g) {
@@ -485,8 +656,8 @@ void Editor::drawDevice(Graphics& g) {
         rgb(0x373a37), themePalette(*this).accent, fluidAnimationSeconds(*this), .45f);
     g.setColour(rgb(0xf5a24b));
     g.fillRect(27.0f, 25.0f, 4.0f, 25.0f);
-    text(g, "HEAVEN", {41, 16, 168, 27}, rgb(0xf4f4ea), 23.0f, true);
-    text(g, "by lil grass block", {41, 42, 168, 18}, rgb(0xf4f4ea), 12.0f);
+    text(*this, g, "HEAVEN", {41, 16, 168, 27}, rgb(0xf4f4ea), 23.0f, true);
+    text(*this, g, "by lil grass block", {41, 42, 168, 18}, rgb(0xf4f4ea), 12.0f);
 
 
     if (routingVisible)
@@ -506,66 +677,51 @@ void Editor::drawDevice(Graphics& g) {
         g.setColour(rgb(0x343a35));
         g.drawRect(area, 1.0f);
     }
-    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(0xaeb1a9), 12.0f, true, Justification::centred);
-    const std::array<const char*, 4> captions{
-        "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
-    };
-    for (size_t i = 0; i < controlPlates.size(); ++i)
-        text(g, captions[i], {controlPlates[i].getX(), 267, controlPlates[i].getWidth(), 18},
-             rgb(0xaeb1a9), 11.5f, false, Justification::centred);
-    text(g, "TRUE MIX", {542, 306, 124, 23},
+    text(*this, g, "FINAL GAIN", {570, 88, 88, 23}, rgb(0xaeb1a9), 12.0f, true, Justification::centred);
+    for (size_t i = 1; i < controlPlates.size(); ++i)
+        drawControlCaption(*this, g, i, rgb(0xaeb1a9));
+    text(*this, g, "TRUE MIX", {542, 306, 124, 23},
          rgb(0x9b9f96), 12.0f, true, Justification::centredRight);
 }
 
-void Editor::drawFlash(Graphics& g) {
-    canvasBackground.paint(g, layoutCanvas.getLocalBounds(), rgb(night),
-                           themePalette(*this).accent, fluidAnimationSeconds(*this));
-    const auto drawPlate = [&](Rectangle<int> plate) {
-        headerBackground.paint(g, plate, rgb(panel), themePalette(*this).accent,
-            fluidAnimationSeconds(*this), .45f);
-        g.setColour(rgb(outline));
-        g.drawRect(plate);
-    };
-    drawPlate({18, 14, routingVisible ? getWidth() - 36 : 904, 50});
+void Editor::drawGrid(Graphics& g) {
+    const auto skin = componentTheme(*this);
+    const auto p = themePalette(skin);
+    const bool grass = skin == Theme::grass;
+    const double phase = fluidAnimationSeconds(*this);
+    canvasBackground.paint(g, layoutCanvas.getLocalBounds(), p.background, grass ? p.secondary : p.accent, phase);
+    const Rectangle<int> header{18, 14, routingVisible ? getWidth() - 36 : 904, 50};
+    headerBackground.paint(g, header, p.panel, p.accent, phase, .45f);
+    g.setColour(p.border);
+    g.drawRect(header);
 
-    g.setColour(rgb(signPink));
+    g.setColour(p.accent);
     g.fillRect(18, 14, 4, 50);
     g.drawRect(35, 22, 32, 32);
     for (int x = 40; x <= 52; x += 6)
         g.drawLine(static_cast<float>(x), 46.0f, static_cast<float>(x + 8), 30.0f, 2.3f);
-    text(g, "HEAVEN", {78, 16, 142, 27}, rgb(nightText), 23.0f, true);
-    text(g, "by lil grass block", {78, 42, 142, 18}, rgb(nightText), 12.0f);
+    text(*this, g, "HEAVEN", {78, 16, 142, 27}, p.text, 23.0f, !grass);
+    text(*this, g, "by lil grass block", {78, 42, 142, 18}, p.text, 12.0f);
 
-
-    if (routingVisible)
-        return;
+    if (routingVisible) return;
 
     for (size_t i = 0; i < controlPlates.size(); ++i) {
         const auto& plate = controlPlates[i];
-        controlBackgrounds[i].paint(g, plate, rgb(panel), themePalette(*this).accent, fluidAnimationSeconds(*this), 1.f, 24);
-        g.setColour(rgb(outline));
+        controlBackgrounds[i].paint(g, plate, p.panel, p.accent, phase, 1.f, 24);
+        g.setColour(p.border);
         g.drawRect(plate);
-    }
-
-    constexpr std::array<uint32_t, 4> accents{signPink, signPink, signCyan, signPink};
-    const std::array<const char*, 4> captions{
-        "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
-    };
-    for (size_t i = 0; i < accents.size(); ++i) {
-        const auto& plate = controlPlates[i];
-        g.setColour(rgb(accents[i]));
+        g.setColour(i == 0 ? (sidechainBlend.isEnabled() ? sidechainAccent(skin) : p.border)
+                           : i == 2 && !grass ? p.secondary : p.accent);
         g.fillRect(plate.getX(), plate.getY(), plate.getWidth(), 2);
-        text(g, captions[i], {plate.getX(), 267, plate.getWidth(), 18},
-             rgb(nightMuted), 11.5f, false, Justification::centred);
+        if (i != 0) drawControlCaption(*this, g, i, p.muted);
     }
-    text(g, "FINAL GAIN", {570, 88, 88, 23}, rgb(signPink), 12.0f, true, Justification::centred);
-    g.setColour(rgb(outline));
+    text(*this, g, "FINAL GAIN", {570, 88, 88, 23}, p.accent, 12.0f, !grass, Justification::centred);
+    g.setColour(p.border);
     for (const int x : {234, 336})
         g.drawVerticalLine(x, 121.0f, 260.0f);
     g.drawHorizontalLine(298, 18.0f, 666.0f);
 
-    text(g, "TRUE MIX", {542, 306, 124, 23},
-         rgb(nightMuted), 12.0f, true, Justification::centredRight);
+    text(*this, g, "TRUE MIX", {542, 306, 124, 23}, p.muted, 12.0f, !grass, Justification::centredRight);
 }
 
 void Editor::drawSpectral(Graphics& g) {
@@ -575,23 +731,19 @@ void Editor::drawSpectral(Graphics& g) {
         p.panel, p.accent, fluidAnimationSeconds(*this), .45f);
     g.setColour(p.accent);
     g.fillRect(18, 14, 3, 50);
-    text(g, "HEAVEN", {36, 16, 168, 27}, p.text, 23.0f);
-    text(g, "by lil grass block", {36, 42, 168, 18}, p.text, 12.0f);
+    text(*this, g, "HEAVEN", {36, 16, 168, 27}, p.text, 23.0f);
+    text(*this, g, "by lil grass block", {36, 42, 168, 18}, p.text, 12.0f);
 
     if (routingVisible) return;
-    const std::array<const char*, 4> captions{
-        "PHRASE CONTROL", "GENERATED TAKES", "PITCH PRESERVED", "OUTPUT TRIM"
-    };
     for (size_t i = 0; i < controlPlates.size(); ++i) {
         const auto& plate = controlPlates[i];
         controlBackgrounds[i].paint(g, plate, p.panel, p.accent, fluidAnimationSeconds(*this), 1.f, 24);
         g.setColour(p.border);
         g.drawRect(plate);
-        text(g, captions[i], {plate.getX(), 267, plate.getWidth(), 18},
-             p.muted, 11.5f, false, Justification::centred);
+        if (i != 0) drawControlCaption(*this, g, i, p.muted);
     }
-    text(g, "FINAL GAIN", {570, 88, 88, 23}, p.muted, 12.0f, false, Justification::centred);
-    text(g, "TRUE MIX", {542, 306, 124, 23}, p.muted, 12.0f, false, Justification::centredRight);
+    text(*this, g, "FINAL GAIN", {570, 88, 88, 23}, p.muted, 12.0f, false, Justification::centred);
+    text(*this, g, "TRUE MIX", {542, 306, 124, 23}, p.muted, 12.0f, false, Justification::centredRight);
 }
 
 void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, float position,
@@ -604,13 +756,17 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     const auto centre = area.getCentre();
     const float angle = start + position * (end - start);
     const auto name = slider.getName();
-    const auto p = themePalette(slider);
-    const bool spectral = componentTheme(slider) == Theme::spectral;
-    const auto accent = spectral ? (name == "Formant" ? p.secondary : p.accent) : rgb(!flash ? 0xf5a24b : name == "Formant" ? signCyan
-                            : name == "Leveler" || name == "Output" ? signYellow : signPink);
+    const auto skin = componentTheme(slider);
+    const auto p = themePalette(skin);
+    const bool usePalette = skin == Theme::spectral || skin == Theme::grass;
+    const bool sidechain = slider.getComponentID() == sidechainParameterId;
+    const auto accent = sidechain ? slider.findColour(Slider::trackColourId)
+        : usePalette ? (name == "Formant" ? p.secondary : p.accent)
+        : rgb(!flash ? 0xf5a24b : name == "Formant" ? signCyan
+             : slider.getComponentID() == "level" || name == "Output" ? signYellow : signPink);
     Path track, value;
     track.addCentredArc(centre.x, centre.y, ringRadius, ringRadius, 0.0f, start, end, true);
-    g.setColour(spectral ? p.border : flash ? rgb(outline) : rgb(0x50564f));
+    g.setColour(p.border);
     g.strokePath(track, PathStrokeType(ringWidth, PathStrokeType::curved, PathStrokeType::butt));
     const float origin = name == "Formant" || name == "Output"
         ? start + static_cast<float>(slider.valueToProportionOfLength(0.0)) * (end - start) : start;
@@ -621,7 +777,7 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
         PathStrokeType(ringWidth, PathStrokeType::curved, PathStrokeType::butt).createStrokedPath(stroke, value);
         const Graphics::ScopedSaveState save(g);
         g.reduceClipRegion(stroke);
-        arcTexture.paint(g, stroke.getBounds().getSmallestIntegerContainer(), accent, p.accent,
+        arcTexture.paint(g, stroke.getBounds().getSmallestIntegerContainer(), accent, sidechain ? accent : p.accent,
                          fluidAnimationSeconds(slider), .45f);
     }
     if (name == "Formant" || name == "Output") {
@@ -631,22 +787,23 @@ void Editor::Style::drawRotarySlider(Graphics& g, int x, int y, int w, int h, fl
     }
     const float inner = jmax(1.f, radius + 2.56f - ringWidth - 1.f);
     const auto face = Rectangle<float>(inner * 2, inner * 2).withCentre(centre);
-    if (spectral || flash)
-        g.setColour(spectral ? p.inset : rgb(night));
+    if (usePalette || flash)
+        g.setColour(usePalette ? p.inset : rgb(night));
     else
         g.setGradientFill(ColourGradient(rgb(0x414641), centre.x, face.getY(),
                                          rgb(0x282b28), centre.x, face.getBottom(), false));
     g.fillEllipse(face);
     { Path clip; clip.addEllipse(face); Graphics::ScopedSaveState state(g);
       g.reduceClipRegion(clip); g.setOpacity(.18f);
-      buttonBackground.paint(g, slider, face.toNearestInt(), spectral || flash ? p.inset : rgb(0x343a34), p.accent); }
-    g.setColour(spectral ? p.border : rgb(flash ? outline : 0x555b54));
+      buttonBackground.paint(g, slider, face.toNearestInt(), usePalette || flash ? p.inset : rgb(0x343a34),
+                             sidechain && !slider.isEnabled() ? accent : p.accent); }
+    g.setColour(usePalette ? p.border : rgb(flash ? outline : 0x555b54));
     g.drawEllipse(face, 1.0f);
     g.setColour(accent);
     const auto a = centre.getPointOnCircumference(inner - 3.6f, angle);
     const auto b = centre.getPointOnCircumference(inner - 11.0f, angle);
     g.drawLine({a, b}, 2.6f);
-    if (auto* modulation = dynamic_cast<ModulationSlider*>(&slider))
+    if (auto* modulation = dynamic_cast<ModulationSlider*>(&slider); modulation && !sidechain)
         modulation->drawModulation(g, centre, radius, start, end);
 }
 
@@ -655,13 +812,17 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
     const auto area = button.getLocalBounds().toFloat().reduced(0.7f);
     const bool lit = button.getToggleState();
     const auto name = button.getButtonText();
-    const bool routingAction = name == "Open Routing" || name == "Routing" || name == "Stack";
+    const bool viewTab = name == "Routing" || name == "Stack";
+    const bool routingAction = name == "Open Routing" || viewTab;
     const auto selectedTheme = componentTheme(button);
+    const bool grassTab = selectedTheme == Theme::grass && viewTab;
     const auto p = themePalette(button);
     const auto accent = name == "BYPASS" ? rgb(0xf58680)
+        : grassTab ? rgb(0xa4bd7a)
         : selectedTheme == Theme::device ? rgb(0xe3a15e)
         : routingAction || name == "FORMANT" ? p.secondary : p.accent;
-    auto fill = lit ? accent : routingAction ? accent.withAlpha(selectedTheme == Theme::device ? 0.18f : 0.12f)
+    auto fill = lit ? accent : grassTab ? rgb(0x5b5037)
+        : routingAction ? accent.withAlpha(selectedTheme == Theme::device ? 0.18f : 0.12f)
         : selectedTheme == Theme::device ? rgb(0x333733) : p.panel;
     if (hover) fill = fill.brighter(0.12f);
     if (down) fill = fill.darker(0.12f);
@@ -676,7 +837,8 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
     }
     const bool focused = button.hasKeyboardFocus(false);
     if (selectedTheme != Theme::device) {
-        g.setColour(lit || focused || routingAction || name.startsWith("SKIN") ? accent : p.border);
+        g.setColour(grassTab && !lit && !focused ? rgb(0x877c54)
+            : lit || focused || routingAction || name.startsWith("SKIN") ? accent : p.border);
         g.drawRect(area, focused ? 2.0f : 1.0f);
     } else {
         g.setColour(lit || routingAction ? accent.brighter(0.13f) : rgb(0x515850));
@@ -685,7 +847,8 @@ void Editor::Style::drawButtonBackground(Graphics& g, Button& button, const Colo
 }
 
 juce::Font Editor::Style::getTextButtonFont(juce::TextButton& button, int) {
-    return font(12.0f, componentTheme(button) != Theme::spectral);
+    const auto skin = componentTheme(button);
+    return themeFont(skin, 12.f, skin == Theme::device || skin == Theme::neon ? Font::bold : Font::plain);
 }
 
 } // namespace vocalstack

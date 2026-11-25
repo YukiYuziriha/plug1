@@ -7,6 +7,7 @@ namespace {
 using State = juce::AudioProcessorValueTreeState;
 constexpr auto stateType = "VocalStack";
 constexpr auto themeProperty = "flash";
+constexpr auto sidechainBlendRoutingProperty = "sidechainBlendRouting";
 
 // JUCE AudioParameterInt supplies integer snapping/step counts, but inherits
 // isDiscrete() == false. Quality is explicitly stepped host automation.
@@ -32,6 +33,7 @@ auto processorToneValues(const RoutingNode& node) {
 }
 juce::ValueTree encodeProcessorGraph(const Graph& graph, const char* type) {
     auto result = processorRouting::encode(graph, type);
+    result.setProperty(sidechainBlendRoutingProperty, true, nullptr);
     for (auto child : result) {
         if (!child.hasType("Node")) continue;
         for (const auto& node : graph.nodes) if (juce::int64(node.id) == juce::int64(child["id"])) {
@@ -121,9 +123,9 @@ State::ParameterLayout Processor::makeParameters() {
     const auto formantText = [](float value, int) {
         return (value > 0 ? "+" : "") + juce::String(value, 1) + " st";
     };
-    auto percent = [&](int index, const char* name, float initial) {
+    auto percent = [&](int index, const char* name, float initial, int versionHint = 1) {
         layout.add(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{parameterIds[index], 1}, name,
+            juce::ParameterID{parameterIds[index], versionHint}, name,
             juce::NormalisableRange<float>{0.0f, 100.0f, 1.0f}, initial,
             juce::AudioParameterFloatAttributes{}.withLabel("%").withStringFromValueFunction(percentText)));
     };
@@ -227,15 +229,18 @@ State::ParameterLayout Processor::makeParameters() {
         }
     }
     percent(int(globalMixParameterIndex), "Global Mix", 100);
-    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"leadOn", 1}, "Lead Active", true));
-    for (size_t f = 0; f < fields.size(); ++f)
-        layout.add(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{leadParameterIds[f + 1], 1}, "Lead " + juce::String(fields[f]),
-            juce::NormalisableRange<float>{minimum[f], maximum[f], interval[f]}, 0.0f,
-            juce::AudioParameterFloatAttributes{}.withLabel(units[f])));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"leadPitch", 1}, "Lead Pitch",
-        juce::NormalisableRange<float>{-36, 36, 0.01f}, 0.0f,
-        juce::AudioParameterFloatAttributes{}.withLabel("st")));
+    const auto addVoiceCard = [&](const auto& ids, const juce::String& name, bool active, int version) {
+        layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{ids[0], version}, name + " Active", active));
+        for (size_t f = 0; f < fields.size(); ++f)
+            layout.add(std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID{ids[f + 1], version}, name + " " + fields[f],
+                juce::NormalisableRange<float>{minimum[f], maximum[f], interval[f]}, 0.0f,
+                juce::AudioParameterFloatAttributes{}.withLabel(units[f])));
+        layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ids[8], version}, name + " Pitch",
+            juce::NormalisableRange<float>{-36, 36, 0.01f}, 0.0f,
+            juce::AudioParameterFloatAttributes{}.withLabel("st")));
+    };
+    addVoiceCard(leadParameterIds, "Lead", true, 1);
     for (size_t slot = 1; slot < 16; ++slot) {
         layout.add(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{toneParameterId(slot, "WaveRaw"), 1}, "FX " + juce::String(int(slot)) + " Wave Raw", false));
@@ -332,6 +337,8 @@ State::ParameterLayout Processor::makeParameters() {
                 layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id, 1}, name, choices, int(d.initial)));
             } else appendDescriptor(id, name, d);
         }
+    percent(int(sidechainBlendParameterIndex), "Sidechain Blend", 0.0f, 2);
+    addVoiceCard(sidechainParameterIds, "Sidechain", false, 3);
     return layout;
 }
 
@@ -393,9 +400,14 @@ Settings Processor::settingsFromValues(const std::array<float, parameterIds.size
     for (size_t slot = 0; slot < result.localMix.size(); ++slot)
         result.localMix[slot] = value(localMixParameterStart + slot) * 0.01f;
     result.globalMix = value(globalMixParameterIndex) * 0.01f;
-    const auto i = leadParameterStart;
-    result.leadSettings = {value(i) >= 0.5f, value(i + 1), value(i + 2), value(i + 3), value(i + 4),
-        value(i + 5), value(i + 6), value(i + 7), value(i + 8), true};
+    result.sidechainBlend = value(sidechainBlendParameterIndex) * 0.01f;
+    result.sidechainBlendAutomation = true;
+    const auto voiceCard = [&](size_t i) -> VoiceSettings {
+        return {value(i) >= 0.5f, value(i + 1), value(i + 2), value(i + 3), value(i + 4),
+            value(i + 5), value(i + 6), value(i + 7), value(i + 8), true};
+    };
+    result.leadSettings = voiceCard(leadParameterStart);
+    result.sidechainSettings = voiceCard(sidechainParameterStart);
     return result;
 }
 
@@ -686,20 +698,23 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
         } else return false;
     }
     restored.removeChild(mods, nullptr);
-    Graph draft = defaultGraph(), active = draft;
+    Graph draft = defaultGraph(true, true), active = draft;
     const auto graphTree = restored.getChildWithName("RoutingGraph");
     const auto activeTree = restored.getChildWithName("ActiveRoutingGraph");
     juce::String graphError;
     if (graphTree.isValid() && !decodeProcessorGraph(graphTree, draft)) {
-        draft = defaultGraph();
+        draft = defaultGraph(true, true);
         graphError = "Malformed saved routing draft";
     }
     if (!decodeProcessorGraph(activeTree, active) || !processorRouting::validate(active))
-        active = defaultGraph();
+        active = defaultGraph(true, true);
+    bool migrateSidechainBlend = !bool(activeTree.getProperty(sidechainBlendRoutingProperty, false));
     const auto savedActive = active;
     const auto validation = processorRouting::validate(draft);
-    if (validation && graphError.isEmpty()) active = draft;
-    else if (graphError.isEmpty()) graphError = juce::String(validation.message);
+    if (validation && graphError.isEmpty()) {
+        active = draft;
+        migrateSidechainBlend = !bool(graphTree.getProperty(sidechainBlendRoutingProperty, false));
+    } else if (graphError.isEmpty()) graphError = juce::String(validation.message);
 
     FxSlotOwners savedOwners{};
     const bool hasOwnership = restored.hasProperty("fxSlotLineage");
@@ -878,7 +893,7 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                     if (node.type == NodeType::stereo && processorRouting::fxSlot(node.id) == int(i - stereoMonoParameterStart + 1))
                         initial = node.monoAudition ? 1.f : 0.f;
             }
-            if (i >= vocalGlitchParameterStart) {
+            if (i >= vocalGlitchParameterStart && i < sidechainBlendParameterIndex) {
                 const size_t offset = i - vocalGlitchParameterStart;
                 const size_t slot = 1 + offset / vocalGlitchParameterCount;
                 const size_t field = preGlitchCreativeParameterCount + offset % vocalGlitchParameterCount;
@@ -893,6 +908,9 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                     if (isUtilityEffect(node.type) && processorRouting::fxSlot(node.id) == int(slot))
                         initial = node.utility.values[field];
             }
+            if (i == sidechainBlendParameterIndex)
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::sidechainBlend) initial = node.mix * 100;
             initial = parameter->convertFrom0to1(parameter->convertTo0to1(initial));
             missing.setProperty("value", initial, nullptr);
             restored.addChild(missing, -1, nullptr);
@@ -901,14 +919,17 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
     const bool initialized = legacyVoices
         || static_cast<bool>(restored.getProperty("advancedInitialized", hasAdvancedState));
     skin.store(std::clamp(int(restored.getProperty("skin",
-        static_cast<bool>(restored.getProperty(themeProperty, false)) ? 1 : 0)), 0, 2), std::memory_order_relaxed);
+        static_cast<bool>(restored.getProperty(themeProperty, false)) ? 1 : 0)), 0, 3), std::memory_order_relaxed);
     const double motion = double(restored.getProperty("motionPercent", 3.0));
     motionPercent.store(std::isfinite(motion) ? std::clamp(motion, 0.0, 100.0) : 3.0, std::memory_order_relaxed);
     advancedVisible.store(static_cast<bool>(restored.getProperty("advancedVisible", false)), std::memory_order_relaxed);
     parameters.replaceState(restored);
     advancedInitialized.store(initialized, std::memory_order_relaxed);
+    // Pre-blend patches (including generated factory graphs) opt into a safe
+    // insertion. A new save with the node deliberately removed stays as saved.
+    if (migrateSidechainBlend) processorRouting::insertSidechainBlend(active);
     active = removeLegacySumNodes(active);
-    if (!processorRouting::validate(active)) active = defaultGraph();
+    if (!processorRouting::validate(active)) active = defaultGraph(true, true);
     routingDraft = active;
     if (savedLineage != fxSlotLineage) {
         if (std::any_of(fxSlotOwners.begin(), fxSlotOwners.end(), [](const FxSlotOwner& owner) {
@@ -956,7 +977,7 @@ bool Processor::pasteSettings(const juce::String& text) {
 }
 
 void Processor::setSkin(int requested) {
-    const int next = std::clamp(requested, 0, 2);
+    const int next = std::clamp(requested, 0, 3);
     if (skin.exchange(next, std::memory_order_relaxed) != next)
         updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
 }
@@ -1020,7 +1041,7 @@ void Processor::resetParameters() {
     juce::String error;
     setModulationState({}, error);
     endModulationAssignment();
-    setRoutingGraphLocked(defaultGraph(false), error);
+    setRoutingGraphLocked(defaultGraph(false, true), error);
     advancedInitialized.store(false, std::memory_order_relaxed);
 }
 
@@ -1050,7 +1071,11 @@ void Processor::timerCallback() {
 }
 
 Graph Processor::processingGraph(Graph graph, const Graph* previous) const {
+    const bool hasSidechainBus = getChannelCountOfBus(true, 1) > 0;
     for (auto& node : graph.nodes) {
+        // A disabled host bus cannot activate a custom wet branch. A configured
+        // bus is kept in the plan regardless of its audio or the automated mix.
+        if (node.type == NodeType::sidechainBlend && !hasSidechainBus) node.enabled = false;
         if (routingDeclaredLatency(node.type) == 0) continue;
         const auto slot = routingFxSlot(node.id);
         if (slot <= 0) continue;
@@ -1065,7 +1090,7 @@ Graph Processor::processingGraph(Graph graph, const Graph* previous) const {
 Processor::ProcessingRequirements Processor::processingRequirements(const Graph& graph) const {
     ProcessingRequirements result;
     result.rackLatency = RoutingExecutor::graphLatency(graph);
-    bool leadConnected = false;
+    bool leadConnected = false, sidechainVoiceConnected = false;
     std::array<unsigned, RoutingExecutor::maxNodes> visited{};
     const auto visit = [&](auto&& walk, size_t index, bool mainWet) -> void {
         const unsigned flag = mainWet ? 2u : 1u;
@@ -1085,20 +1110,27 @@ Processor::ProcessingRequirements Processor::processingRequirements(const Graph&
         }
         for (const auto& link : graph.links) {
             if (link.destination != node.id) continue;
-            if (declaredLatency && !node.enabled && routingInput(node.type, link.inputPin).auxiliary) continue;
+            if (!routingUsesInput(node, link.inputPin)) continue;
             const auto source = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto& n) { return n.id == link.source; });
-            if (source != graph.nodes.end())
-                walk(walk, size_t(source - graph.nodes.begin()), mainWet || (node.type == NodeType::mix && node.mainControls && link.inputPin == 1));
+            if (source == graph.nodes.end()) continue;
+            if (node.type == NodeType::sidechainBlend && node.enabled && link.inputPin == 1
+                && source->type == NodeType::sidechain)
+                sidechainVoiceConnected = true;
+            walk(walk, size_t(source - graph.nodes.begin()), mainWet || (node.type == NodeType::mix && node.mainControls && link.inputPin == 1));
         }
     };
     for (size_t index = 0; index < graph.nodes.size(); ++index)
         if (graph.nodes[index].type == NodeType::output) visit(visit, index, false);
 
     const auto raw = [&](size_t i) { return values[i]->load(std::memory_order_relaxed); };
-    const auto lead = leadParameterStart;
-    if (leadConnected && raw(lead) >= .5f)
-        result.vocalLatency = raw(7) >= .5f || raw(lead + 4) != 0 || raw(lead + 5) != 0 || raw(lead + 8) != 0
-            || (raw(2) > 0 && raw(lead + 6) > 0 && raw(lead + 7) > 0);
+    const auto localSpectral = [&](size_t base) {
+        return raw(base + 4) != 0 || raw(base + 5) != 0 || raw(base + 8) != 0
+            || (raw(2) > 0 && raw(base + 6) > 0 && raw(base + 7) > 0);
+    };
+    if (leadConnected && raw(leadParameterStart) >= .5f)
+        result.vocalLatency = raw(7) >= .5f || localSpectral(leadParameterStart);
+    if (sidechainVoiceConnected && raw(sidechainParameterStart) >= .5f && raw(sidechainBlendParameterIndex) > 0)
+        result.vocalLatency |= localSpectral(sidechainParameterStart);
     const auto voices = raw(6) >= .5f ? result.connectedVoices : result.independentVoices;
     const bool advanced = raw(10) >= .5f;
     for (size_t slot = 0; slot < 8 && !result.vocalLatency; ++slot)
@@ -1125,6 +1157,8 @@ Graph Processor::qualitySnapshot(Graph graph) const {
             const int slot = routingFxSlot(node.id);
             if (slot > 0) node.monoAudition = values[stereoMonoParameterStart + size_t(slot - 1)]->load(std::memory_order_relaxed) >= .5f;
         }
+        if (node.type == NodeType::sidechainBlend)
+            node.mix = values[sidechainBlendParameterIndex]->load(std::memory_order_relaxed) * .01f;
         if (node.type == NodeType::mix && !node.mainControls && node.id >= 200 && node.id < 248)
             node.mix = values[localMixParameterStart + node.id - 200]->load(std::memory_order_relaxed) * .01f;
         if (node.type == NodeType::spectralMorph) {
@@ -1275,6 +1309,27 @@ bool Processor::setRoutingGraphLocked(const Graph& graph, juce::String& error, b
 
 bool Processor::setRoutingGraph(const Graph& graph, juce::String& error) {
     return setRoutingGraphImpl(graph, error, nullptr);
+}
+
+bool Processor::ensureSidechainBlend(juce::String& error) {
+    bool requestActivation = false;
+    {
+        const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+        error.clear();
+        if (std::any_of(routingDraft.nodes.begin(), routingDraft.nodes.end(), [](const auto& node) {
+                return node.type == NodeType::sidechainBlend;
+            })) return true;
+        auto graph = routingDraft;
+        const auto insertion = processorRouting::insertSidechainBlend(graph);
+        if (!insertion) {
+            error = juce::String(insertion.message);
+            return false;
+        }
+        if (!setRoutingGraphLocked(graph, error)) return false;
+        requestActivation = restartPending;
+    }
+    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true).withLatencyChanged(requestActivation));
+    return true;
 }
 
 bool Processor::setRoutingGraphImpl(const Graph& graph, juce::String& error, const uint64_t* historyRevision) {
@@ -1492,6 +1547,7 @@ bool Processor::setModulationState(const ModulationState& state, juce::String& e
         for (size_t i = 0; i < plan.modulatorCount; ++i) if (plan.modulators[i].id == a.modulatorId) source = i;
         for (size_t i = 0; i < parameterIds.size(); ++i) if (a.targetParameterId == parameterIds[i]) target = i;
         if (source == plan.modulatorCount || target == parameterIds.size()) return fail("Unknown modulation source or parameter ID");
+        if (target >= sidechainBlendParameterIndex) return fail("Sidechain controls are host automation only, not modulation targets");
         if (target >= vocalGlitchParameterStart) return fail("Vocal Glitch controls are host automation only, not modulation targets");
         if (target >= stereoMonoParameterStart) return fail("Mono Audition is host automation only, not a continuous modulation target");
         if (target >= spectralMorphParameterStart) {

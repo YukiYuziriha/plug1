@@ -198,7 +198,7 @@ protected:
         surfaceMaterial.paint(g, getLocalBounds(), palette.inset, palette.accent, fluidAnimationSeconds(*this), .25f);
         g.setColour(palette.border.withAlpha(0.6f));
         g.drawRect(getLocalBounds().toFloat().reduced(0.5f), 1);
-        g.setFont(juce::Font(pixelFontOptions(12.0f)));
+        g.setFont(themeFont(componentTheme(*this, neon), 12.0f));
         g.setColour(palette.muted);
     }
     void paintSpectrum(juce::Graphics& g, juce::Rectangle<float> area, bool withOutput) const {

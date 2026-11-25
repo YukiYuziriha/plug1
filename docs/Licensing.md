@@ -24,9 +24,11 @@ and is not offered as GPLv3-only software.
   reference code remain **GPL-3.0-or-later**, with their copyright, modification
   notices and upstream license. CLAP, CLAP Helpers, CLAP JUCE Extensions,
   Signalsmith libraries and the bundled VST3 SDK retain their respective notices
-  in [ThirdParty](../ThirdParty). Pixelify Sans retains its **OFL 1.1** terms.
-  Preserve notices within dependency sources too; the top-level notice folder
-  is not a replacement for all embedded JUCE dependency licenses.
+  in [ThirdParty](../ThirdParty). [Pixelify Sans](../ThirdParty/PixelifySans-OFL.txt)
+  and [Oxanium Medium and SemiBold](../ThirdParty/Oxanium-OFL.txt) retain their
+  **SIL Open Font License 1.1** terms. Preserve notices within dependency
+  sources too; the top-level notice folder is not a replacement for all embedded
+  JUCE dependency licenses.
 
 Running the plugin does not require publishing your music or DAW sessions.
 Redistribution and modification carry obligations, including preserving notices,
@@ -74,7 +76,7 @@ binaries and identifies this source revision. The exact dependency inputs are:
 | Signalsmith Stretch | `https://github.com/Signalsmith-Audio/signalsmith-stretch.git` at `88061fd4eda56a2353c5d65c74aa3f4ccf76f9da` |
 | Signalsmith Linear | `https://github.com/Signalsmith-Audio/linear.git` at `7bb1c8f36794d6980080ce817c91f8da8fe56a66` |
 | Vital subset and adapter | Retained editable sources and modifications in this repository; upstream `636ca0ef517a4db087a6a08a6a8a5e704e21f836`, as documented in `ThirdParty/Vital` |
-| Embedded font | `source/assets/PixelifySans.ttf`, with `ThirdParty/PixelifySans-OFL.txt` |
+| Embedded fonts | `source/assets/PixelifySans.ttf`, with `ThirdParty/PixelifySans-OFL.txt`; `source/assets/OxaniumMedium.ttf` and `source/assets/OxaniumSemiBold.ttf`, with `ThirdParty/Oxanium-OFL.txt` |
 
 Use the **entire JUCE archive**, not just its module headers or notice file.
 The extension's two submodule sources must also be included. Stretch's unused
@@ -90,7 +92,7 @@ project-specific dependency on that basis.
 to the public JUCE archive, and already populated Git dependency caches. It reads
 Git objects at the pins, not modified/generated dependency working files, and
 recursively exports submodules at their recorded gitlinks. It includes the full
-JUCE source archive after verifying CMake's SHA256, project sources, font,
+JUCE source archive after verifying CMake's SHA256, project sources, fonts,
 patches, tests, notices and tracked build tools. It excludes compiled plugins,
 Git metadata, credentials and ignored machine-local helpers. Current legal/docs
 and the bundler are explicitly recorded as packaging overlays. ZIP entries use
@@ -143,9 +145,15 @@ compliance or alter third-party rights.
 source guide for its half-CPU-wrapped command. It verifies the history bundle by
 restoring it and comparing every audited commit/source tree. The current source
 ZIP includes final publication documentation as separately identified overlays.
-The Windows ZIP contains the entire `Windows-x64` tree, GPLv3/AGPLv3 texts, font
-license, complete retained third-party notices, source URLs and accompanying
+The Windows ZIP contains the entire `Windows-x64` tree, GPLv3/AGPLv3 texts,
+font licenses, complete retained third-party notices, source URLs and accompanying
 licensing/build/installation instructions; the plugin bytes remain unchanged.
+
+For releases that embed Oxanium, both ZIPs must include `OxaniumMedium.ttf` and
+`OxaniumSemiBold.ttf` under `source/assets/`. The corresponding-source ZIP carries
+`ThirdParty/Oxanium-OFL.txt`; the Windows ZIP carries the same notice under
+`Windows-x64/ThirdParty/`. Treat the fonts and notice as build inputs, not
+packaging overlays. Existing deliveries from before Oxanium are not affected.
 
 Keep the source assets available alongside current and historical binary
 downloads, and preserve these notices/licenses on redistribution. Runtime

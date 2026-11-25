@@ -98,6 +98,12 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
                 panel.bindCardEdits(*utility, slot, true, editing); addAndMakeVisible(*utility);
             } else if (slot > 0 && isEffect(n.type)) {
                 tone = std::make_unique<ToneEffectPanel>(panel.owner, size_t(slot), n.type); addAndMakeVisible(*tone);
+            } else if (n.type == NodeType::sidechainBlend) {
+                setInterceptsMouseClicks(false, true);
+                addKnob("sidechainBlend", "Blend", "%");
+                knobs.back()->slider.getProperties().set("vocalstackCellRotary", true);
+                knobs.back()->slider.setTooltip("Lead / Sidechain: 0% Lead, 100% Sidechain. With no host sidechain, the Lead input passes through.");
+                refresh(n);
             } else if (n.type == NodeType::output) {
                 addKnob("outputGain", "Output trim", "dB");
                 knobs.back()->slider.getProperties().set("vocalstackCellRotary", true);
@@ -141,7 +147,9 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             if (utility) utility->setBounds(body);
             const int width = body.getWidth() / juce::jmax(1, int(knobs.size()));
             for (size_t i = 0; i < knobs.size(); ++i) {
-                if (model.type == NodeType::output) knobs[i]->setBounds(body.getX(), body.getY(), juce::jmin(110, body.getWidth()), body.getHeight());
+                if (model.type == NodeType::sidechainBlend)
+                    knobs[i]->setBounds(body.withSizeKeepingCentre(110, body.getHeight()));
+                else if (model.type == NodeType::output) knobs[i]->setBounds(body.getX(), body.getY(), juce::jmin(110, body.getWidth()), body.getHeight());
                 else if (model.type == NodeType::chorale || model.type == NodeType::mix) knobs[i]->setBounds(body.getX(), body.getY() + int(i) * 46, body.getWidth(), 44);
                 else knobs[i]->setBounds(body.getX() + int(i) * width, body.getY(), width, body.getHeight());
             }
@@ -154,6 +162,12 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             if (creative) creative->setNeon(neon);
             if (utility) utility->setNeon(neon);
             for (auto& knob : knobs) knob->setNeon(neon);
+            if (model.type == NodeType::sidechainBlend) {
+                auto& slider = knobs.front()->slider;
+                const auto colour = panel.sidechainColour();
+                slider.setColour(juce::Slider::trackColourId, colour);
+                slider.setColour(juce::Slider::thumbColourId, colour);
+            }
             const auto p = themePalette(*this, neon);
             enabled.setColour(juce::TextButton::buttonColourId, p.inset);
             enabled.setColour(juce::TextButton::buttonOnColourId, p.accent);
@@ -172,6 +186,16 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             if (wheel.deltaY != 0) panel.zoomAt(e.getEventRelativeTo(&panel.canvas).position, wheel.deltaY > 0 ? 1.12f : 1 / 1.12f);
         }
         void refresh(const RoutingNode& n) {
+            if (n.type == NodeType::sidechainBlend) {
+                auto& knob = *knobs.front();
+                const bool available = panel.sidechainAvailable();
+
+                if (knob.isEnabled() != available) {
+                    if (!available) RoutingPanel::cancelControlGestures(knob);
+                    knob.setEnabled(available);
+                    setNeon(panel.neon);
+                }
+            }
             if (localMix.getParentComponent() && !localMix.isMouseButtonDown(true))
                 localMix.setValue(n.mix * 100, juce::dontSendNotification);
         }
@@ -289,7 +313,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             g.setColour(getToggleState() ? accent : accent.withAlpha(.25f));
             g.drawRect(bounds, getToggleState() ? 2.0f : 1.0f);
             g.setColour(findColour(juce::TextButton::textColourOffId));
-            g.setFont(juce::Font(pixelFontOptions(12.0f)));
+            g.setFont(themeFont(*this, 12.0f));
             g.drawFittedText(getButtonText(), bounds.removeFromTop(17).toNearestInt(), juce::Justification::centred, 1, 1.f);
             const auto plot = bounds.reduced(3, 2);
             g.setColour(accent.withAlpha(.2f));
@@ -347,8 +371,6 @@ public:
                             rebuildModulatorStrip(); updateModulationPanel(); saveLayout();
                         };
                 modulationPanel.onReveal = [this](const juce::String& id) { revealTarget(id); };
-        status.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
-        status.setFont(juce::Font(pixelFontOptions(12.0f)));
         inspectorTitle.setTooltip("Double-click a machine title to rename it. Stable voice/parameter identities do not change.");
         inspectorTitle.onTextChange = [this] {
             const auto* selected = node(selectedNode);
@@ -384,7 +406,7 @@ public:
         zoomOut.onClick = [this] { zoomAt(canvas.getLocalBounds().getCentre().toFloat(), 1.0f / 1.2f); };
         zoomIn.onClick = [this] { zoomAt(canvas.getLocalBounds().getCentre().toFloat(), 1.2f); };
         canvas.setName("Routing node canvas");
-        add.setTooltip("Add an independent effect, a dry/wet mixer, a full-level A/B splitter, or a missing source");
+        add.setTooltip("Add an effect, mixer, splitter, sidechain blend, or missing source");
         remove.setTooltip("Delete the selected node and its cables. Output is retained");
         bypass.setTooltip("Bypass the selected FX through its host parameter. Bypassed Multiband passes full-band audio on port 0 only.");
         graph = owner.getRoutingGraph();
@@ -462,8 +484,14 @@ public:
     }
     void setNeon(bool value) {
         neon = value;
-        const auto palette = themePalette(*this, neon);
-        inspectorTitle.setColour(juce::Label::textColourId, palette.text);
+        const auto theme = componentTheme(*this, neon);
+        const auto palette = themePalette(theme);
+        status.setFont(themeFont(theme, 12.0f));
+        inspectorTitle.setFont(themeFont(theme, 14.0f, juce::Font::bold));
+        inspectorInfo.setFont(themeFont(theme, (tonePanel || spectralPanel || creativePanel || utilityPanel) ? 11.0f : 12.0f));
+        const auto* selected = node(selectedNode);
+        inspectorTitle.setColour(juce::Label::textColourId,
+            selected && selected->type == NodeType::sidechain ? sidechainColour() : palette.text);
         inspectorInfo.setColour(juce::Label::textColourId, palette.muted);
         status.setColour(juce::Label::textColourId, error.isEmpty() ? palette.secondary : palette.accent);
         for (auto* b : std::initializer_list<juce::TextButton*>{&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn, &disconnect, &addModulator, &assignmentBanner, &expandAll, &collapseAll, &inspectorToggle, &modulationToggle}) {
@@ -491,14 +519,19 @@ public:
         repaint(); canvas.repaint();
     }
     void paint(juce::Graphics& g) override {
-        const auto palette = themePalette(*this, neon);
-        background.paint(g, getLocalBounds(), palette.background, palette.accent, fluidAnimationSeconds(*this));
+        const auto theme = componentTheme(*this, neon);
+        const auto palette = themePalette(theme);
+        const bool grass = theme == Theme::grass;
+        const auto time = fluidAnimationSeconds(*this);
+        background.paint(g, getLocalBounds(), palette.background, grass ? palette.secondary : palette.accent, time);
+        if (grass && inspectorVisible && !inspector.getBounds().isEmpty())
+            inspectorBackground.paint(g, inspector.getBounds(), palette.panel, palette.accent, time, .65f);
         g.setColour(palette.border);
         if (inspectorVisible) g.drawVerticalLine(inspectorDivider.getBounds().getCentreX(), 46.0f, float(inspector.getBottom()));
         if (modulationDivider.isVisible())
             g.drawHorizontalLine(modulationDivider.getBounds().getCentreY(), float(canvas.getX()), float(canvas.getRight()));
         g.setColour(palette.muted);
-        g.setFont(juce::Font(pixelFontOptions(11.5f)));
+        g.setFont(themeFont(theme, 11.5f));
         g.drawText("Output drag: move / empty drop disconnects  |  Ctrl/Cmd+drag output: source  |  Wheel: zoom  |  Alt/middle drag: pan", 12, 43, getWidth() - 24, 22, juce::Justification::centredLeft);
     }
     void resized() override {
@@ -555,6 +588,16 @@ public:
         if (!target || !isEffect(target->type)) return;
         selectedNode = id; selectedLink = -1;
         rebuildInspector(); saveLayout(); canvas.repaint();
+    }
+    // After opening Routing, focus the existing blend (including a manually wired one).
+    bool selectSidechainBlend() {
+        refreshGraphFromOwner();
+        const auto* blend = node(sidechainBlendNodeId);
+        if (!blend || blend->type != NodeType::sidechainBlend) return false;
+        selectedNode = blend->id; selectedLink = -1;
+        revealExpanded(*blend);
+        rebuildInspector(); saveLayout(); syncNodeCards(); canvas.repaint();
+        return true;
     }
     uint32_t selectedModulationId() const { return modulationui::selectedModulator(owner); }
         std::function<void(int)> onSelectVoice;
@@ -686,29 +729,45 @@ private:
                 toneViewport.setViewPosition(0, juce::jmax(0, bounds.getY() - 48));
             }
             addChildComponent(revealBubble);
-            juce::AttributedString text; text.append("Target: " + id, juce::Font(pixelFontOptions(12.0f)), juce::Colours::white);
+            juce::AttributedString text; text.append("Target: " + id, themeFont(componentTheme(*this, neon), 12.0f), juce::Colours::white);
             revealBubble.showAt(target, text, 1600, true, false);
         } else if (onRevealParameter) onRevealParameter(id);
         saveLayout(); syncNodeCards(); canvas.repaint();
+    }
+    static bool mixUsesHostParameter(const RoutingNode& n) {
+        return n.type == NodeType::sidechainBlend || (n.type == NodeType::mix && !localMixParameterId(n.id).isEmpty());
     }
     static juce::String signature(const Graph& g) {
         juce::String s;
         for (const auto& n : g.nodes)
             s += juce::String(n.id) + ":" + juce::String(int(n.type)) + ":" + juce::String(n.voiceSlot) + ":"
-                + juce::String(int(n.enabled)) + ":" + juce::String(n.type == NodeType::mix && !localMixParameterId(n.id).isEmpty() ? 0.0f : n.mix, 6) + ":" + juce::String(n.motion, 6)
+                + juce::String(int(n.enabled)) + ":" + juce::String(mixUsesHostParameter(n) ? 0.0f : n.mix, 6) + ":" + juce::String(n.motion, 6)
                 + ":" + juce::String(int(n.mainControls)) + ":" + juce::String(n.referencePower, 6) + ":" + juce::String(n.latencySamples) + ":" + juce::String(n.wetOwner) + ";";
         s += "|";
         for (const auto& l : g.links) s += juce::String(l.source) + ":" + juce::String(l.sourcePin) + ">" + juce::String(l.destination) + ":" + juce::String(l.inputPin) + ";";
         return s;
     }
+    bool sidechainAvailable() const { return owner.externalSidechainChannels() > 0; }
+    const char* sidechainLabel() const { return sidechainAvailable() ? "Sidechain" : "Sidechain?"; }
+    juce::Colour sidechainColour() const {
+        if (!sidechainAvailable()) return juce::Colour(0xffa6a8ad);
+        switch (componentTheme(*this, neon)) {
+        case Theme::neon: return juce::Colour(0xff63ceff);
+        case Theme::spectral: return juce::Colour(0xffb8a8f3);
+        case Theme::grass: return juce::Colour(0xff9bd974);
+        case Theme::device: return juce::Colour(0xffafc5a1);
+        }
+        return juce::Colours::grey;
+    }
     juce::String title(const RoutingNode& n) const {
+        if (n.type == NodeType::sidechain) return sidechainLabel();
         if (const auto alias = names.find(n.id); alias != names.end()) return alias->second;
         if (n.wetOwner) return "WET DELAY / GRANULAR " + juce::String(routingFxSlot(n.wetOwner));
         switch (n.type) {
         case NodeType::spectralMorph: return "SPECTRAL MORPH " + juce::String(routingFxSlot(n.id));
         case NodeType::lead: return "LEAD";
-                case NodeType::sidechain: return owner.externalSidechainChannels() == 0 ? "SIDECHAIN / DISABLED"
-                    : owner.externalSidechainChannels() == 1 ? "SIDECHAIN / MONO CONFIG" : "SIDECHAIN / STEREO CONFIG";
+        case NodeType::sidechain: return sidechainLabel();
+        case NodeType::sidechainBlend: return "Sidechain Blend";
         case NodeType::voice: return "VOICE " + juce::String(n.voiceSlot + 1);
         case NodeType::chorale: return n.mainControls ? "CHORALE / MAIN" : "CHORALE " + juce::String(int(n.id) - 98);
         case NodeType::sum: return {}; // Legacy nodes are stripped by the processor.
@@ -757,7 +816,8 @@ private:
     }
     bool inactiveSource(const RoutingLink& link) const {
         for (const auto& n : graph.nodes) if (n.id == link.source)
-            return link.sourcePin >= outputPins(n) || (n.type == NodeType::crossover && !effectEnabled(n) && link.sourcePin != 0);
+            return link.sourcePin >= outputPins(n) || (n.type == NodeType::sidechain && !sidechainAvailable())
+                || (n.type == NodeType::crossover && !effectEnabled(n) && link.sourcePin != 0);
         return false;
     }
     bool hasStoredPort(const RoutingNode& n) const {
@@ -901,6 +961,7 @@ private:
         return n.type == NodeType::lead || n.type == NodeType::voice || n.type == NodeType::mix
             || n.type == NodeType::output || (isEffect(n.type) && fxSlot(n) >= 0);
     }
+    bool hasNodeCard(const RoutingNode& n) const { return n.type == NodeType::sidechainBlend || isExpanded(n); }
     bool isExpanded(const RoutingNode& n) const {
         const auto it = expanded.find(n.id);
         return expandable(n) && it != expanded.end() && it->second;
@@ -921,6 +982,7 @@ private:
             return {500, juce::jmin(470, 84 + visual + rows * 48 + 32)};
         }
         if (isEffect(n.type) && n.type != NodeType::chorale) return {400, 430};
+        if (n.type == NodeType::sidechainBlend) return {204, 124};
         if (n.type == NodeType::output) return {190, 138};
                 return n.type == NodeType::chorale ? juce::Point<int>(280, 146) : juce::Point<int>(190, 114);
     }
@@ -1057,7 +1119,7 @@ private:
         const auto view = canvas.getLocalBounds().toFloat();
         for (auto it = nodeCards.begin(); it != nodeCards.end();) {
             const auto* n = node(it->first);
-            bool keep = n && isExpanded(*n) && nodeVisible(*n) && isShowing() && it->second->matches(*n);
+            bool keep = n && positions.count(n->id) && hasNodeCard(*n) && nodeVisible(*n) && isShowing() && it->second->matches(*n);
             if (keep) keep = view.intersects(cardScreenBounds(*n));
             // NodeCard closes captured host gestures and its edit scope before
             // destroying attachments, including hides without a mouseUp event.
@@ -1065,7 +1127,7 @@ private:
         }
         if (!isShowing()) return;
         for (const auto& n : graph.nodes) {
-            if (!isExpanded(n) || !nodeVisible(n)) continue;
+            if (!positions.count(n.id) || !hasNodeCard(n) || !nodeVisible(n)) continue;
             const auto b = nodeBounds(n);
             if (!view.intersects(cardScreenBounds(n))) continue;
             auto& card = nodeCards[n.id];
@@ -1086,7 +1148,7 @@ private:
     juce::Rectangle<float> nodeBounds(const RoutingNode& n) const {
         const auto it = positions.find(n.id);
         const auto p = it == positions.end() ? juce::Point<float>() : it->second;
-        if (isExpanded(n)) {
+        if (hasNodeCard(n)) {
             const auto size = bodySize(n);
             return {p.x, p.y, float(size.x + 16), bodyTop(n) + float(size.y) + 8};
         }
@@ -1129,10 +1191,15 @@ private:
                 if (item.link.destination == id && item.link.inputPin == pin) ++count;
             return count;
         };
-        const auto palette = themePalette(*this, neon);
-        canvasBackground.paint(g, canvas.getLocalBounds(), palette.inset, palette.accent, fluidAnimationSeconds(canvas));
+        const auto theme = componentTheme(*this, neon);
+        const auto palette = themePalette(theme);
+        const bool grass = theme == Theme::grass;
+        const bool hasSidechain = sidechainAvailable();
+        const auto sidechainAccent = sidechainColour();
+        canvasBackground.paint(g, canvas.getLocalBounds(), grass ? palette.background : palette.inset,
+                               grass ? palette.secondary : palette.accent, fluidAnimationSeconds(canvas));
         const auto accent = palette.accent;
-        g.setColour(palette.border.withAlpha(.55f));
+        g.setColour((grass ? palette.secondary : palette.border).withAlpha(.55f));
         const float step = 32 * zoom;
         const float originX = std::fmod(pan.x, step), originY = std::fmod(pan.y, step);
         const float firstX = originX + std::floor((clip.getX() - originX) / step) * step;
@@ -1146,7 +1213,10 @@ private:
             auto* a = node(l.source); auto* b = node(l.destination);
             if (!a || !b) continue;
             const bool inactive = inactiveSource(l);
-            g.setColour(int(i) == selectedLink ? palette.secondary : inactive ? palette.muted.withAlpha(0.5f) : accent.withAlpha(0.7f));
+            const auto wireAccent = a->type == NodeType::sidechain ? sidechainAccent : accent;
+            g.setColour(i == selectedLink ? palette.secondary
+                : inactive ? (a->type == NodeType::sidechain ? sidechainAccent : palette.muted).withAlpha(.5f)
+                           : wireAccent.withAlpha(.7f));
             const auto path = cable(pinPoint(*a, l.sourcePin, true), pinPoint(*b, l.inputPin, false));
             if (!clip.intersects(path.getBounds().expanded(5.0f))) { ++workCounters.cablesCulled; continue; }
             ++workCounters.cablesDrawn;
@@ -1173,21 +1243,23 @@ private:
             const auto screen = juce::Rectangle<float>(toScreen(b.getTopLeft()), toScreen(b.getBottomRight()));
             if (!clip.intersects(screen.expanded(6.0f))) { ++workCounters.nodesCulled; continue; }
             ++workCounters.nodesDrawn;
-            const auto nodeAccent = n.type == NodeType::voice
-                ? (componentTheme(*this) == Theme::device ? VoiceMonitor::voiceColour(size_t(juce::jlimit(0, 7, n.voiceSlot))) : palette.secondary)
+            const bool sidechain = n.type == NodeType::sidechain;
+            const bool blend = n.type == NodeType::sidechainBlend;
+            const auto nodeAccent = sidechain || blend ? sidechainAccent : n.type == NodeType::voice
+                ? (theme == Theme::device ? VoiceMonitor::voiceColour(size_t(juce::jlimit(0, 7, n.voiceSlot))) : palette.secondary)
                 : accent;
-            nodeMaterials[n.id].paint(g, screen.toNearestInt(), palette.panel, palette.accent,
+            nodeMaterials[n.id].paint(g, screen.toNearestInt(), palette.panel, sidechain || blend ? nodeAccent : accent,
                                       fluidAnimationSeconds(canvas), .65f, 24);
             juce::Graphics::ScopedSaveState chrome(g);
             g.addTransform(juce::AffineTransform::scale(zoom).translated(screen.getX(), screen.getY()));
             const auto face = juce::Rectangle<float>(0, 0, b.getWidth(), b.getHeight());
             g.setColour(nodeAccent.withAlpha(0.14f));
             g.fillRect(face.withHeight(30));
-            g.setColour(n.id == selectedNode ? accent : palette.border);
+            g.setColour(n.id == selectedNode ? nodeAccent : palette.border);
             g.drawRect(face, n.id == selectedNode ? 3.0f : 2.0f);
             g.setColour(nodeAccent.withAlpha(.55f));
             g.fillRect(0.0f, 29.0f, face.getWidth(), 1.0f);
-            g.setFont(juce::Font(pixelFontOptions(14.0f)));
+            g.setFont(themeFont(theme, 14.0f, juce::Font::bold));
             g.setColour(palette.text);
             auto heading = face.toNearestInt().reduced(6, 0).withHeight(30);
             if (expandable(n)) {
@@ -1200,17 +1272,19 @@ private:
                 g.drawText(isExpanded(n) ? "-" : "+", r, juce::Justification::centred);
                 heading = heading.withTrimmedRight(24);
             }
-            g.setColour(palette.text);
+            g.setColour(sidechain ? sidechainAccent : palette.text);
             g.drawText(title(n), heading, juce::Justification::centredLeft);
-            g.setFont(juce::Font(pixelFontOptions(12.5f)));
+            g.setFont(themeFont(theme, 12.5f));
             for (int pin = 0; pin < inputs(n); ++pin) {
                 const auto p = pinPoint(n, pin, false) - b.getTopLeft();
                 const int count = inputConnections(n.id, pin);
-                g.setColour(count > 0 ? accent : palette.muted);
+                const bool externalPin = blend && pin == 1;
+                g.setColour(externalPin ? sidechainAccent.withAlpha(count > 0 || !hasSidechain ? 1.f : .65f)
+                                         : count > 0 ? accent : palette.muted);
                 g.fillRect(p.x - 5, p.y - 5, 10.0f, 10.0f);
-                g.setColour(palette.muted);
-                const juce::String name = routingInput(n.type, pin).name;
-                g.drawText(name + (count > 1 ? " x" + juce::String(count) : juce::String()), int(p.x + 9), int(p.y - 8), 64, 16, juce::Justification::centredLeft);
+                g.setColour(externalPin ? sidechainAccent : palette.muted);
+                const juce::String name = blend ? (externalPin ? sidechainLabel() : "Lead") : routingInput(n.type, pin).name;
+                g.drawText(name + (count > 1 && !(externalPin && !hasSidechain) ? " x" + juce::String(count) : juce::String()), int(p.x + 9), int(p.y - 9), blend ? 102 : 76, 18, juce::Justification::centredLeft);
             }
             for (int pin = 0; pin < outputPins(n); ++pin) {
                 const auto p = pinPoint(n, pin, true) - b.getTopLeft();
@@ -1230,7 +1304,7 @@ private:
                 const auto badge = juce::Rectangle<float>(face.getWidth() - 86, bodyTop(n) - 23, 80, 15);
                 g.setColour(palette.inset); g.fillRect(badge);
                 g.setColour(palette.muted); g.drawRect(badge, 1.0f);
-                g.setFont(juce::Font(pixelFontOptions(12.0f)));
+                g.setFont(themeFont(theme, 12.0f));
                 g.drawText("Bypassed", badge, juce::Justification::centred);
             }
         }
@@ -1483,11 +1557,7 @@ private:
             switch (n.type) {
             case NodeType::lead: p = {24, 20}; break;
             case NodeType::sidechain:
-                p = {24, 100};
-                for (const auto& source : graph.nodes)
-                    if (source.type == NodeType::voice && voicePresent(source.voiceSlot))
-                        p.y = std::max(p.y, 100.f + float((source.voiceSlot + 1) * 70));
-                break;
+            case NodeType::sidechainBlend: continue;
             case NodeType::voice: p = {24, 100.0f + float(n.voiceSlot * 70)}; break;
             case NodeType::sum: p = {}; break;
             case NodeType::mix: p = {490, 30}; break;
@@ -1514,6 +1584,26 @@ private:
             }
             if (n.id >= 100) p = {270.0f + float(extra % 3) * 200, 460.0f + float(extra / 3) * 100};
             positions[n.id] = p; compactPositions[n.id] = p; ++extra;
+        }
+        // Older layouts may already place every other machine. Fit only the new
+        // sidechain cards around those bounds rather than shifting saved cards.
+        for (const auto type : {NodeType::sidechain, NodeType::sidechainBlend}) {
+            for (const auto& n : graph.nodes) if (n.type == type && !positions.count(n.id)) {
+                std::vector<juce::Rectangle<float>> obstacles;
+                juce::Point<float> anchor = type == NodeType::sidechain ? juce::Point<float>{24, 100}
+                                                                      : juce::Point<float>{244, 20};
+                const auto card = nodeBounds(n);
+                float left = anchor.x, right = anchor.x + card.getWidth();
+                for (const auto& other : graph.nodes) if (positions.count(other.id) && nodeVisible(other)) {
+                    const auto bounds = nodeBounds(other);
+                    obstacles.push_back(bounds);
+                    left = juce::jmin(left, bounds.getX());
+                    right = juce::jmax(right, bounds.getRight());
+                    if (type == NodeType::sidechain && other.type == NodeType::voice)
+                        anchor.y = juce::jmax(anchor.y, bounds.getBottom() + 6.f);
+                }
+                positions[n.id] = compactPositions[n.id] = packedPosition(card, obstacles, left, right - left, anchor, false);
+            }
         }
     }
     void saveLayout() {
@@ -1699,7 +1789,7 @@ private:
         const auto current = owner.getRoutingGraph();
         for (auto& n : graph.nodes)
             for (const auto& old : current.nodes) if (old.id == n.id && old.type == n.type) {
-                if (n.type == NodeType::mix && !localMixParameterId(n.id).isEmpty()) n.mix = old.mix;
+                if (mixUsesHostParameter(n)) n.mix = old.mix;
                 if (isEffect(n.type)) {
                     // All effect edits are host-bound (including bypass below).
                     // Topology/history snapshots must not replay old bases into
@@ -1872,7 +1962,14 @@ private:
         menu.addItem(300, "Splitter | full-level A / B duplicates", room);
         menu.addSeparator();
         menu.addItem(10, "Restore Lead source", room && !hasSource(-1));
-                menu.addItem(41, "SIDECHAIN | external host input (unwired)", room && !node(14));
+        menu.addItem(41, "Sidechain | external host input (unwired)", room && !node(sidechainNodeId));
+        const auto* blend = node(sidechainBlendNodeId);
+        if (blend && blend->type == NodeType::sidechainBlend) {
+            menu.addItem(42, "Show Sidechain Blend");
+        } else {
+            menu.addItem(42, "Insert Sidechain Blend on main Lead path", room && !blend);
+            menu.addItem(43, "Add Sidechain Blend (unwired)", room && !blend);
+        }
         for (int i = 0; i < 8; ++i) if (voicePresent(i))
             menu.addItem(20 + i, "Restore Voice " + juce::String(i + 1) + " source", room && !hasSource(i));
         menu.addItem(40, "Restore main Chorale", room && !node(12) && effects < 16);
@@ -1894,7 +1991,26 @@ private:
             if (!(spent & (1u << slot)) && !node(slot + 99)) return slot + 99;
         return 0;
     }
+    void addSidechainBlend(bool unwired) {
+        if (selectSidechainBlend()) return;
+        if (unwired) {
+            auto candidate = graph;
+            candidate.nodes.push_back({sidechainBlendNodeId, NodeType::sidechainBlend});
+            juce::String rejection;
+            if (!commitExternalGraphEdit(candidate, rejection)) return;
+        } else {
+            auto before = state();
+            if (!owner.ensureSidechainBlend(error)) { showStatus(); return; }
+            undoStates.push_back(std::move(before)); limitHistory(); redoStates.clear();
+            graph = owner.getRoutingGraph();
+            lastSignature = signature(graph);
+            lastPortSignature = portSignature();
+            ensurePositions(); showStatus();
+        }
+        selectSidechainBlend();
+    }
     void addNode(int kind, juce::Point<float> insertion) {
+        if (kind == 42 || kind == 43) { addSidechainBlend(kind == 43); return; }
         if (graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
         RoutingNode n;
         if (kind == 1 || kind == 4 || kind == 5 || kind == 6 || (kind >= 50 && kind <= 58) || (kind >= 60 && kind <= 64)) {
@@ -1928,8 +2044,8 @@ private:
             if (effects >= 16) return;
         } else if (kind == 41) {
             for (const auto& existing : graph.nodes) if (existing.type == NodeType::sidechain) return;
-            if (node(14)) return;
-            n.id = 14; n.type = NodeType::sidechain;
+            if (node(sidechainNodeId)) return;
+            n.id = sidechainNodeId; n.type = NodeType::sidechain;
         } else if (kind == 3) {
             n.type = NodeType::mix;
             for (std::uint32_t id = 200; id < 248; ++id) if (!node(id)) { n.id = id; break; }
@@ -1995,18 +2111,15 @@ private:
     void rebuildInspector() {
         validateSelection();
         updateModulationPanel();
-        inspectorTitle.setEditable(false, node(selectedNode) != nullptr, false);
+        const auto* n = node(selectedNode);
+        inspectorTitle.setEditable(false, n && n->type != NodeType::sidechain, false);
         toneViewport.setViewedComponent(nullptr, false);
         tonePanel.reset(); spectralPanel.reset(); creativePanel.reset(); utilityPanel.reset(); voiceControls.reset(); mixControl.reset(); fields.clear(); nodeValueLink.reset(); inspector.removeAllChildren();
 
         inspector.addAndMakeVisible(inspectorTitle); inspector.addAndMakeVisible(inspectorInfo);
-        inspectorTitle.setColour(juce::Label::textColourId, juce::Colour(0xffe4e9ee));
-        inspectorInfo.setColour(juce::Label::textColourId, juce::Colour(0xffaebaca));
-        inspectorInfo.setFont(juce::Font(pixelFontOptions(12.0f)));
         nodeValue.onValueChange = nullptr; nodeValue.onDragStart = nullptr; nodeValue.onDragEnd = nullptr;
         nodeValue.setLookAndFeel(&nodeStyle);
         configureCrossfadeDisplay(nodeValue);
-        const auto* n = node(selectedNode);
         if (n && (n->type == NodeType::voice || n->type == NodeType::lead)) {
             const int slot = n->type == NodeType::lead ? -1 : int(n->voiceSlot);
             if (slot != lastSelectedVoiceSlot) {
@@ -2159,7 +2272,9 @@ private:
                             inspector.addAndMakeVisible(*mixControl);
                             info += "\nFinal output trim; meters remain in the main editor. Exactly one Output is required.";
                         }
-            else if (n->type != NodeType::splitter)
+            else if (n->type == NodeType::sidechainBlend)
+                info += "\nUse the canvas knob to set the host-automatable blend: 0% Lead, 100% Sidechain. If the sidechain is unavailable or unwired, Lead passes through. Bus configuration does not indicate whether the host has connected a signal.";
+            else if (n->type != NodeType::splitter && n->type != NodeType::sidechain)
                 info += "\nProcessed lead source. Connecting this output elsewhere moves its cable; inputs accept multiple sources.";
         } else if (selectedLink >= 0 && selectedLink < int(graph.links.size())) {
             DisplayLink item;
@@ -2175,7 +2290,10 @@ private:
                 + "\n\nDrag the input end to reconnect or disconnect this cable. Drag the output to move its destination or drop on empty space to disconnect all its links. Ctrl/Command-drag the output to move this cable's source. Clicks leave wiring unchanged.";
             if (item.foldedEnd >= 0)
                 info += "\n\nTransparent bypass: this cable represents stored Mix 11 -> main Chorale 12 -> Output 13. Chorale is Off via its host parameter. Disconnect removes BOTH chain links; rewiring replaces both with one real direct cable. Enabling Chorale reveals the stored chain if unchanged.";
-            if (inactiveSource(l)) info += "\n\nINACTIVE / SILENT: this cable remains stored. Re-enable Multiband or return to 3 bands to restore its source port.";
+            if (source && source->type == NodeType::sidechain)
+                info += "\n\nThis cable remains stored when the host sidechain is disabled. No external signal is supplied in that state.";
+            else if (inactiveSource(l))
+                info += "\n\nINACTIVE / SILENT: this cable remains stored. Re-enable Multiband or return to 3 bands to restore its source port.";
         }
         inspectorInfo.setText(info, juce::dontSendNotification);
         inspectorInfo.setJustificationType(juce::Justification::topLeft);
@@ -2198,7 +2316,6 @@ private:
             if (spectralPanel) spectralPanel->setBounds(0, 68, inspector.getWidth(), available);
             if (creativePanel) creativePanel->setBounds(0, 68, inspector.getWidth(), available);
             if (utilityPanel) utilityPanel->setBounds(0, 68, inspector.getWidth(), available);
-            inspectorInfo.setFont(juce::Font(pixelFontOptions(11.0f)));
             inspectorInfo.setBounds(0, 72 + available, inspector.getWidth(), 24);
             return;
         }
@@ -2209,7 +2326,6 @@ private:
             toneViewport.setBounds(0, 68, inspector.getWidth(), available);
             const int width = juce::jmax(1, inspector.getWidth() - toneViewport.getScrollBarThickness());
                         tonePanel->setBounds(0, 0, width, juce::jmax(available, tonePanel->preferredContentHeight(width)));
-            inspectorInfo.setFont(juce::Font(pixelFontOptions(11.0f)));
             inspectorInfo.setBounds(0, 68 + available + 4, inspector.getWidth(), footerHeight - 4);
             return;
         }
@@ -2239,6 +2355,21 @@ private:
         result += "fold:" + juce::String(foldedChain().first);
         return result;
     }
+    void refreshGraphFromOwner() {
+        auto latest = owner.getRoutingGraph();
+        const auto next = signature(latest);
+        const auto savedLayout = owner.getRoutingLayout();
+        const auto layoutSignature = savedLayout.toXmlString();
+        const auto revision = stateRevision();
+        if (next == lastSignature && layoutSignature == lastLayoutSignature && revision == lastStateRevision) return;
+        lastStateRevision = revision;
+        graph = std::move(latest); lastSignature = next;
+        undoStates.clear(); redoStates.clear(); selectedLink = -1;
+        loadLayout(savedLayout); lastLayoutSignature = layoutSignature;
+        ensurePositions(); error.clear(); showStatus(); rebuildInspector();
+        lastPortSignature = portSignature();
+        syncNodeCards(); canvas.repaint();
+    }
     void timerCallback() override {
         ++workCounters.timerTicks;
         if (!isShowing()) return;
@@ -2249,6 +2380,15 @@ private:
         }
         if (lastRestartPending != owner.routingRestartPending()) {
             lastRestartPending = owner.routingRestartPending(); showStatus();
+        }
+        const bool hasSidechain = sidechainAvailable();
+        if (lastSidechainAvailable != hasSidechain) {
+            lastSidechainAvailable = hasSidechain;
+            if (const auto* selected = node(selectedNode); selected && selected->type == NodeType::sidechain) {
+                inspectorTitle.setText(sidechainLabel(), juce::dontSendNotification);
+                inspectorTitle.setColour(juce::Label::textColourId, sidechainColour());
+            }
+            syncNodeCards(); canvas.repaint();
         }
         routingStyle.setDecorativePhase(fluidAnimationSeconds(*this));
         refreshAssignmentBanner();
@@ -2286,20 +2426,7 @@ private:
         }
         modulationui::refreshWithSelection(canvas, owner, snapshot, owner.getModulationState(), owner.modulationAssignmentId());
         if (draggingNode || connecting || rewiringLink >= 0 || inspectorDragging) { syncNodeCards(); return; }
-        auto latest = owner.getRoutingGraph();
-        const auto next = signature(latest);
-        const auto savedLayout = owner.getRoutingLayout();
-        const auto layoutSignature = savedLayout.toXmlString();
-        const auto revision = stateRevision();
-        if (next != lastSignature || layoutSignature != lastLayoutSignature || revision != lastStateRevision) {
-            lastStateRevision = revision;
-            graph = std::move(latest); lastSignature = next;
-            undoStates.clear(); redoStates.clear(); selectedLink = -1;
-            loadLayout(savedLayout); lastLayoutSignature = layoutSignature;
-            ensurePositions(); error.clear(); showStatus(); rebuildInspector();
-            lastPortSignature = portSignature();
-            canvas.repaint();
-        }
+        refreshGraphFromOwner();
         if (const auto* n = node(selectedNode); n && isEffect(n->type) && fxSlot(*n) >= 0) {
             const auto* on = owner.parameters.getRawParameterValue(fxParameterId(size_t(fxSlot(*n)), size_t(0)));
             fxOn.setToggleState(on ? on->load() > 0.5f : n->enabled, juce::dontSendNotification);
@@ -2324,8 +2451,9 @@ private:
     WorkCounters workCounters;
     double lastMaterialFrame = -1;
     bool lastRestartPending = false;
+    bool lastSidechainAvailable = false;
     Processor& owner;
-    FluidBackground background, canvasBackground;
+    FluidBackground background, canvasBackground, inspectorBackground;
     std::map<std::uint32_t, FluidBackground> nodeMaterials;
     Graph graph;
     std::map<std::uint32_t, juce::Point<float>> positions, compactPositions, expandedPositions;

@@ -41,7 +41,7 @@ class ModulationPanel final : public juce::Component, private juce::Timer {
             }
             g.setColour(device ? juce::Colour(0xff64f5e3) : palette.secondary);
             g.strokePath(p, juce::PathStrokeType(1.5f));
-            g.setFont(modulationFont(10.0f));
+            g.setFont(themeFont(*this, 10.0f));
             g.drawText("OUTPUT  " + juce::String(output, 3) + "   phase " + juce::String(phase, 2),
                        a.toNearestInt().removeFromTop(18), juce::Justification::centredLeft);
         }

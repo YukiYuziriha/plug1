@@ -5,19 +5,17 @@
 
 ## Install on Windows x64
 
-HEAVEN by lil grass block v1.12.3 is an audio effect supplied as CLAP and VST3. Choose the
-format your host supports; installing both is optional. There is no tracked
-installer. Building from source is not required to use the supplied binaries.
+This guide covers **HEAVEN by lil grass block v1.14.0**. Choose the format your
+host supports; installing both is optional. No installer or source build is
+required to use the supplied binaries.
 
-1. Download the repository using **Code → Download ZIP** on
-   [GitHub](https://github.com/YukiYuziriha/plug1), then extract it, or clone it.
-   For CLAP alone, the [tracked binary](https://github.com/YukiYuziriha/plug1/raw/refs/heads/main/Windows-x64/CLAP/HEAVEN%20by%20lil%20grass%20block.clap)
-   is also a direct download.
+1. Download and extract the **Windows x64 ZIP** for the version you want from
+   [GitHub Releases](https://github.com/YukiYuziriha/plug1/releases).
 2. Close hosts that currently have HEAVEN (formerly Vocal Stack) loaded. Do not force replacement
    of a locked plugin or terminate the host to install it.
 3. Copy the appropriate item:
 
-   | Format | From the repository | Per-user destination |
+   | Format | From the extracted ZIP | Per-user destination |
    | --- | --- | --- |
    | CLAP | `Windows-x64/CLAP/HEAVEN by lil grass block.clap` | `%LOCALAPPDATA%\Programs\Common\CLAP\` |
    | VST3 | **Entire** `Windows-x64/VST3/HEAVEN by lil grass block.vst3/` folder | `%LOCALAPPDATA%\Programs\Common\VST3\` |
@@ -25,14 +23,12 @@ installer. Building from source is not required to use the supplied binaries.
    System-wide alternatives are `C:\Program Files\Common Files\CLAP\` and
    `C:\Program Files\Common Files\VST3\`; writing there may require administrator
    permission. The VST3 inner module alone is not a complete bundle.
-4. Keep `Windows-x64/LICENSE.txt`, `Windows-x64/PixelifySans-OFL.txt` and the
-   `Windows-x64/ThirdParty/` notices with your distribution/copy.
-5. Open the host, check its plugin search folders, rescan, and insert **HEAVEN by lil grass block** on an audio track. In Bitwig, check **Settings → Locations → Plug-in
-   Locations** if it is missing. These are installation pointers, not a claim of
-   completed real-DAW validation.
+4. Keep the included license texts, `SOURCE.md`, font licenses and complete
+   `ThirdParty/` notices with your copy.
+5. Open the host, check its plugin search folders, rescan, and insert **HEAVEN by
+   lil grass block** on an audio track.
 
-The tracked binaries are v1.12.3. This version starts dry and expands the
-[factory preset bank](Factory-Presets.md) to 30 patches.
+The [factory preset bank](Factory-Presets.md) includes 30 patches.
 There is no Tuning tab or automatic pitch correction on main. The previous
 implementation and replacement plan are preserved on
 [`work/autotune-donor-integration`](https://github.com/YukiYuziriha/plug1/tree/work/autotune-donor-integration).
@@ -40,7 +36,7 @@ Legacy plugin identities and preset/preferences locations remain unchanged.
 
 ## Start with Stack
 
-A fresh instance starts with Leveler, Doubler, shared Formant and rack effects
+A fresh instance starts with Gain Rider, Doubler, shared Formant and rack effects
 inactive. The lead is audible and global Bypass is off. Enable the controls you
 want or load a factory preset; opening a saved session restores its own patch.
 
@@ -48,7 +44,7 @@ Play a vocal through the plugin and start with the main controls:
 
 | Control | Use it for |
 | --- | --- |
-| Leveler | Smoothing phrase dynamics relative to the recording's own energy envelope; 0% disables the correction. |
+| Sidechain | Crossfade the Lead branch with the host sidechain before Lead / Stack and Main Bus FX. At 0% it is all Lead; at 100% it is all Sidechain on that branch. A disabled `Sidechain?` means the blend is unavailable in the current bus or routing configuration. |
 | Lead / Stack | Balancing the edited Lead against the generated voices. At 100% Stack, no Lead remains. |
 | Human | Scaling irregular timing, pitch and tonal motion without overwriting stored voice offsets. |
 | Width | Scaling the generated voices' stereo spread. |
@@ -56,8 +52,10 @@ Play a vocal through the plugin and start with the main controls:
 | Global Mix | Blending latency-aligned untouched original input with the complete processed patch. |
 | Output | Final level trim; double-click for unity. It is not a limiter. |
 
-Leveler approximately preserves long-term input RMS after settling, not exact
-peaks or perceived loudness. It does not force a fixed output RMS/LUFS target.
+Select the **Lead** card to find **Gain Rider** (formerly Leveler). Turn on
+**RIDE** and use the percentage to set the strength. The signed dB readout
+shows the live cut or boost before the rack. At 0% correction is off. Gain Rider
+evens out phrases rather than setting a target RMS/LUFS; it is not a limiter.
 Whole-plugin bypass returns the latency-aligned original input, ignoring Output.
 
 ### Add and edit voices
@@ -126,6 +124,29 @@ channel. Each subsequent slot uses the next pair, as shown in the controls.
 Place it before long delay or reverb tails if you want Auto to follow the words.
 Captured audio isn't saved in presets or sessions. Vocal Glitch adds no lookahead.
 
+### Blend a recorded double with Sidechain
+
+1. In your host, enable HEAVEN’s mono or stereo sidechain input and send the
+   recorded double to it. The **Sidechain card** appears beside **Lead** when
+   the host enables the bus. This is not cable or signal detection: a host can
+   leave the bus enabled without a send or while it carries silence.
+2. Turn up the **Sidechain** knob in Stack. It controls **Sidechain Blend** in
+   Routing, already wired on the standard patch: Lead and SIDECHAIN feed the
+   blend, then its output feeds the Lead side of **Lead / Stack**. Compatible
+   older patches can be wired automatically when there is a single direct
+   Lead cable to the main Mix’s DRY input. Inspect Routing for custom patches;
+   automatic insertion does not replace custom Lead wiring.
+3. Leave **Process** off (the default) to pass the raw sidechain through to the
+   blend. Turn it on to use the card’s independent gain, pan, delay, pitch,
+   fine detune, formant, and motion depth/rate. Turning **Process** off does
+   not mute the sidechain or reset its controls. These edits apply only to the
+   direct SIDECHAIN feed into **Sidechain Blend**, not to Lead, the generated
+   voices, or the raw SIDECHAIN output used elsewhere in Routing.
+
+With no enabled host sidechain bus, the blend passes Lead through unchanged.
+Silence on an enabled bus does not trigger a fallback to Lead. **Lead / Stack**
+still balances the resulting branch against the generated voices separately.
+
 ### Spectral Morph and sidechain
 
 Morph needs **two deliberately chosen sources**:
@@ -135,12 +156,10 @@ Lead / Stack or another internal branch ──> Morph MAIN  ──> Output
 Internal donor OR host SIDECHAIN       ──> Morph DONOR
 ```
 
-1. Add **Spectral Morph** through + FX or Routing. If the graph becomes
-   **RESTART PENDING**, apply the preparation step below before auditioning it.
-2. Connect the audio you want to process to **MAIN**. Connect a different internal
-   branch to **DONOR**, or enable the host's optional mono/stereo auxiliary bus,
-   add a **SIDECHAIN** source, and wire it to DONOR. Adding either node does not
-   invent a donor cable.
+1. Add **Spectral Morph** through + FX or Routing. A new Morph connects to the
+   **SIDECHAIN** source by default when the graph can accommodate the connection.
+2. Route your audio to **MAIN**. For **DONOR**, feed the host's optional mono or
+   stereo sidechain, or replace the default connection with another internal branch.
 3. Route Morph's output to the next effect or Output. Cycles and unsupported
    serial Morph paths are rejected.
 4. Start with Magnitude or Envelope mode, adjust Morph and Smoothing, then try
@@ -148,8 +167,9 @@ Internal donor OR host SIDECHAIN       ──> Morph DONOR
    it is not an audio-loop recorder. Mix blends delayed MAIN and processed audio,
    not MAIN and DONOR.
 
-An unwired/disabled donor supplies silence, never an automatic copy of MAIN.
-There is no automatic donor level matching. The SIDECHAIN labels `MONO CONFIG`,
+A direct SIDECHAIN-to-DONOR cable still feeds raw host sidechain audio;
+Sidechain card settings do not change it. An unwired/disabled donor supplies
+silence, never an automatic copy of MAIN. There is no automatic donor level matching. The SIDECHAIN labels `MONO CONFIG`,
 `STEREO CONFIG` and `DISABLED` describe host bus configuration, **not detected host
 cables**. A configured but silent bus may legitimately analyze zero audio. Mono
 auxiliary input is duplicated to L/R; stereo preserves the two channels.
@@ -159,32 +179,23 @@ patch may show capture waiting until donor analysis exists. Reset/reprepare clea
 the capture. Morph retains MAIN phase; donor-only audio does not excite a silent
 MAIN. It is not a vocoder/phase-transfer mode.
 
-### Latency and RESTART PENDING
+### Latency and applying routing
 
-Reported total latency at the rates covered by the current module checks:
+Sidechain Blend itself adds no host latency. Neither raw blending nor the card’s
+basic gain, pan or delay controls require extra compensation. Sidechain spectral
+settings (pitch, detune, formant, or motion with nonzero depth, rate and Human)
+require vocal-processing latency only when **Process** is on and the direct
+sidechain feed can reach Output through an enabled blend set above 0%. If another
+path already needs that latency, the card does not add it a second time.
 
-| Sample rate | No declared Morph | With declared Morph |
-| --- | ---: | ---: |
-| 44.1 kHz | 1344 samples / 30.48 ms | 5440 samples / 123.36 ms |
-| 48 kHz | 1344 samples / 28.00 ms | 5440 samples / 113.33 ms |
-| 96 kHz | 2688 samples / 28.00 ms | 6784 samples / 70.67 ms |
+An enabled Morph on a path to Output adds 4,096 samples of routing latency;
+bypassed or disconnected Morph does not reserve it. Changing the Morph FFT size
+does not change latency. Serial Morph dependencies that exceed the routing budget
+are rejected.
 
-A declared Morph node reserves its additional 4096 samples even when dormant,
-bypassed or disconnected. FFT size selection does not change that reported total.
-
-Adding/removing Morph while the host has prepared the plugin saves a pending
-routing topology. **RESTART PENDING means the displayed saved wiring is not yet
-the running graph.** The current graph and host latency remain in use until the
-host **deactivates/reactivates (re-prepares)** the plugin. Use the host's plugin
-deactivate/reactivate facility, or reload the plugin; stopping transport or
-resetting alone is not enough. Pending wiring survives save/recall and can be
-undone. Parameter controls still address the current shared parameter bank while
-wiring is pending. Ordinary same-latency routing edits remain live.
-
-Serial Morph dependencies exceeding the fixed routing budget are rejected on
-MAIN or DONOR paths. Multiple independent parallel Morph instances are possible
-within the shared slot capacity. See the [technical latency policy](Preview-1.11.0.md#latency-policy--fixed-per-host-preparation)
-for edge cases.
+HEAVEN requests host reactivation only when the total reported latency needs to
+change. The host decides when to apply it; until then, the running path and its
+reported latency stay aligned. Same-latency routing edits apply without reactivation.
 
 ## Modulation, presets and displays
 
@@ -192,7 +203,9 @@ Use **+ Mod** in Routing for LFO and Random sources. Assign supported continuous
 controls using the modulation UI; discrete Morph Mode, FFT and Freeze are host
 automation controls, not continuous LFO targets. The footer preset browser saves
 full patches. Copy settings/Paste transfers settings between instances. Skin
-cycles **Device → Neon → Spectral** without choosing a different audio engine.
+cycles **Device → Neon → Spectral → Grass Block** without changing the audio
+engine. Fresh instances start in **Neon** (Oxanium); **Grass Block** uses
+Pixelify Sans. Saved patches keep their selected skin.
 
 Input/output meters show **RMS and sample peak**, not LUFS or true peak.
 Compressor/Gate histories show measured attenuation; Morph spectra show analysis
@@ -210,12 +223,10 @@ not recorded echoes or live grain waveforms. See the [showcase notes](showcase/R
 - **Visible wiring seems inactive:** look for RESTART PENDING and re-prepare the
   plugin. Do not assume transport stop applies a latency-changing edit.
 - **Unexpected levels/artifacts:** reduce extreme pitch/formant/drive values,
-  inspect sample peaks and trim Output. Neither Leveler nor merge compensation
+  inspect sample peaks and trim Output. Neither Gain Rider nor merge compensation
   prevents clipping or guarantees perceived loudness.
-- **Host-specific problems:** actual Bitwig listening/session/transport validation
-  remains unperformed. Automated module tests are not a DAW compatibility list.
-  The current release also retains a native desktop-input occlusion blocker;
-  [read the validation boundaries](Release-1.11.0-Validation.md).
+- **Host-specific problems:** report the host and plugin format. Older release
+  validation records apply only to their named builds, not to v1.14.0 or to every host.
 
 [Open an issue](https://github.com/YukiYuziriha/plug1/issues) with version, format,
 host/Windows versions, sample rate, block size and minimal reproduction steps.

@@ -204,7 +204,7 @@ void routingStateRegression() {
     expect(graphText(restored.getRoutingGraph()) == graphText(active), "Malformed old draft must display the actual fallback graph");
     owner.resetParameters();
     expect(owner.getRoutingLayout().getNumChildren() == 0, "Full reset retained layout positions");
-    expect(graphText(owner.getRoutingGraph()) == graphText(vocalstack::defaultGraph()), "Full reset retained custom routing");
+    expect(graphText(owner.getRoutingGraph()) == graphText(vocalstack::defaultGraph(false, true)), "Full reset retained custom routing");
 }
 
 std::vector<float> renderProcessorRegression(Processor& owner) {

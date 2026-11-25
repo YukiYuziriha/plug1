@@ -207,12 +207,14 @@ inline void stackSurfaces() {
             toneUiTests::screenshot(*editor, "approval-1910-stack-" + juce::String(theme)
                 + "-phase-" + juce::String(phase, 1) + ".png");
         }
-        for (const auto* id : {"level", "double", "human", "width", "formant", "outputGain"}) {
+        for (const auto* id : {"sidechainBlend", "double", "human", "width", "formant", "outputGain"}) {
             auto& knob = toneUiTests::slider(*editor, id);
             auto* valueLabel = toneUiTests::find<juce::Label>(knob, [](auto&) { return true; });
             require(valueLabel != nullptr, "Knob readout missing");
-            require(valueLabel->getFont().getTypefacePtr() == pixelTypeface(),
-                    "Main knob readout is not the embedded Pixelify typeface");
+            const auto resolved = valueLabel->getLookAndFeel().getLabelFont(*valueLabel);
+            const juce::Font expected(themeFontOptions(static_cast<Theme>(theme), 14.f));
+            require(resolved.getTypefaceName() == expected.getTypefaceName(),
+                    "Main knob readout is not using the active theme font");
             require(valueLabel->getFont().getHeight() >= 14.f, "Main knob readout is too small");
         }
         require(identical(first, capture(0.0)), "Stack freeze did not restore deterministic pixels");

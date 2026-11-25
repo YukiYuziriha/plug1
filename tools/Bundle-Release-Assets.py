@@ -9,6 +9,8 @@ import sys
 import tempfile
 import zipfile
 
+from release_fonts import oxanium_fonts
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -67,7 +69,7 @@ def write_zip(path, files):
             info = zipfile.ZipInfo(name)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
-            archive.writestr(info, source.read_bytes())
+            archive.writestr(info, source if isinstance(source, bytes) else source.read_bytes())
 
 
 def main():
@@ -126,6 +128,12 @@ def main():
         print(f"Audited {manifest['commit_count']} commits; {manifest['unique_binary_blobs']} unique binary blobs; all dependency declarations identical", flush=True)
     if args.audit_only:
         return
+    notices = {p.relative_to(ROOT / "ThirdParty").as_posix(): file_digest(p)
+               for p in (ROOT / "ThirdParty").rglob("*") if p.is_file()}
+    delivered_notices = {p.relative_to(ROOT / "Windows-x64/ThirdParty").as_posix(): file_digest(p)
+                         for p in (ROOT / "Windows-x64/ThirdParty").rglob("*") if p.is_file()}
+    if notices != delivered_notices:
+        raise RuntimeError("Delivery ThirdParty tree differs from source; refresh notices before packaging")
     output = args.output_directory.resolve()
     output.mkdir(parents=True, exist_ok=True)
     names = [f"HEAVEN-{args.version}-corresponding-source.zip",
@@ -139,12 +147,12 @@ def main():
     if not args.skip_history:
         bundle_history(output / names[1], manifest, manifest_path)
     files = {}
-    notices = {p.relative_to(ROOT / "ThirdParty").as_posix(): file_digest(p)
-               for p in (ROOT / "ThirdParty").rglob("*") if p.is_file()}
-    delivered_notices = {p.relative_to(ROOT / "Windows-x64/ThirdParty").as_posix(): file_digest(p)
-                         for p in (ROOT / "Windows-x64/ThirdParty").rglob("*") if p.is_file()}
-    if notices != delivered_notices:
-        raise RuntimeError("Delivery ThirdParty tree differs from source; refresh notices before packaging")
+    if fonts := oxanium_fonts(cmake):
+        # Redistribute the exact font files from the selected corresponding source.
+        with zipfile.ZipFile(output / names[0]) as source:
+            for name in fonts:
+                member = f"HEAVEN-{args.version}/" + name
+                files[member] = source.read(member)
     for path in sorted((ROOT / "Windows-x64").rglob("*")):
         if path.is_file():
             relative = path.relative_to(ROOT).as_posix()

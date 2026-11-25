@@ -91,7 +91,7 @@ private:
 };
 } // namespace detail
 
-// slot -1 is Lead; slots 0..7 retain their existing host parameter IDs.
+// Lead and Sidechain are fixed cards; slots 0..7 retain their existing host parameter IDs.
 class VoiceControls final : public juce::Component {
     class SelectionClicks final : public juce::MouseListener {
     public:
@@ -100,44 +100,46 @@ class VoiceControls final : public juce::Component {
     } selectionClicks;
     public:
         enum class ControlMode { knobs, stackSliders };
+        static constexpr int leadSlot = -1, sidechainSlot = -2;
         VoiceControls(Processor& owner, int index, ControlMode mode = ControlMode::knobs)
-            : voiceSlot(index), controlMode(mode), pitch(owner, index < 0 ? "leadPitch" : voicePitchParameterId(size_t(index)), "PITCH", "st") {
-            jassert(index >= -1 && index < 8);
-            setComponentID(index < 0 ? "leadCard" : "voice" + juce::String(index + 1) + "Card");
-            const auto parameterId = [index](size_t field) -> juce::String {
-                return index < 0 ? leadParameterIds[field] : voiceParameterId(size_t(index), field);
-            };
+            : voiceSlot(index), controlMode(mode), pitch(owner, parameterId(index, 8), "PITCH", "st") {
+            jassert(index >= sidechainSlot && index < 8);
+            setComponentID(isSidechain() ? "sidechainCard" : index == leadSlot ? "leadCard" : "voice" + juce::String(index + 1) + "Card");
             enabled.setModulationOwner(owner);
-            enabled.setComponentID(parameterId(0));
-            enabled.setButtonText("On");
-            enabled.setName(index < 0 ? "Enable Lead" : "Enable voice " + juce::String(index + 1));
+            enabled.setComponentID(parameterId(index, 0));
+            enabled.setButtonText(isSidechain() ? "Process" : "On");
+            enabled.setName(isSidechain() ? "Process Sidechain" : index == leadSlot ? "Enable Lead" : "Enable voice " + juce::String(index + 1));
             enabled.setClickingTogglesState(true);
-            enabled.setTooltip("Mute this voice without removing its card or settings");
+            enabled.setTooltip(isSidechain() ? "Bypass Sidechain processing without muting the input"
+                                             : "Mute this voice without removing its card or settings");
             addAndMakeVisible(enabled);
-            link = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner.parameters, parameterId(0), enabled);
+            link = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner.parameters, parameterId(index, 0), enabled);
             addAndMakeVisible(pitch);
             pitch.slider.setTooltip("Musical interval: -36 to +36 semitones; independent of Fine Detune. Fractional intervals supported");
-            const std::array<const char*, 7> names{"Gain", "Pan", "Delay", "Fine detune", "Formant", "Depth", "Rate"};
+            const std::array<const char*, 7> names{"Gain", "Pan", "Delay", "Fine", "Formant", "Depth", "Rate"};
             const std::array<const char*, 7> units{"dB", "", "ms", "ct", "st", "x", "Hz"};
             for (size_t f = 0; f < fields.size(); ++f) {
-                fields[f] = std::make_unique<ParameterKnob>(owner, parameterId(f + 1), names[f], units[f]);
+                fields[f] = std::make_unique<ParameterKnob>(owner, parameterId(index, f + 1), names[f], units[f]);
                 addAndMakeVisible(*fields[f]);
             }
             pitch.setLinear(controlMode == ControlMode::stackSliders);
             for (auto& field : fields) field->setLinear(controlMode == ControlMode::stackSliders);
-            fields[1]->slider.setTooltip("L / C / R; effective spread also includes main Width");
+            fields[1]->slider.setTooltip(isSidechain() ? "Sidechain pan: L / C / R" : "L / C / R; effective spread also includes main Width");
             fields[3]->slider.setTooltip("Fine Detune in cents, separate from musical Pitch");
-            fields[4]->slider.setTooltip("Voice formant +/-24 st; adds to shared formant and remains active when shared Formant is off");
+            fields[4]->slider.setTooltip(isSidechain() ? "Independent Sidechain formant shift in semitones"
+                : "Voice formant +/-24 st; adds to shared formant and remains active when shared Formant is off");
             fields[5]->slider.setTooltip("Motion depth: zero stops motion, not static offsets");
-            remove.setButtonText("Remove");
-            remove.setTooltip("Remove this stable voice slot; surviving voices are not renumbered");
-            remove.onClick = [&owner, index] { owner.removeVoice(size_t(index)); };
-            if (index >= 2) addAndMakeVisible(remove);
+            if (index >= 2) {
+                remove.setButtonText("Remove");
+                remove.setTooltip("Remove this stable voice slot; surviving voices are not renumbered");
+                remove.onClick = [&owner, index] { owner.removeVoice(size_t(index)); };
+                addAndMakeVisible(remove);
+            }
             selectionClicks.onClick = [this, &owner, index] {
                             if (index >= 0 && !owner.settings().advanced) owner.setAdvancedEnabled(true);
                             if (onSelect) onSelect();
             };
-            addMouseListener(&selectionClicks, true);
+            if (!isSidechain()) addMouseListener(&selectionClicks, true);
             detail::passiveControl(*this);
         }
         ~VoiceControls() override { removeMouseListener(&selectionClicks); }
@@ -150,15 +152,20 @@ class VoiceControls final : public juce::Component {
             remove.setBounds(0, 0, 0, 0);
                         if (!compact) remove.setBounds(header.removeFromRight(64));
                         else if (voiceSlot >= 2) remove.setBounds(getWidth() - 58, 35, 50, 18);
-            header.removeFromLeft(compact ? 70 : 112);
-            enabled.setBounds(header.removeFromLeft(44));
+            header.removeFromLeft(compact ? 108 : 112);
+            enabled.setBounds(header.removeFromLeft(isSidechain() ? 76 : 44));
             area.removeFromTop(5);
             std::array<ParameterKnob*, 8> controls{&pitch, fields[3].get(), fields[4].get(), fields[0].get(),
                 fields[1].get(), fields[2].get(), fields[5].get(), fields[6].get()};
-            const int columns = compact ? 2 : 4;
-            if (compact) area.removeFromTop(14);
+            const int columns = compact ? (isSidechain() ? 3 : 2) : 4;
+            if (compact && !isSidechain()) area.removeFromTop(14);
+            if (leadExtras != nullptr) {
+                leadExtras->setBounds(area.removeFromRight(104).withTrimmedLeft(4));
+                area.removeFromRight(6);
+            }
             const int width = area.getWidth() / columns;
-            const int height = compact && controlMode == ControlMode::stackSliders ? 54 : 104;
+            const int height = compact && controlMode == ControlMode::stackSliders
+                ? (isSidechain() ? area.getHeight() / 3 : 54) : 104;
             for (size_t i = 0; i < controls.size(); ++i)
                 controls[i]->setBounds(area.getX() + int(i % size_t(columns)) * width,
                     area.getY() + int(i / size_t(columns)) * height, width, height);
@@ -168,44 +175,74 @@ class VoiceControls final : public juce::Component {
             const auto p = themePalette(*this, neon);
             const auto selectedTheme = componentTheme(*this, neon);
             const bool device = selectedTheme == Theme::device;
-            cardMaterial.paint(g, getLocalBounds(), p.panel, p.accent, fluidAnimationSeconds(*this), .45f, 24);
-            const auto colour = device
-                ? (voiceSlot < 0 ? juce::Colour(0xfff8de6b) : VoiceMonitor::voiceColour(size_t(voiceSlot)))
-                : (voiceSlot < 0 ? p.secondary : p.accent);
+            const auto colour = isSidechain() ? sidechainCardAccent(selectedTheme) : device
+                ? (voiceSlot == leadSlot ? juce::Colour(0xfff8de6b) : VoiceMonitor::voiceColour(size_t(voiceSlot)))
+                : (voiceSlot == leadSlot ? p.secondary : p.accent);
+            cardMaterial.paint(g, getLocalBounds(), p.panel, isSidechain() ? colour : p.accent, fluidAnimationSeconds(*this), .45f, 24);
             g.setColour(selected ? colour : device ? juce::Colour(0xff515850) : p.border);
             g.drawRect(getLocalBounds().toFloat().reduced(0.7f), selected ? 1.6f : 1.0f);
             g.setColour(colour.withAlpha(device || selected ? 0.12f : 0.05f));
             g.fillRect(5.0f, 5.0f, float(getWidth() - 10), 32.0f);
             g.setColour(colour);
             g.fillRect(12, 10, 22, 22);
-            g.setFont(juce::Font(pixelFontOptions(12.0f, juce::Font::bold)));
+            g.setFont(themeFont(selectedTheme, 12.0f, juce::Font::bold));
             g.setColour(juce::Colour(0xff151b20));
-            g.drawText(voiceSlot < 0 ? "0" : juce::String(voiceSlot + 1), 12, 10, 22, 22, juce::Justification::centred);
+            g.drawText(isSidechain() ? "SC" : juce::String(voiceSlot + 1), 12, 10, 22, 22, juce::Justification::centred);
             g.setColour(p.text);
-            g.drawText(voiceSlot < 0 ? "LEAD" : "VOICE", 42, 10, 66, 22, juce::Justification::centredLeft);
+            g.drawFittedText(isSidechain() ? "SIDECHAIN" : voiceSlot == leadSlot ? "LEAD" : "VOICE",
+                42, 10, 72, 22, juce::Justification::centredLeft, 1);
         }
         void setCompact(bool value) {
                     compact = value;
 
                     resized();
                 }
-                void setSelected(bool value) { selected = value; repaint(); }
+        void setSelected(bool value) {
+            selected = value;
+            if (leadExtras != nullptr) leadExtras->setVisible(selected);
+            repaint();
+        }
+        void setLeadExtras(juce::Component& extras) {
+            jassert(voiceSlot == leadSlot);
+            leadExtras = &extras;
+            addChildComponent(extras);
+            extras.setVisible(selected);
+            resized();
+        }
         void setNeon(bool value) {
             neon = value;
             for (auto* button : std::array<juce::TextButton*, 2>{&enabled, &remove}) {
                 button->setColour(juce::TextButton::textColourOffId, themePalette(*this, neon).text);
                 button->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff17171c));
             }
-            pitch.setNeon(neon);
-            for (auto& field : fields) field->setNeon(neon);
+            const auto styleControl = [this](ParameterKnob& control) {
+                control.setNeon(neon);
+                if (isSidechain())
+                    control.slider.setColour(juce::Slider::trackColourId, sidechainCardAccent(componentTheme(*this, neon)));
+            };
+            styleControl(pitch);
+            for (auto& field : fields) styleControl(*field);
             repaint();
         }
         std::function<void()> onSelect;
     private:
+        bool isSidechain() const { return voiceSlot == sidechainSlot; }
+        static const char* parameterId(int slot, size_t field) {
+            if (slot == sidechainSlot) return sidechainParameterIds[field];
+            if (slot == leadSlot) return leadParameterIds[field];
+            return field == 8 ? voicePitchParameterId(size_t(slot)) : voiceParameterId(size_t(slot), field);
+        }
+        static juce::Colour sidechainCardAccent(Theme theme) {
+            // Match the Stack Sidechain Blend accent in PluginEditor.cpp.
+            const auto p = themePalette(theme);
+            if (theme == Theme::neon) return juce::Colour(0xff63dfff);
+            return theme == Theme::device ? p.secondary : p.accent;
+        }
         FluidBackground cardMaterial;
         const int voiceSlot;
         const ControlMode controlMode;
         bool neon = false, selected = false, compact = false;
+        juce::Component* leadExtras = nullptr;
         modulationui::Button enabled;
         juce::TextButton remove;
         ParameterKnob pitch;
@@ -221,7 +258,9 @@ class DoublerPanel final : public juce::Component {
         void mouseDown(const juce::MouseEvent& e) override { if (onClick) onClick(e.eventComponent); }
     } clicks;
 public:
-    explicit DoublerPanel(Processor& processor) : owner(processor), lead(processor, -1, VoiceControls::ControlMode::stackSliders) {
+    explicit DoublerPanel(Processor& processor) : owner(processor),
+        lead(processor, VoiceControls::leadSlot, VoiceControls::ControlMode::stackSliders),
+        sidechain(processor, VoiceControls::sidechainSlot, VoiceControls::ControlMode::stackSliders) {
         setName("Advanced Doubler drawer");
 
         reset.setButtonText("Reset to Basic");
@@ -262,6 +301,8 @@ public:
                 lead.onSelect = [this] { selectLead(false); };
         lead.addMouseListener(&clicks, true);
         cardArea.addAndMakeVisible(lead);
+        sidechain.setCompact(true);
+        cardArea.addChildComponent(sidechain);
         sync();
         selectLead(false);
         detail::passiveControl(*this);
@@ -274,7 +315,15 @@ public:
     void sync() {
         const auto settings = owner.settings();
 
-        bool changed = false;
+        const bool showSidechain = owner.externalSidechainChannels() > 0;
+        const bool sidechainChanged = sidechain.isVisible() != showSidechain;
+        const int previousViewX = viewport.getViewPositionX();
+        const auto* selectedCard = selectedSlot < cards.size() ? cards[selectedSlot].get() : nullptr;
+        const bool selectedVoiceWasRevealed = sidechainChanged && selectedCard && selectedCard->isVisible()
+            && selectedCard->getX() >= previousViewX && selectedCard->getRight() <= previousViewX + viewport.getWidth();
+        if (sidechainChanged) sidechain.setVisible(showSidechain);
+
+        bool changed = sidechainChanged;
         int count = 0;
         for (size_t i = 0; i < cards.size(); ++i) {
             const bool present = settings.voiceSettings[i].present;
@@ -284,6 +333,16 @@ public:
         }
         add.setEnabled(count < 8);
         if (changed) resized();
+        if (sidechainChanged) {
+            // Keep the same content at the left edge when inserting/removing the fixed card.
+            const int insertionX = lead.getRight() + cardGap;
+            const int sidechainSpan = fixedCardWidth + cardGap;
+            int x = previousViewX;
+            if (x >= insertionX) x = showSidechain ? x + sidechainSpan : juce::jmax(insertionX, x - sidechainSpan);
+            if (selectedVoiceWasRevealed && selectedCard->isVisible() && viewport.getWidth() >= selectedCard->getWidth())
+                x = juce::jlimit(selectedCard->getRight() - viewport.getWidth(), selectedCard->getX(), x);
+            viewport.setViewPosition(x, 0);
+        }
         if (selectedSlot < 8 && !settings.voiceSettings[selectedSlot].present)
             for (size_t i = 0; i < cards.size(); ++i)
                 if (settings.voiceSettings[i].present) { select(i, false); break; }
@@ -296,10 +355,13 @@ public:
         }
 
         const auto p = themePalette(*this, neon);
-        viewport.getHorizontalScrollBar().setColour(juce::ScrollBar::thumbColourId, p.muted.withAlpha(0.45f));
+        const auto thumb = componentTheme(*this, neon) == Theme::grass
+            ? p.border.interpolatedWith(p.accent, .55f) : p.muted.withAlpha(.45f);
+        viewport.getHorizontalScrollBar().setColour(juce::ScrollBar::thumbColourId, thumb);
         viewport.getHorizontalScrollBar().setColour(juce::ScrollBar::backgroundColourId, p.inset);
         monitor.setNeon(neon);
         lead.setNeon(neon);
+        sidechain.setNeon(neon);
         for (auto& card : cards) card->setNeon(neon);
     }
 
@@ -307,6 +369,10 @@ public:
         forwardPassiveWheel(*this, event, wheel);
     }
     std::function<void(int)> onVoiceSelected;
+    void setLeadExtras(juce::Component& extras) {
+        lead.setLeadExtras(extras);
+        resized();
+    }
     // Mirroring Routing selection must not emit another selection request.
     void selectVoice(int slot, bool reveal = true, bool notify = true) {
         if (slot < 0) selectLead(reveal, notify);
@@ -320,15 +386,20 @@ public:
         add.setBounds(actions.removeFromRight(116));
         monitor.setBounds(0, 32, getWidth(), 100);
         viewport.setBounds(0, 140, getWidth(), juce::jmax(0, getHeight() - 140));
-        lead.setBounds(0, 0, 172, 278);
-        int x = 180;
+        lead.setBounds(0, 0, fixedCardWidth, 278);
+        int x = lead.getRight() + cardGap;
+        if (sidechain.isVisible()) {
+            sidechain.setBounds(x, 0, fixedCardWidth, 278);
+            x = sidechain.getRight() + cardGap;
+        }
         for (auto& card : cards) if (card->isVisible()) {
             card->setBounds(x, 0, 172, 278);
-            x += 180;
+            x = card->getRight() + cardGap;
         }
-        cardArea.setSize(juce::jmax(getWidth(), x - 8), 278);
+        cardArea.setSize(juce::jmax(getWidth(), x - cardGap), 278);
     }
 private:
+    static constexpr int fixedCardWidth = 282, cardGap = 8;
     void select(size_t slot, bool reveal, bool notify = true) {
         selectedSlot = slot;
         lead.setSelected(false);
@@ -352,7 +423,7 @@ private:
     VoiceMonitor monitor;
     juce::Component cardArea;
     PassiveViewport viewport;
-    VoiceControls lead;
+    VoiceControls lead, sidechain;
     std::array<std::unique_ptr<VoiceControls>, 8> cards;
 };
 

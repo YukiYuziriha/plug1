@@ -117,12 +117,15 @@ inline Edit add(const Graph& original, NodeType type, unsigned spent = 0) {
         for (const auto& existing : original.nodes)
             if (existing.type == NodeType::sidechain) donor = existing.id;
         if (!donor) {
-            if (find(original, 14)) { edit.error = "SIDECHAIN node ID 14 is already in use. Edit Routing first."; return edit; }
-            donor = 14; createSidechain = true;
+            if (find(original, sidechainNodeId)) { edit.error = "SIDECHAIN node ID 14 is already in use. Edit Routing first."; return edit; }
+            donor = sidechainNodeId; createSidechain = true;
         }
-        // Routing output edits replace destinations; never create implicit fanout
-        // or steal an explicit cable when supplying the new Morph's default donor.
-        for (const auto& link : original.links) if (link.source == donor) {
+        // Share the dedicated Blend input without stealing its cable. Other
+        // destinations remain explicit Routing decisions.
+        const auto* blend = find(original, sidechainBlendNodeId);
+        const bool hasBlend = blend && blend->type == NodeType::sidechainBlend;
+        for (const auto& link : original.links) if (link.source == donor
+            && !(hasBlend && link.destination == sidechainBlendNodeId && link.inputPin == 1)) {
             edit.error = "SIDECHAIN output is already connected. Edit Routing to choose the Morph donor."; return edit;
         }
     }

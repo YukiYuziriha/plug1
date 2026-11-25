@@ -56,8 +56,8 @@ public:
         g.drawRect(area, button.hasKeyboardFocus(false) ? 2.0f : 1.0f);
     }
     juce::Font getTextButtonFont(juce::TextButton& button, int) override {
-        return juce::Font(pixelFontOptions(12.0f,
-            componentTheme(button) == Theme::spectral ? juce::Font::plain : juce::Font::bold));
+        return themeFont(button, 12.0f,
+            componentTheme(button) == Theme::spectral ? juce::Font::plain : juce::Font::bold);
     }
     void drawComboBox(juce::Graphics& g, int width, int height, bool, int, int, int, int,
                       juce::ComboBox& box) override {

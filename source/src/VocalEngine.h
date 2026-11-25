@@ -38,6 +38,9 @@ struct Settings {
     double tempoBpm = 120;
     float globalMix = 1.0f; // Untouched latency-aligned input vs complete graph + trim.
     VoiceSettings leadSettings{true, 0, 0, 0, 0, 0, 0, 0, 0, true};
+    float sidechainBlend = 0.0f;
+    bool sidechainBlendAutomation = false;
+    VoiceSettings sidechainSettings{false, 0, 0, 0, 0, 0, 0, 0, 0, true};
 };
 
 // Audio-thread value snapshot. The processor must publish copies via its own
@@ -56,8 +59,8 @@ public:
     static constexpr int defaultLatency = 1344;
     // Quiescent audio required. prepare installs defaultGraph(); restore a saved
     // graph with requestGraph AFTER prepare. reset preserves the active graph.
-    // With no vocal budget, spectral Lead and all generated voices stay bypassed
-    // until reprepare. A set bit in independentVoices keeps that enabled slot
+    // With no vocal budget, spectral Lead/Sidechain and all generated voices
+    // stay bypassed until reprepare. A set bit in independentVoices keeps that enabled slot
     // eligible even at main Mix zero (use a conservative union across graph edits).
     void prepare(double sampleRate, int inputChannels, int outputChannels, const Settings&,
                  int routingLatencyReserve = 0, bool needsVocalLatency = true,
@@ -133,6 +136,17 @@ private:
         int harmonyWarmup = 0, wakeRemaining = 0;
     };
 
+    struct StereoSpectral {
+        explicit StereoSpectral(unsigned seed) : stretch(seed) {}
+        Stretch stretch;
+        std::array<HarmonyShifter, 2> harmony;
+        std::array<Buffer, 2> input{}, rendered{};
+        LevelMatch match;
+        float pitchBlend = 0, wakeBlend = 0;
+        int wakeRemaining = 0, harmonyWarmup = 0;
+        bool running = false, harmonyRunning = false;
+    };
+
     struct Motion {
         float level, doubles, human, width, formant, formantMix, bypass;
         float advanced;
@@ -145,6 +159,13 @@ private:
     bool voiceRequested(size_t index, const VoiceSettings&, bool mainMixActive) const noexcept;
     float consonantWeight(float sample);
     float matchedGain(LevelMatch&, float referencePower, float renderedPower);
+    void advanceLocalVoice(Voice&, float seconds);
+    void smoothLocalVoice(VoiceSettings&, const VoiceSettings&, bool snap = false) const;
+    void renderStereoSpectral(StereoSpectral&, const Voice&, bool wanted, bool independentFormant,
+                              bool update, int channels, int count);
+    StereoSample blendStereoSpectral(StereoSpectral&, StereoSample reference, int sample,
+                                     int rightChannel, float& blend);
+    StereoSample applyLocalVoice(Voice&, std::array<DelayLine, 2>&, StereoSample, float timeStep);
     void processChunk(const float* const* input, float* const* output, int offset, int count,
                           const float* const* auxiliary, int auxiliaryChannels);
     float coefficient(double seconds) const;
@@ -160,15 +181,11 @@ private:
     float lowPass = 0, edgeEnergy = 0, bodyEnergy = 0, articulation = 1;
     bool active = false, levelerRunning = false, articulationRunning = false;
     unsigned routedVoices = 0xffffu, defaultRoutedVoices = 0xffffu;
-    LevelMatch leadMatch;
-    Stretch lead{421};
-    Voice leadMotion{613};
-    std::array<HarmonyShifter, 2> leadHarmony;
-    std::array<DelayLine, 2> leadLocalDelay;
-    float leadPitchBlend = 0, leadLocalBlend = 0, globalMix = 1;
-    bool leadSpectralRunning = false, leadHarmonyRunning = false, leadIndependentFormant = false;
-    float leadWakeBlend = 0;
-    int leadWakeRemaining = 0, leadHarmonyWarmup = 0;
+    StereoSpectral leadSpectral{421}, sidechainSpectral{829};
+    Voice leadMotion{613}, sidechainMotion{947};
+    std::array<DelayLine, 2> leadLocalDelay, sidechainLocalDelay;
+    float leadLocalBlend = 0, sidechainLocalBlend = 0, globalMix = 1;
+    bool leadIndependentFormant = false, sidechainRunning = false;
     std::array<Voice, 8> voices{Voice{1471}, Voice{5417}, Voice{7919}, Voice{104729},
                               Voice{130363}, Voice{155921}, Voice{196613}, Voice{262147}};
     RoutingExecutor routing;
@@ -177,7 +194,7 @@ private:
     int routingReserve = 0;
     std::array<DelayLine, 2> rackDryDelay;
     std::array<DelayLine, 2> dryDelay, levelDelay, auxiliaryDelay;
-    std::array<Buffer, 2> leadInput{}, leadRendered{};
+
     Buffer monoInput{}, articulationInput{};
     DelayLine articulationDelay;
     std::array<MeterDetector, 2> inputMeters{}, outputMeters{};

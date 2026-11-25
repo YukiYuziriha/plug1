@@ -44,8 +44,8 @@ public:
     static bool usesWideLayout(int width, bool inspector) { return !inspector && width >= 680; }
     bool usesSideBySideLayout() const { return usesWideLayout(getWidth(), inspectorLayout); }
     juce::Rectangle<int> spectrumBounds() const { return plot; }
-    static std::pair<juce::String, juce::String> axisLabels(int width, double sampleRate) {
-        const juce::Font font(pixelFontOptions(12.f));
+    static std::pair<juce::String, juce::String> axisLabels(int width, double sampleRate, Theme theme = Theme::device) {
+        const auto font = themeFont(theme, 12.f);
         const auto fits = [&](const juce::String& text) { return juce::GlyphArrangement::getStringWidth(font, text) <= width; };
         const juce::String level = "Peak bins -60..0 dBFS";
         const juce::String frequency = sampleRate > 0 ? "Log Hz: 20 to " + juce::String(int(sampleRate / 2)) : "Waiting for analysis";
@@ -110,22 +110,23 @@ public:
             field.set(2, col, frame.result[col]);
         }
         material.paintSpectrum(g, plot.toFloat(), field, p.inset, {p.accent, p.secondary, p.text}, fluidAnimationSeconds(*this));
-        g.setFont(juce::Font(pixelFontOptions(12.f)));
+        const auto theme = componentTheme(*this, neon);
+        const auto font = themeFont(theme, 12.f);
+        g.setFont(font);
         const int legendY = plot.getY() - 17;
         const int legendWidth = std::min(145, plot.getWidth() / 3);
         g.setColour(p.accent); g.drawText("MAIN", plot.getX(), legendY, legendWidth, 16, juce::Justification::left);
         g.setColour(p.secondary); g.drawText("DONOR", plot.getX() + legendWidth, legendY, legendWidth, 16, juce::Justification::left);
         g.setColour(p.text); g.drawText(plot.getWidth() < 320 ? "RESULT" : "RESULT / pre Mix", plot.getX() + 2 * legendWidth, legendY, std::max(0, plot.getWidth() - 2 * legendWidth), 16, juce::Justification::left);
         g.setColour(p.muted);
-        const auto axes = axisLabels(plot.getWidth(), frame.sampleRate);
+        const auto axes = axisLabels(plot.getWidth(), frame.sampleRate, theme);
         g.drawText(axes.first, plot.getX(), plot.getBottom(), plot.getWidth(), 16, juce::Justification::left);
         g.drawText(axes.second, plot.getX(), plot.getBottom() + 16, plot.getWidth(), 16, juce::Justification::left);
         juce::String status = !donorWired ? "DONOR UNROUTED" : frame.capturePending ? "CAPTURE WAITING" : frame.frozen ? "DONOR FROZEN" : !frame.donorConnected ? "DONOR ROUTED / UNAVAILABLE" : "DONOR ROUTED / LIVE";
         g.setColour(!donorWired ? p.secondary : p.text);
         const int statusWidth = std::max(0, getWidth() - 125);
-                const juce::Font statusFont(pixelFontOptions(12.f));
                 const auto shortStatus = !donorWired ? "UNROUTED" : frame.capturePending ? "WAITING" : frame.frozen ? "FROZEN" : !frame.donorConnected ? "NO DATA" : "LIVE";
-                g.drawText(juce::GlyphArrangement::getStringWidth(statusFont, status) <= statusWidth ? status : juce::String(shortStatus),
+                g.drawText(juce::GlyphArrangement::getStringWidth(font, status) <= statusWidth ? status : juce::String(shortStatus),
                            6, getHeight() - 29, statusWidth, 24, juce::Justification::left);
                 setTooltip("MAIN / DONOR / RESULT: measured peak bins, fixed -60..0 dBFS; logarithmic frequency 20 Hz to Nyquist. Result is before Mix. " + status);
         setTooltipText();

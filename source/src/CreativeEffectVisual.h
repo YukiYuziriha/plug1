@@ -276,7 +276,7 @@ private:
         compressorPlot.paint(g, b, telemetry, measured, liveTelemetry && enabled,
             {value(P::compressorThreshold), value(P::compressorRatio), value(P::compressorKnee),
              value(P::compressorMakeup), mix * .01f, enabled},
-            {c.inset, c.border, c.muted, c.accent, c.text, c.secondary, c.muted});
+            {c.inset, c.border, c.muted, c.accent, c.text, c.secondary, c.muted}, componentTheme(*this, neon));
         const float current = measured.available ? measured.currentDb : 0.f;
         text(g, meter.removeFromLeft(112), measured.available ? "Actual GR " + number(current) + " dB" : "GR unavailable", c.secondary);
         meter.reduce(0, 5); g.setColour(c.border); g.fillRect(meter);
@@ -326,8 +326,8 @@ private:
         return decimals == 0 ? juce::String(juce::roundToInt(v)) : juce::String(v, decimals);
     }
     static juce::String pitch(float v) { return (v > 0 ? "+" : "") + number(v) + " st"; }
-    static void text(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& s, juce::Colour c) {
-        g.setColour(c); g.setFont(juce::Font(pixelFontOptions(12.f)));
+    void text(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& s, juce::Colour c) const {
+        g.setColour(c); g.setFont(themeFont(componentTheme(*this, neon), 12.f));
         g.drawFittedText(s, r.toNearestInt(), juce::Justification::centredLeft, 1, 1.f);
     }
     static void grid(juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) {
@@ -346,13 +346,13 @@ private:
             c.withAlpha(0.015f), r.getX(), r.getBottom(), false));
         g.fillPath(fill); g.setColour(c); g.strokePath(line, juce::PathStrokeType(1.15f));
     }
-    static void axis(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& left,
-                     const juce::String& right, const ThemePalette& c) {
+    void axis(juce::Graphics& g, juce::Rectangle<float> r, const juce::String& left,
+              const juce::String& right, const ThemePalette& c) const {
         auto row = juce::Rectangle<float>(r.getX(), r.getBottom() + 4, r.getWidth(), 14);
         text(g, row.removeFromLeft(row.getWidth() * 0.5f), left, c.muted);
         g.setColour(c.muted); g.drawText(right, row, juce::Justification::centredRight);
     }
-    static void pitchRail(juce::Graphics& g, juce::Rectangle<float>& r, float semitones, float amount, const ThemePalette& c) {
+    void pitchRail(juce::Graphics& g, juce::Rectangle<float>& r, float semitones, float amount, const ThemePalette& c) const {
         auto lane = r.removeFromTop(21);
         text(g, lane.removeFromLeft(35), "Pitch", c.secondary);
         const float centre = lane.getCentreY(), end = centre - semitones / 12 * 8;
