@@ -821,7 +821,7 @@ Implemented and Release-built:
   and undo the last preset load. Skin/window preferences stay unchanged.
 - Five original factory starting points: Dark Lead, Grit Adlibs, Deep Double,
   Night Echo and Cloud Choir. Inspired by dark modern vocal production, not exact
-  artist recreations, proprietary preset copies or automatic pitch correction.
+  artist recreations or proprietary preset copies.
 - Practical connected-path tail reporting; freeze maps safely to infinite tails
   in CLAP/VST3. 1727 host parameters, including 720 new creative controls.
 
