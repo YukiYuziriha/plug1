@@ -5,34 +5,36 @@
 
 ## Install on Windows x64
 
-HEAVEN by lil grass block v1.12.3 is an audio effect supplied as CLAP and VST3. Choose the
+HEAVEN by lil grass block is an audio effect supplied as CLAP and VST3. Choose the
 format your host supports; installing both is optional. There is no tracked
 installer. Building from source is not required to use the supplied binaries.
 
-1. Download the repository using **Code → Download ZIP** on
-   [GitHub](https://github.com/YukiYuziriha/plug1), then extract it, or clone it.
-   For CLAP alone, the [tracked binary](https://github.com/YukiYuziriha/plug1/raw/refs/heads/main/Windows-x64/CLAP/HEAVEN%20by%20lil%20grass%20block.clap)
-   is also a direct download.
+1. Download the **Windows x64 ZIP** from the
+   [latest GitHub release](https://github.com/YukiYuziriha/plug1/releases/latest)
+   and extract it. The release also provides SHA256 checksums and the matching
+   corresponding-source ZIP; building from source is optional. Open the extracted
+   `HEAVEN-<version>` directory to find the paths below.
 2. Close hosts that currently have HEAVEN (formerly Vocal Stack) loaded. Do not force replacement
    of a locked plugin or terminate the host to install it.
 3. Copy the appropriate item:
 
-   | Format | From the repository | Per-user destination |
+   | Format | Item in the extracted Windows package | Per-user destination |
    | --- | --- | --- |
    | CLAP | `Windows-x64/CLAP/HEAVEN by lil grass block.clap` | `%LOCALAPPDATA%\Programs\Common\CLAP\` |
-   | VST3 | **Entire** `Windows-x64/VST3/HEAVEN by lil grass block.vst3/` folder | `%LOCALAPPDATA%\Programs\Common\VST3\` |
+   | VST3 | **Entire** `Windows-x64/VST3/HEAVEN by lil grass block.vst3/` folder, including `Contents` | `%LOCALAPPDATA%\Programs\Common\VST3\` |
 
    System-wide alternatives are `C:\Program Files\Common Files\CLAP\` and
    `C:\Program Files\Common Files\VST3\`; writing there may require administrator
    permission. The VST3 inner module alone is not a complete bundle.
-4. Keep `Windows-x64/LICENSE.txt`, `Windows-x64/PixelifySans-OFL.txt` and the
-   `Windows-x64/ThirdParty/` notices with your distribution/copy.
+4. Keep the package's license files, source notice, font license and complete
+   `ThirdParty/` notices with your distribution/copy.
 5. Open the host, check its plugin search folders, rescan, and insert **HEAVEN by lil grass block** on an audio track. In Bitwig, check **Settings → Locations → Plug-in
    Locations** if it is missing. These are installation pointers, not a claim of
    completed real-DAW validation.
 
-The tracked binaries are v1.12.3. This version starts dry and expands the
-[factory preset bank](Factory-Presets.md) to 30 patches.
+See the [overview](../README.md) for the current release and its changes.
+Fresh instances start dry; the [factory preset bank](Factory-Presets.md) contains
+30 patches.
 There is no Tuning tab or automatic pitch correction on main. The previous
 implementation and replacement plan are preserved on
 [`work/autotune-donor-integration`](https://github.com/YukiYuziriha/plug1/tree/work/autotune-donor-integration).
@@ -207,15 +209,18 @@ not recorded echoes or live grain waveforms. See the [showcase notes](showcase/R
 - **No sound:** check bypass/mutes, Lead / Stack, FX Mix and Output; inspect the
   cables into Output and any required Morph donor. At 100% Stack with no enabled
   generated voices, the voice bus is silent.
-- **Visible wiring seems inactive:** look for RESTART PENDING and re-prepare the
-  plugin. Do not assume transport stop applies a latency-changing edit.
+- **Visible wiring seems inactive:** a latency-changing edit waits for the host
+  to apply the requested reactivation. If it remains pending, re-prepare the plugin;
+  transport stop alone does not necessarily apply it.
 - **Unexpected levels/artifacts:** reduce extreme pitch/formant/drive values,
   inspect sample peaks and trim Output. Neither Leveler nor merge compensation
   prevents clipping or guarantees perceived loudness.
 - **Host-specific problems:** actual Bitwig listening/session/transport validation
   remains unperformed. Automated module tests are not a DAW compatibility list.
-  The current release also retains a native desktop-input occlusion blocker;
-  [read the validation boundaries](Release-1.11.0-Validation.md).
+  See the [release validation record](Release-1.13.4-Validation.md) for the scope
+  of the recorded automated checks. The desktop-input occlusion blocker in the
+  [historical v1.11.0 record](Release-1.11.0-Validation.md) describes a blocked
+  automated UI test, not an established defect in the current release.
 
 [Open an issue](https://github.com/YukiYuziriha/plug1/issues) with version, format,
 host/Windows versions, sample rate, block size and minimal reproduction steps.
