@@ -24,11 +24,10 @@
 namespace vocalstack {
 
 // Serializable model. IDs identify machines, not positions in nodes[]. Changing
-// an effect ID or type creates fresh state. Latency-bearing effects also start
-// fresh when their wet ownership changes (a different input timeline). FX
+// an effect ID, type or wet owner creates fresh state. FX
 // with an internal Mix also restart when switching between native Mix and a
 // separately rendered wet endpoint.
-enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19, convolution = 20, saturator = 21, sidechain = 22, spectralMorph = 23, vocalGlitch = 24, sidechainBlend = 25 };
+enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19, convolution = 20, saturator = 21, sidechain = 22, spectralMorph = 23, vocalGlitch = 24, sidechainBlend = 25, wetInput = 26, wetOutput = 27 };
 inline constexpr std::uint32_t sidechainNodeId = 14;
 inline constexpr std::uint32_t sidechainBlendNodeId = 15;
 
@@ -39,7 +38,7 @@ struct EffectInputDeclaration {
     bool auxiliary;
 };
 inline constexpr int routingInputCount(NodeType type) noexcept {
-    if (type == NodeType::lead || type == NodeType::voice || type == NodeType::sidechain) return 0;
+    if (type == NodeType::lead || type == NodeType::voice || type == NodeType::sidechain || type == NodeType::wetInput) return 0;
     if (type == NodeType::sum) return 16;
     return type == NodeType::mix || type == NodeType::spectralMorph || type == NodeType::sidechainBlend ? 2 : 1;
 }
@@ -76,7 +75,8 @@ inline constexpr bool routingSupportsWetPocket(NodeType type) noexcept {
         || type == NodeType::spectralMorph || isCreativeEffect(type) || isUtilityEffect(type);
 }
 inline constexpr bool routingSupportsWetInsert(NodeType type) noexcept {
-    return routingSupportsWetPocket(type);
+    return routingSupportsWetPocket(type) || type == NodeType::sum || type == NodeType::mix
+        || type == NodeType::splitter || type == NodeType::crossover;
 }
 struct RoutingNode {
     std::uint32_t id = 0;
@@ -95,7 +95,7 @@ struct RoutingNode {
     UtilitySettings utility;
     SpectralMorphSettings spectralMorph;
     bool monoAudition = false;
-    std::uint32_t wetOwner = 0; // Owned insert, processed before its parent's local Mix.
+    std::uint32_t wetOwner = 0; // Pocket scope (0 = main); processed before the owner's local Mix.
 };
 inline constexpr bool routingUsesInput(const RoutingNode& node, int pin) noexcept {
     return node.enabled || !routingInput(node.type, pin).auxiliary;
@@ -138,11 +138,12 @@ inline Graph defaultGraph(bool legacyChorale = true, bool withSidechainBlend = f
 // cables. Runtime merges now own compensation, so no Sum is exposed in the UI.
 inline Graph removeLegacySumNodes(const Graph& old) {
     Graph graph;
+    const auto isLegacySum = [](const RoutingNode& n) { return n.type == NodeType::sum && n.wetOwner == 0; };
     const auto isSum = [&](std::uint32_t id) {
-        for (const auto& n : old.nodes) if (n.id == id) return n.type == NodeType::sum;
+        for (const auto& n : old.nodes) if (n.id == id) return isLegacySum(n);
         return false;
     };
-    for (const auto& n : old.nodes) if (n.type != NodeType::sum) graph.nodes.push_back(n);
+    for (const auto& n : old.nodes) if (!isLegacySum(n)) graph.nodes.push_back(n);
     const auto expand = [&](auto&& self, std::uint32_t source, std::uint32_t destination, int pin, int sourcePin, int depth) -> void {
         if (depth > 48) return; // Callers validate the bounded DAG before migration.
         if (isSum(source)) {
@@ -310,10 +311,11 @@ public:
     }
     RoutingValidation requestGraph(const Graph& g, unsigned routedVoices = 0x10000u) {
         std::array<int, maxNodes> order{};
-        auto result = orderGraph(g, order);
+        WetPockets pockets;
+        auto result = orderGraph(g, order, &pockets);
         if (!result) return result;
         if (!(rate > 0)) return {false, "prepare must precede requestGraph"};
-        const auto latency = measureLatency(g, order, false);
+        const auto latency = measureLatency(g, order, pockets, false);
         if (latency.output > reserve) return {false, "Routing exceeds the prepared latency reserve"};
         collectRetired();
         auto plan = std::make_unique<Plan>();
@@ -328,10 +330,11 @@ public:
             step.node = g.nodes[index];
             const int declared = routingDeclaredLatency(step.node.type);
             const int arrival = latency.paths[index] - latency.local[index];
-            const int child = latency.wetInserts[index];
-            if (child >= 0) {
-                step.wetInsert = remap[child];
-                step.pocketDry.data.resize(size_t(preparedLatency(g.nodes[child])));
+            const int wetResult = pockets.result[index];
+            if (wetResult >= 0) {
+                step.wetResult = remap[wetResult];
+                if (pockets.input[index] >= 0) step.wetInput = remap[pockets.input[index]];
+                step.pocketDry.data.resize(size_t(latency.paths[wetResult]));
             }
             for (const auto& link : g.links) if (link.destination == step.node.id && routingUsesInput(step.node, link.inputPin)) {
                 const int source = find(g, link.source);
@@ -348,9 +351,9 @@ public:
             if (isEffect(step.node.type) && (declared == 0 || step.node.enabled)) {
                 auto& weak = machines[step.node.id];
                 step.fx = weak.lock();
-                const bool splitsWet = child >= 0 && usesInternalWetMix(step.node.type);
+                const bool splitsWet = wetResult >= 0 && usesInternalWetMix(step.node.type);
                 if (!step.fx || step.fx->type != step.node.type || step.fx->splitsWet != splitsWet
-                    || (declared != 0 && step.fx->latencyOwner != step.node.wetOwner)) {
+                    || step.fx->wetOwner != step.node.wetOwner) {
                     step.fx = std::make_shared<Machine>(step.node, splitsWet);
                     step.fx->prepare(rate);
                     step.fx->grainGeneration = ++nextGrainGeneration;
@@ -362,15 +365,24 @@ public:
         }
 
         plan->steps[plan->output].connected = true;
+
         for (int index = plan->output; index >= 0; --index) {
             auto& step = plan->steps[index];
             if (!step.connected) continue;
-            if (step.wetInsert >= 0) plan->steps[step.wetInsert].connected = true;
+            if (step.wetResult >= 0) plan->steps[step.wetResult].connected = true;
+            if (step.node.wetOwner && step.node.type != NodeType::wetInput) {
+                auto& owner = plan->steps[remap[find(g, step.node.wetOwner)]];
+                if (owner.wetInput >= 0) {
+                    step.nextWetStep = owner.firstWetStep;
+                    owner.firstWetStep = index;
+                }
+            }
             plan->hasCrossover |= step.node.type == NodeType::crossover;
             if (step.sidechainVoiceWire >= 0) plan->sidechainVoiceStep = index;
             for (int wire = 0; wire < step.inputCount; ++wire)
                 plan->steps[step.inputs[wire]].connected = true;
         }
+
         plan->outputDelay.data.resize(size_t(reserve - latency.output));
         plan->revision = grainRevision.fetch_add(1, std::memory_order_acq_rel) + 1;
         delete pending.exchange(plan.release(), std::memory_order_acq_rel);
@@ -483,9 +495,8 @@ private:
     StereoSample processPlan(const RoutingSources& sources, const RoutingControls& controls, Values& values) noexcept {
         using Value = typename Values::value_type::value_type;
         constexpr size_t lineageStride = std::tuple_size<decltype(Value{}.lineage)>::value / 10;
-        for (int i = 0; i < active->count; ++i) {
+        const auto processStep = [&](int i, const auto& renderFx) {
             auto& step = active->steps[i];
-            if (!step.connected) continue;
             auto& ports = values[i];
             // Only crossover needs to clear every port (bypassed/unused bands).
             // Splitter overwrites both outputs with complete routed values.
@@ -493,7 +504,7 @@ private:
             else ports[0] = {};
             auto& value = ports[0];
             const auto& n = step.node;
-            if (n.wetOwner) continue; // Clocked exactly once by its owner's wet path.
+
             const int monitorSlot = fxMonitor && n.type == NodeType::crossover ? routingFxSlot(n.id) : -1;
             const bool monitoring = monitorSlot >= 0 && fxMonitor->capturing(size_t(monitorSlot));
             StereoSample monitorInput{};
@@ -638,6 +649,7 @@ private:
                 const double hi = std::max(lo, Multiband::cutoff(fx.crossoverHigh, rate, 4000));
                 for (int port = 0; port < 3; ++port) {
                     if (fx.bandCount == 2 && port == 2) continue;
+                    ports[port].available = in.available;
                     ports[port].audio = {bands[port][0], bands[port][1]};
                     for (int r = 0; r < active->regions; ++r) {
                         const double f = active->boundaries[r];
@@ -657,11 +669,12 @@ private:
                 value = input(0); // Only MAIN contributes audible provenance.
                 if (step.donorWired) {
                     const auto donor = input(1);
-                    value.audio = processEffect(step, value.audio, donor.audio, donor.available, controls);
-                } else value.audio = processEffect(step, value.audio, {}, false, controls);
+                    value.audio = renderFx(step, value, donor.audio, donor.available);
+                } else value.audio = renderFx(step, value, {}, false);
                 break;
             }
-            case NodeType::output: value = input(0); break;
+            case NodeType::output: case NodeType::wetOutput: value = input(0); break;
+            case NodeType::wetInput: break; // The owner seeds it before running the pocket.
             }
             if (monitoring) {
                 auto monitorOutput = value.audio;
@@ -680,6 +693,48 @@ private:
                     monitorOutput.left, monitorOutput.right, monitorBands, bands,
                     false, 0, 0, int(n.type), false);
             }
+        };
+        const auto renderOrdinaryFx = [&](Step& step, const Value& in, StereoSample donor, bool donorAvailable) {
+            const auto fx = effectSettings(step.node, controls);
+            const auto frame = renderEffect(step, in.audio, donor, donorAvailable, fx, controls);
+            return finishEffect(step, in.audio, frame, fx, controls);
+        };
+        const auto renderTopLevelFx = [&](Step& step, const Value& in, StereoSample donor, bool donorAvailable) {
+            if (step.wetResult < 0) return renderOrdinaryFx(step, in, donor, donorAvailable);
+            const auto fx = effectSettings(step.node, controls);
+            auto frame = renderEffect(step, in.audio, donor, donorAvailable, fx, controls);
+            // Always clock the dry signal and the matching owner envelope. Live
+            // bypass must not reveal an empty wet path early on re-enable.
+            const auto aligned = step.pocketDry.process({frame.dry, frame.mix});
+            frame.dry = aligned.audio;
+            frame.mix = aligned.mix;
+            const auto audio = frame.hasWet ? frame.wet : StereoSample{};
+            if (step.wetInput >= 0) {
+                auto& seed = values[step.wetInput][0];
+                seed = {};
+                seed.audio = audio;
+                seed.available = in.available;
+                // A pocket is one source, regardless of its owner's upstream
+                // voice mix. Preserve main-graph lineage at the owner's output.
+                for (int r = 0; r < active->regions; ++r) seed.lineage[r] = 1;
+                // Clock only Wet Out's active ancestors, even with zero input
+                // during bypass, so downstream filters and delays don't stall.
+                for (int i = step.firstWetStep; i >= 0; i = active->steps[i].nextWetStep)
+                    processStep(i, renderOrdinaryFx);
+                frame.wet = values[step.wetResult][0].audio;
+            } else {
+                auto& insert = active->steps[step.wetResult];
+                if (frame.hasWet || !step.pocketDry.data.empty()) {
+                    Value input{};
+                    input.audio = audio;
+                    frame.wet = renderOrdinaryFx(insert, input, {}, false);
+                } else insert.glitchStamp = 0;
+            }
+            return finishEffect(step, in.audio, frame, fx, controls);
+        };
+        for (int i = 0; i < active->count; ++i) {
+            const auto& step = active->steps[i];
+            if (step.connected && !step.node.wetOwner) processStep(i, renderTopLevelFx);
         }
         auto out = active->outputDelay.process(values[active->output][0].audio);
         // A short output-offset ramp removes the splice discontinuity without
@@ -715,7 +770,7 @@ private:
     struct Machine {
         uint64_t grainGeneration = 0;
         explicit Machine(const RoutingNode& n, bool splitWet)
-            : type(n.type), latencyOwner(n.wetOwner), splitsWet(splitWet) {}
+            : type(n.type), wetOwner(n.wetOwner), splitsWet(splitWet) {}
         // Track the bypass envelopes owned by DSP classes that don't expose
         // their settled state. EQ/Shaper receive an initial tick so a machine
         // starting bypassed still fades in on enable.
@@ -763,7 +818,7 @@ private:
         double bypassBlend = 0., bypassStep = 0., choraleWetBlend = 0.;
         bool bypassInitialized = false;
         const NodeType type;
-        const std::uint32_t latencyOwner;
+        const std::uint32_t wetOwner;
         const bool splitsWet;
         Chorale chorale;
         Waveshaper waveshaper;
@@ -808,7 +863,8 @@ private:
         DelayLine<PocketDry> pocketDry;
         std::array<StereoSample, maxLinks> wireAudio{};
         bool donorWired = false, connected = false;
-        int wetInsert = -1, sidechainVoiceWire = -1;
+        int wetResult = -1, wetInput = -1, firstWetStep = -1, nextWetStep = -1;
+        int sidechainVoiceWire = -1;
         int inputCount = 0;
         double smoothedMix = 0;
         bool mixInitialized = false;
@@ -942,7 +998,7 @@ private:
                 }
             }
             glitch.process(dry.left, dry.right, frame.wet.left, frame.wet.right);
-            frame.hasWet = step.wetInsert < 0 || enabled || frame.mix != 0.;
+            frame.hasWet = step.wetResult < 0 || enabled || frame.mix != 0.;
             return frame;
         }
         default: {
@@ -963,7 +1019,7 @@ private:
                               const FxSettings& fx, const RoutingControls& controls) noexcept {
         const auto type = step.node.type;
         auto out = frame.dry;
-        if (frame.mix != 0. || (step.wetInsert < 0 && frame.hasWet)) {
+        if (frame.mix != 0. || (step.wetResult < 0 && frame.hasWet)) {
             const auto mixSample = [&](float dry, float wet) {
                 if (type == NodeType::equalizer || type == NodeType::waveshaper)
                     return float(dry * (1. - frame.mix) + wet * frame.mix);
@@ -1003,34 +1059,6 @@ private:
         return out;
     }
 
-    StereoSample processEffect(Step& step, StereoSample in, StereoSample donor, bool donorAvailable,
-                               const RoutingControls& controls) noexcept {
-        const auto fx = effectSettings(step.node, controls);
-        auto frame = renderEffect(step, in, donor, donorAvailable, fx, controls);
-        if (step.wetInsert >= 0) {
-            auto& insert = active->steps[step.wetInsert];
-            // Keep the prepared delay clocked despite live owner bypass. A
-            // latency-bearing child also keeps its FFT timeline current; other
-            // children need not run when the owner stops producing wet audio.
-            const bool hasLatency = !step.pocketDry.data.empty();
-            if (hasLatency) {
-                // Delay the owner envelope along with its dry path. On wakeup
-                // it must not reveal empty child output before wet audio arrives.
-                const auto aligned = step.pocketDry.process({frame.dry, frame.mix});
-                frame.dry = aligned.audio;
-                frame.mix = aligned.mix;
-            }
-            if (frame.hasWet || hasLatency) {
-                const auto pocketInput = frame.hasWet ? frame.wet : StereoSample{};
-                const auto settings = effectSettings(insert.node, controls);
-                // Morph inserts use native Mix and the canonical absent-donor
-                // spectrum, which attenuates and leaves Freeze pending.
-                const auto child = renderEffect(insert, pocketInput, {}, false, settings, controls);
-                frame.wet = finishEffect(insert, pocketInput, child, settings, controls);
-            } else insert.glitchStamp = 0;
-        }
-        return finishEffect(step, in, frame, fx, controls);
-    }
 
     struct Plan {
         SignalDelay outputDelay;
@@ -1110,7 +1138,7 @@ private:
         // contribute, but connected silent-input machines may retain history.
         for (int i = 0; i < plan.count; ++i) {
             const auto& step = plan.steps[i];
-            if (!step.connected || step.node.wetOwner) continue;
+            if (!step.connected) continue;
             double upstream = 0;
             for (int wire = 0; wire < step.inputCount; ++wire)
                 upstream = std::max(upstream, plan.pathTails[step.inputs[wire]]);
@@ -1120,16 +1148,7 @@ private:
                 ? controls.fxSettings[size_t(slot)].creative : n.creative;
             plan.pathTails[i] = upstream + (isCreativeEffect(n.type)
                 ? creativeTailSeconds(n.type, settings, controls.tempoBpm) : moduleTailSeconds(n.type));
-            if (step.wetInsert >= 0) {
-                const auto& insert = plan.steps[step.wetInsert];
-                if (insert.fx) {
-                    const auto& child = insert.node;
-                    const int childSlot = routingFxSlot(child.id);
-                    const auto& childSettings = controls.fxAutomation && childSlot > 0
-                        ? controls.fxSettings[size_t(childSlot)].creative : child.creative;
-                    plan.pathTails[i] += creativeTailSeconds(child.type, childSettings, controls.tempoBpm);
-                }
-            }
+            if (step.wetResult >= 0) plan.pathTails[i] += plan.pathTails[step.wetResult];
         }
         reportedTail.store(plan.pathTails[plan.output], std::memory_order_release);
     }
@@ -1138,8 +1157,9 @@ private:
         auto& b = active->boundaries;
         int used = 1; b[0] = 0;
         for (int i = 0; i < active->count; ++i) {
-            const auto& n = active->steps[i].node;
-            if (n.type != NodeType::crossover) continue;
+            const auto& step = active->steps[i];
+            const auto& n = step.node;
+            if (!step.connected || n.type != NodeType::crossover) continue;
             const auto fx = effectSettings(n, controls);
             if (!fx.enabled) continue;
             const double lo = Multiband::cutoff(fx.crossoverLow, rate, 250);
@@ -1158,12 +1178,20 @@ private:
         for (int i = 0; i < int(g.nodes.size()); ++i) if (g.nodes[i].id == id) return i;
         return -1;
     }
-    static RoutingValidation orderGraph(const Graph& g, std::array<int, maxNodes>& order) {
+    struct WetPockets {
+        std::array<int, maxNodes> input, result; // result is Wet Out or the legacy insert
+        WetPockets() { input.fill(-1); result.fill(-1); }
+    };
+    static RoutingValidation orderGraph(const Graph& g, std::array<int, maxNodes>& order,
+                                        WetPockets* compiledPockets = nullptr) {
         if (g.nodes.empty() || g.nodes.size() > maxNodes || g.links.size() > maxLinks)
             return {false, "graph exceeds bounded node/link limits or is empty"};
         std::array<int, maxNodes> degree{};
         std::array<std::array<int, maxInputs>, maxNodes> pins{};
         std::array<bool, 10> sources{};
+        WetPockets pockets;
+        std::array<int, maxNodes> ownedCount{}, lastOwned{}, resultOwner{};
+        resultOwner.fill(-1);
         int outputs = 0, effects = 0;
         for (int i = 0; i < int(g.nodes.size()); ++i) {
             const auto& n = g.nodes[i];
@@ -1222,6 +1250,9 @@ private:
                 }
                 ++effects; break;
             case NodeType::output: ++outputs; break;
+            case NodeType::wetInput: case NodeType::wetOutput:
+                if (!n.wetOwner) return {false, "Wet In and Wet Out require a pocket owner"};
+                break;
             case NodeType::sidechainBlend:
                 if (n.id != sidechainBlendNodeId) return {false, "Sidechain Blend requires its dedicated node ID"};
                 break;
@@ -1229,25 +1260,46 @@ private:
             default: return {false, "unknown node type"};
             }
         }
-        for (const auto& child : g.nodes) if (child.wetOwner) {
+        for (int i = 0; i < int(g.nodes.size()); ++i) {
+            const auto& child = g.nodes[i];
+            if (!child.wetOwner) continue;
             const int parent = find(g, child.wetOwner);
-            if (parent < 0 || g.nodes[parent].wetOwner || !routingSupportsWetPocket(g.nodes[parent].type)
-                || !routingSupportsWetInsert(child.type))
-                return {false, "A wet insert requires a compatible top-level FX owner and insert type"};
-            int children = 0;
-            for (const auto& other : g.nodes) children += other.wetOwner == child.wetOwner;
-            if (children != 1) return {false, "An FX can own only one wet-pocket insert"};
+            if (parent < 0 || g.nodes[parent].wetOwner || !routingSupportsWetPocket(g.nodes[parent].type))
+                return {false, "A wet pocket requires a compatible top-level FX owner"};
+            if (child.type == NodeType::wetInput || child.type == NodeType::wetOutput) {
+                auto& endpoint = child.type == NodeType::wetInput ? pockets.input[parent] : pockets.result[parent];
+                if (endpoint >= 0) return {false, "Duplicate wet pocket endpoint"};
+                endpoint = i;
+            } else if (!routingSupportsWetInsert(child.type)) {
+                return {false, "Node type is not allowed in a wet pocket"};
+            }
+            ++ownedCount[parent];
+            lastOwned[parent] = i;
+        }
+        for (int i = 0; i < int(g.nodes.size()); ++i) if (ownedCount[i]) {
+            if (pockets.input[i] < 0 || pockets.result[i] < 0) {
+                // Legacy: exactly one single-wet FX, with no endpoints or
+                // cables (scope and self-link checks below rule out any cable).
+                if (ownedCount[i] != 1 || !routingSupportsWetPocket(g.nodes[lastOwned[i]].type))
+                    return {false, "A wet pocket needs one Wet In and one Wet Out"};
+                pockets.result[i] = lastOwned[i];
+            }
+            // The pocket's result precedes its owner for latency/tail analysis
+            // and reverse reachability. Audio runs the pocket at the owner.
+            resultOwner[pockets.result[i]] = i;
+            ++degree[i];
         }
         if (effects > maxEffects || outputs != 1) return {false, "require one Output and at most 16 effects"};
         for (const auto& l : g.links) {
             const int s = find(g, l.source), d = find(g, l.destination);
             if (s < 0 || d < 0 || s == d) return {false, "invalid link endpoint"};
-            if (g.nodes[s].wetOwner || g.nodes[d].wetOwner)
-                return {false, "Wet-pocket inserts use their owner's wet signal, not canvas cables"};
+            if (g.nodes[s].wetOwner != g.nodes[d].wetOwner)
+                return {false, "A cable cannot cross wet pocket scopes"};
             const auto type = g.nodes[d].type;
             const int count = routingInputCount(type);
-            if (g.nodes[s].type == NodeType::output || l.inputPin < 0 || l.inputPin >= count)
-                return {false, "invalid input pin or Output used as source"};
+            if (g.nodes[s].type == NodeType::output || g.nodes[s].type == NodeType::wetOutput
+                || l.inputPin < 0 || l.inputPin >= count)
+                return {false, "invalid input pin or output endpoint used as source"};
             const int outputPins = g.nodes[s].type == NodeType::crossover ? 3
                             : g.nodes[s].type == NodeType::splitter ? 2 : 1;
             if (l.sourcePin < 0 || l.sourcePin >= outputPins) return {false, "invalid source pin"};
@@ -1267,10 +1319,12 @@ private:
             for (int i = 0; i < int(g.nodes.size()); ++i) if (!done[i] && degree[i] == 0) { next = i; break; }
             if (next < 0) return {false, "routing cycle"};
             done[next] = true; order[used++] = next;
+            if (resultOwner[next] >= 0) --degree[resultOwner[next]];
             for (const auto& l : g.links) if (l.source == g.nodes[next].id) --degree[find(g, l.destination)];
         }
-        if (measureLatency(g, order, true).maximum > SpectralMorph::latencySamples)
+        if (measureLatency(g, order, pockets, true).maximum > SpectralMorph::latencySamples)
             return {false, "Serial Spectral Morph exceeds the fixed 4096-sample graph budget"};
+        if (compiledPockets) *compiledPockets = pockets;
         return {true, {}};
     }
     static int preparedLatency(const RoutingNode& node) noexcept {
@@ -1278,29 +1332,27 @@ private:
     }
 
     struct LatencyPaths {
-        std::array<int, maxNodes> paths{}, local{}, wetInserts{};
+        std::array<int, maxNodes> paths{}, local{};
         int output = 0, maximum = 0;
     };
     // Structural validation still budgets every declared machine and every
     // cable, irrespective of live bypass and whether a branch reaches Output.
-    static LatencyPaths measureLatency(const Graph& g, const std::array<int, maxNodes>& order, bool structural) {
+    static LatencyPaths measureLatency(const Graph& g, const std::array<int, maxNodes>& order,
+                                       const WetPockets& pockets, bool structural) {
         LatencyPaths latency;
-        latency.wetInserts.fill(-1);
-        for (int i = 0; i < int(g.nodes.size()); ++i)
-            if (g.nodes[i].wetOwner) latency.wetInserts[find(g, g.nodes[i].wetOwner)] = i;
         const auto effectLatency = [structural](const RoutingNode& node) {
             return structural ? routingDeclaredLatency(node.type) : preparedLatency(node);
         };
         for (size_t step = 0; step < g.nodes.size(); ++step) {
             const int i = order[step];
             const auto& node = g.nodes[i];
-            if (node.wetOwner) continue; // Count only on the owner's path.
+
             auto& path = latency.paths[i];
             for (const auto& link : g.links)
                 if (link.destination == node.id && (structural || routingUsesInput(node, link.inputPin)))
                     path = std::max(path, latency.paths[find(g, link.source)]);
-            const int child = latency.wetInserts[i];
-            latency.local[i] = effectLatency(node) + (child >= 0 ? effectLatency(g.nodes[child]) : 0);
+            const int wetResult = pockets.result[i];
+            latency.local[i] = effectLatency(node) + (wetResult >= 0 ? latency.paths[wetResult] : 0);
             path += latency.local[i];
             latency.maximum = std::max(latency.maximum, path);
             if (node.type == NodeType::output) latency.output = path;
@@ -1312,11 +1364,13 @@ public:
     // Use the same effective graph for this query and requestGraph(): enabled
     // must reflect the host target for latency-bearing nodes. Mix, source/pin
     // silence and live automation do not change a prepared plan's latency.
-    // An enabled insert adds latency even if its owner is locally bypassed.
+    // The path into Wet Out adds latency even if its owner is locally bypassed.
     // Invalid graphs continue to return the out-of-budget sentinel (4097).
     static int graphLatency(const Graph& g) {
         std::array<int, maxNodes> order{};
-        return orderGraph(g, order) ? measureLatency(g, order, false).output : SpectralMorph::latencySamples + 1;
+        WetPockets pockets;
+        return orderGraph(g, order, &pockets) ? measureLatency(g, order, pockets, false).output
+                                             : SpectralMorph::latencySamples + 1;
     }
 private:
     void clear() {

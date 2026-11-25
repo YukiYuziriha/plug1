@@ -197,19 +197,27 @@ reported latency stay aligned. Same-latency routing edits apply without reactiva
 
 ## Shape only the wet signal
 
-In **Routing**, expand an FX node and choose **Wet pocket / Add FX**. Select an
-insert, such as **Delay** inside **Granular** or **Reverb** inside **Delay**. The
-insert has its own settings and Mix. No cables are needed: the parent’s wet
-output passes through the insert before the parent’s Mix. At 0% parent Mix you
-hear neither effect. Reopen the pocket from its parent, or delete the wet
-insert to remove it. Existing Granular → Delay pockets still work.
+In **Routing**, open an FX node’s **Wet pocket**. This opens a separate canvas
+with **Wet In** and **Wet Out**, initially connected. Add normal nodes with the
+Routing Add menu and wire them between the endpoints. For example, patch
+`Wet In → Delay → Reverb → Wet Out` inside Granular to hear the echoes and
+reverb only with Granular’s wet signal. Unwired nodes do not process that
+signal; disconnecting Wet Out silences the pocket. The parent’s dry path stays
+untouched, and its Mix controls the complete wet path. **Back to Routing**
+returns to the main graph. Old Granular → Delay pockets keep their sound and
+open with the Delay already wired.
 
-Each single-wet-path FX can own one insert, which uses a normal FX slot. Pockets
-cannot nest. Multiband has distinct band outputs, so use canvas cables for
-per-band FX rather than a wet pocket. EQ8 has no Mix control; its pocket follows
-EQ8’s bypass. A Spectral Morph inside a pocket has no donor cable; use a normal
-Routing Morph node when you need a donor or Freeze capture. Pockets work in
-Routing only and don’t add controls to Stack.
+In either graph, drag a **disconnected node** over a cable. Drop when the
+cable highlights to insert that node between its existing ends, using the
+node’s primary input and output. Undo restores both the cable and the node’s
+position in one step.
+
+Pocket cables stay inside their pocket. Pockets cannot nest and share the
+normal node and FX slot limits. Only FX with a single wet path can own a
+pocket. Multiband can be used inside a pocket but has no single wet pocket of
+its own. RAW host inputs are available in the main graph only; a pocket Morph
+can take its donor from a branch within that pocket. EQ8 has no Mix control;
+its pocket follows EQ8’s bypass. Stack is unchanged.
 
 ## Modulation, presets and displays
 

@@ -192,6 +192,155 @@ void donorlessMorph() {
     check(processor->additionalLatencySamples() == latency, "live bypass changed prepared reserve");
 }
 
+namespace {
+constexpr std::uint32_t wetOwnerId = 100, firstInsert = 101, secondInsert = 102;
+constexpr std::uint32_t wetIn = 200, wetOut = 201;
+constexpr double explicitRate = 48000;
+
+Graph explicitPocket(float mix = 1, NodeType last = NodeType::waveshaper, float lastMix = 1) {
+    auto first = effect(firstInsert, NodeType::gain, 1);
+    auto second = effect(secondInsert, last, lastMix);
+    RoutingNode in{wetIn, NodeType::wetInput}, out{wetOut, NodeType::wetOutput};
+    first.wetOwner = second.wetOwner = in.wetOwner = out.wetOwner = wetOwnerId;
+    return {{{1, NodeType::lead}, effect(wetOwnerId, NodeType::gain, mix),
+             {13, NodeType::output}, second, first, in, out},
+            {{1, wetOwnerId, 0}, {wetOwnerId, 13, 0},
+             {wetIn, firstInsert, 0}, {firstInsert, secondInsert, 0}, {secondInsert, wetOut, 0}}};
+}
+
+void explicitContracts() {
+    const auto graph = explicitPocket();
+    check(bool(RoutingExecutor::validate(graph)), "manual wet chain rejected");
+    auto bad = graph;
+    bad.links.push_back({1, firstInsert, 0});
+    check(!RoutingExecutor::validate(bad), "canvas cable into explicit pocket accepted");
+    bad = graph;
+    bad.links.push_back({secondInsert, 13, 0});
+    check(!RoutingExecutor::validate(bad), "explicit pocket cable to canvas accepted");
+    bad = graph;
+    bad.links.push_back({secondInsert, firstInsert, 0});
+    check(!RoutingExecutor::validate(bad), "cycle inside explicit pocket accepted");
+    bad = graph;
+    bad.links.push_back({wetOut, firstInsert, 0});
+    check(!RoutingExecutor::validate(bad), "Wet Out used as a cable source");
+    bad = graph;
+    auto duplicate = bad.nodes.back(); duplicate.id = 202;
+    bad.nodes.push_back(duplicate);
+    check(!RoutingExecutor::validate(bad), "duplicate Wet Out accepted");
+    bad = graph;
+    bad.links.pop_back();
+    bad.nodes.pop_back();
+    check(!RoutingExecutor::validate(bad), "explicit pocket missing Wet Out accepted");
+
+    auto twoPockets = graph;
+    auto otherIn = RoutingNode{202, NodeType::wetInput};
+    auto otherOut = RoutingNode{203, NodeType::wetOutput};
+    otherIn.wetOwner = otherOut.wetOwner = 103;
+    twoPockets.nodes.push_back(effect(103, NodeType::gain, 1));
+    twoPockets.nodes.push_back(otherIn);
+    twoPockets.nodes.push_back(otherOut);
+    twoPockets.links.push_back({202, 203, 0});
+    check(bool(RoutingExecutor::validate(twoPockets)), "separate explicit pockets rejected");
+    twoPockets.links.push_back({secondInsert, 203, 0});
+    check(!RoutingExecutor::validate(twoPockets), "cable between different wet pockets accepted");
+}
+
+void explicitRender() {
+    const auto graph = explicitPocket();
+    auto nested = std::make_unique<RoutingExecutor>();
+    auto serial = std::make_unique<RoutingExecutor>();
+    nested->prepare(explicitRate);
+    serial->prepare(explicitRate);
+    check(bool(nested->requestGraph(graph)), "manual wet chain compile");
+
+    auto flat = graph;
+    flat.nodes.resize(flat.nodes.size() - 2);
+    for (auto& node : flat.nodes) node.wetOwner = 0;
+    flat.links = {{1, wetOwnerId, 0}, {wetOwnerId, firstInsert, 0},
+                  {firstInsert, secondInsert, 0}, {secondInsert, 13, 0}};
+    check(bool(serial->requestGraph(flat)), "flat reference compile");
+    const float gain = std::pow(10.f, -6.f / 20.f);
+    RoutingSources sources;
+    RoutingControls controls;
+    double energy = 0, difference = 0;
+    audio = true;
+    for (int i = 0; i < 2048; ++i) {
+        sources.lead = signal(i, explicitRate);
+        const auto actual = nested->process(sources, controls);
+        near(actual, serial->process(sources, controls), "explicit wet chain differs from serial cable order");
+        energy += std::abs(actual.left) + std::abs(actual.right);
+        difference += std::abs(actual.left - gain * sources.lead.left)
+                    + std::abs(actual.right - gain * sources.lead.right);
+    }
+    audio = false;
+    check(energy > .01 && difference > .01, "manual wet chain reference was vacuous");
+
+    const auto checkAfterEdit = [&](bool connected) {
+        audio = true;
+        for (int i = 0; i < 2048; ++i) {
+            sources.lead = signal(i, explicitRate);
+            const auto actual = nested->process(sources, controls);
+            if (i < 1024) continue; // Allow the live graph de-click to settle.
+            const auto expected = connected ? StereoSample{gain * sources.lead.left, gain * sources.lead.right}
+                                            : StereoSample{};
+            near(actual, expected, connected ? "unconnected FX changed the direct wet path"
+                                            : "disconnecting Wet Out kept the wet path audible");
+        }
+        audio = false;
+    };
+    auto disconnected = graph;
+    disconnected.links.pop_back(); // Keep the fed FX chain, unplug only Wet Out.
+    check(bool(nested->requestGraph(disconnected)), "disconnecting Wet Out rejected");
+    checkAfterEdit(false);
+
+    auto direct = graph;
+    direct.links = {{1, wetOwnerId, 0}, {wetOwnerId, 13, 0}, {wetIn, wetOut, 0}};
+    check(bool(nested->requestGraph(direct)), "direct wet cable with unconnected FX rejected");
+    checkAfterEdit(true);
+}
+
+void explicitLatency() {
+    constexpr int latency = SpectralMorph::latencySamples;
+    constexpr float mix = .25f;
+    // At zero local Mix, Morph is a transparent delay and must still reserve
+    // latency. The two gains make the owner's wet and dry signals distinct.
+    const auto graph = explicitPocket(mix, NodeType::spectralMorph, 0);
+    check(RoutingExecutor::graphLatency(graph) == latency, "explicit Wet Out path lost Morph latency");
+    const auto dryGraph = explicitPocket(0, NodeType::spectralMorph, 0);
+    check(RoutingExecutor::graphLatency(dryGraph) == latency, "zero owner Mix discarded explicit path latency");
+    auto deadEnd = graph;
+    deadEnd.links.back() = {firstInsert, wetOut, 0}; // Morph receives input but cannot reach Wet Out.
+    check(RoutingExecutor::graphLatency(deadEnd) == 0, "dead-end wet Morph reserved output latency");
+
+    auto partial = std::make_unique<RoutingExecutor>();
+    auto dry = std::make_unique<RoutingExecutor>();
+    auto unreserved = std::make_unique<RoutingExecutor>();
+    unreserved->prepare(explicitRate);
+    check(!unreserved->requestGraph(graph), "connected wet Morph compiled without a latency reserve");
+    check(bool(unreserved->requestGraph(deadEnd)), "dead-end wet Morph required a latency reserve");
+    partial->prepare(explicitRate, latency);
+    dry->prepare(explicitRate, latency);
+    check(bool(partial->requestGraph(graph)), "explicit partial Mix compile");
+    check(bool(dry->requestGraph(dryGraph)), "explicit dry compile");
+
+    const float gain = std::pow(10.f, -6.f / 20.f);
+    const float mixed = (1 - mix) + mix * gain * gain;
+    RoutingSources sources;
+    RoutingControls controls;
+    audio = true;
+    for (int i = 0; i < latency + 2048; ++i) {
+        sources.lead = signal(i, explicitRate);
+        const auto aligned = signal(i - latency, explicitRate);
+        near(dry->process(sources, controls), aligned, "explicit pocket dry path not aligned to Wet Out");
+        near(partial->process(sources, controls), {mixed * aligned.left, mixed * aligned.right},
+             "explicit owner Mix did not combine latency-aligned stereo wet and dry");
+        near(unreserved->process(sources, controls), {mixed * sources.lead.left, mixed * sources.lead.right},
+             "dead-end wet Morph delayed or changed the audible path");
+    }
+    audio = false;
+}
+}
+
 void legacyChorale() {
     constexpr double rate = 48000;
     auto processor = std::make_unique<RoutingExecutor>();
@@ -224,6 +373,12 @@ int main() {
     const char* test = "graph contracts";
     try {
         contracts();
+        test = "explicit wet graph contracts";
+        explicitContracts();
+        test = "explicit wet graph rendering and disconnects";
+        explicitRender();
+        test = "explicit wet graph latency";
+        explicitLatency();
         test = "Granular -> Delay";
         for (double rate : {44100., 48000., 96000.})
             for (bool mono : {false, true}) render(rate, mono, NodeType::granular, NodeType::delay);

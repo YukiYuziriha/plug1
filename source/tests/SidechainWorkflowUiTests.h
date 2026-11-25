@@ -2,6 +2,14 @@
 #include "RoutingPanel.h"
 #include "GuiTestDisplay.h"
 #include <stdexcept>
+#if JUCE_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#undef near
+#undef far
+#endif
 namespace vocalstack::workflowUiTests {
 inline void require(bool value, const char* why) { if (!value) throw std::runtime_error(why); }
 inline juce::Component* find(juce::Component& component, const juce::String& id) {
@@ -290,15 +298,65 @@ inline void sidechainBlendControls() {
 }
 inline void run() {
     guiTestDisplay::enumerate();
+    const auto linkExists = [](const Graph& graph, uint32_t from, uint32_t to, int sourcePin = 0, int inputPin = 0) {
+        return std::any_of(graph.links.begin(), graph.links.end(), [=](const auto& link) {
+            return link.source == from && link.destination == to && link.sourcePin == sourcePin && link.inputPin == inputPin;
+        });
+    };
+    const auto dragOntoCable = [](RoutingPanel& panel, uint32_t id, uint32_t from, uint32_t to, bool canSplice) {
+        const auto links = panel.displayLinks();
+        const auto cable = std::find_if(links.begin(), links.end(), [=](const auto& item) {
+            return item.link.source == from && item.link.destination == to;
+        });
+        require(cable != links.end(), "Splice test cable is not visible");
+        const auto path = panel.displayedCablePath(*cable);
+        const auto end = path.getPointAlongPath(path.getLength() * .5f);
+        const auto start = panel.toScreen(panel.nodeBounds(*panel.node(id)).getTopLeft().translated(25, 14));
+        const auto bounds = panel.canvas.getLocalBounds().toFloat();
+        require(bounds.contains(start) && bounds.contains(end), "Splice gesture fell outside the canvas");
+        panel.canvas.mouseDown(mouse(panel.canvas, start, start));
+        require(panel.draggingNode == id && panel.spliceHighlight < 0, "Click did not pick up the node or highlighted before a drag");
+        panel.canvas.mouseDrag(mouse(panel.canvas, end, start, true));
+        require(panel.spliceHighlight == (canSplice ? cable->index : -1), "Wrong cable splice highlight during drag");
+        panel.canvas.mouseUp(mouse(panel.canvas, end, start, true));
+        require(panel.spliceHighlight < 0, "Splice highlight persisted after release");
+    };
+    {
+        auto owner = std::make_unique<Processor>();
+        Graph graph{{{1, NodeType::lead}, {300, NodeType::splitter}, {301, NodeType::splitter},
+                     {200, NodeType::mix}, {13, NodeType::output}}, {{1, 300, 0, 0}, {300, 200, 1, 1}, {200, 13, 0, 0}}};
+        juce::String error;
+        require(owner->setRoutingGraph(graph, error), "Main splice fixture rejected");
+        RoutingPanel panel(*owner);
+        fitAndAttach(panel, 1200, 950);
+        panel.positions[1] = {10, 20}; panel.positions[300] = {230, 20}; panel.positions[200] = {570, 20};
+        panel.positions[13] = {800, 20}; panel.positions[301] = {300, 160};
+        panel.fit.onClick();
+        dragOntoCable(panel, 1, 300, 200, false);
+        require(linkExists(owner->getRoutingGraph(), 300, 200, 1, 1), "Dragging a connected node changed the cable");
+        panel.undo.onClick();
+        const auto before = panel.positions.at(301);
+        dragOntoCable(panel, 301, 300, 200, true);
+        const auto spliced = owner->getRoutingGraph();
+        require(!linkExists(spliced, 300, 200, 1, 1) && linkExists(spliced, 300, 301, 1, 0)
+            && linkExists(spliced, 301, 200, 0, 1), "Main splice did not preserve both endpoint pins");
+        require(panel.positions.at(301) != before, "Main splice did not move the node");
+        panel.undo.onClick();
+        require(panel.positions.at(301) == before && linkExists(owner->getRoutingGraph(), 300, 200, 1, 1),
+            "One undo did not restore both layout and original cable");
+    }
     for (int theme = 0; theme <= int(Theme::grass); ++theme) {
         const bool legacy = theme % 2 == 0;
         const auto parentType = legacy ? NodeType::granular : NodeType::delay;
-        const auto childType = legacy ? NodeType::delay : NodeType::reverb;
-        const juce::String choiceLabel = legacy ? "Delay | stereo / tempo sync" : "Reverb | space / ducking";
-        const juce::String parentLabel = legacy ? "GRANULAR 1" : "Echo owner";
-        const juce::String childLabel = legacy ? "DELAY 2" : "REVERB 2";
         auto owner = std::make_unique<Processor>(); owner->setSkin(theme);
-        const auto graph = mainBusFx::add(defaultGraph(), parentType).graph;
+        auto graph = mainBusFx::add(defaultGraph(), parentType).graph;
+        constexpr uint32_t parent = 100, first = 101, second = 102;
+        constexpr uint32_t wetIn = 0x10000 + 2 * parent, wetOut = wetIn + 1;
+        if (legacy) {
+            RoutingNode child{first, NodeType::reverb};
+            child.wetOwner = parent; child.mix = 1.f;
+            graph.nodes.push_back(child);
+        }
         juce::String error;
         require(owner->setRoutingGraph(graph, error), "Wet-pocket UI graph rejected");
         auto layout = owner->getRoutingLayout();
@@ -308,7 +366,7 @@ inline void run() {
         juce::ValueTree position("NODE"); position.setProperty("id", 100, nullptr);
         position.setProperty("x", 40, nullptr); position.setProperty("y", 40, nullptr);
         position.setProperty("expanded", true, nullptr);
-        if (!legacy) position.setProperty("name", parentLabel, nullptr);
+        if (!legacy) position.setProperty("name", "Echo owner", nullptr);
         layout.addChild(position, -1, nullptr);
         owner->setRoutingLayout(layout);
         RoutingPanel panel(*owner); panel.setNeon(theme == int(Theme::neon));
@@ -318,65 +376,143 @@ inline void run() {
             require(button && button->isShowing(), "FX node has no visible wet-pocket action");
             return button;
         };
-        require(pocketButton()->getButtonText() == "Wet pocket / Add FX", "Empty pocket did not offer Add FX");
-        pocketButton()->onClick();
-        require(juce::PopupMenu::dismissAllActiveMenus(), "Empty pocket did not show its FX selector");
-        require(!mainBusFx::find(owner->getRoutingGraph(), 101), "Opening the selector created an insert without a choice");
 
-        // Invoke the menu item's production action without driving the OS pointer or key focus.
-        const auto menu = panel.makeWetPocketMenu(100);
-        juce::PopupMenu::MenuItemIterator choices(menu);
-        std::function<void()> select;
-        while (choices.next()) {
-            const auto& item = choices.getItem();
-            if (item.text == choiceLabel && item.isEnabled) select = item.action;
-        }
-        require(bool(select), "Wet selector is missing the normal FX choice");
-        select();
+        const auto menuHas = [&](int id) {
+            const auto menu = panel.makeAddMenu();
+            juce::PopupMenu::MenuItemIterator choices(menu);
+            while (choices.next()) if (choices.getItem().itemID == id && choices.getItem().isEnabled) return true;
+            return false;
+        };
+        const auto outerPan = panel.pan;
+        const auto outerZoom = panel.zoom;
+        require(pocketButton()->getButtonText() == "Open Wet Pocket", "FX did not offer wet routing navigation");
+        pocketButton()->onClick();
+        require(panel.wetScope == parent && panel.backToRouting.isShowing(), "FX action did not open the scoped canvas");
+        require(!juce::PopupMenu::dismissAllActiveMenus(), "Entering the pocket showed an FX picker");
+        require(!panel.nodeVisible(*panel.node(parent)) && !panel.nodeVisible(*panel.node(1)), "Pocket shows outer nodes");
+        require(panel.node(wetIn) && panel.node(wetOut) && panel.inputs(*panel.node(wetIn)) == 0
+            && panel.outputPins(*panel.node(wetIn)) == 1 && panel.inputs(*panel.node(wetOut)) == 1
+            && panel.outputPins(*panel.node(wetOut)) == 0, "Wet boundaries have the wrong ports");
+        const auto opened = owner->getRoutingGraph();
+        require(legacy ? linkExists(opened, wetIn, first) && linkExists(opened, first, wetOut)
+                       : linkExists(opened, wetIn, wetOut) && !mainBusFx::find(opened, first),
+            "Opening the pocket did not preserve its previous signal path");
+        panel.undo.onClick();
+        require(!panel.wetScope && !panel.node(wetIn) && !panel.node(wetOut), "Undo of pocket creation left an invalid scope");
+        panel.redo.onClick();
+        panel.selectEffect(parent);
+        pocketButton()->onClick();
+        require(panel.wetScope == parent, "Restored pocket could not be reopened");
+
+        require(menuHas(51) && menuHas(61) && !menuHas(10) && !menuHas(41) && !menuHas(42), "Wet Add menu exposes host sources or hides normal nodes");
+        const auto addScopedNode = [&]([[maybe_unused]] int id, uint32_t added, [[maybe_unused]] const char* label) {
+            panel.add.onClick();
+#if JUCE_WINDOWS
+            juce::Component* item = nullptr;
+            auto& desktop = juce::Desktop::getInstance();
+            for (int i = 0; i < desktop.getNumComponents() && !item; ++i) {
+                auto* root = desktop.getComponent(i);
+                if (!root->isVisible() || !root->isCurrentlyModal()) continue;
+                item = findMatching<juce::Component>(*root, [label](auto& component) {
+                    const auto* handler = component.getAccessibilityHandler();
+                    return handler && handler->getTitle() == label;
+                });
+            }
+            require(item && item->getAccessibilityHandler()->getActions().invoke(juce::AccessibilityActionType::press),
+                "Scoped Add menu did not expose the normal node action");
+            const auto deadline = juce::Time::getMillisecondCounterHiRes() + 1000.0;
+            while (!panel.node(added) && juce::Time::getMillisecondCounterHiRes() < deadline) {
+                MSG message;
+                while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&message); DispatchMessage(&message);
+                }
+                if (!panel.node(added)) juce::Thread::sleep(1);
+            }
+#else
+            require(juce::PopupMenu::dismissAllActiveMenus(), "Scoped Add button did not open the normal menu");
+            panel.addNode(id, panel.toWorld(panel.canvas.getLocalBounds().getCentre().toFloat()));
+#endif
+            require(panel.node(added), "Scoped Add did not create the selected node");
+        };
+        if (!legacy) addScopedNode(51, first, "Reverb | space / ducking");
+        addScopedNode(61, second, "Stereo | width / balance / polarity");
+        const auto unwired = owner->getRoutingGraph();
+        require(unwired.links.size() == opened.links.size(), "Adding normal nodes changed pocket wiring");
+        require(panel.node(first) && panel.node(second) && !panel.canOwnWetPocket(*panel.node(second)), "Scoped FX are missing or support nested pockets");
+        auto* insertMix = dynamic_cast<juce::Slider*>(find(panel.inspector, "fx3Mix"));
+        require(insertMix && insertMix->isShowing() && insertMix->getValue() == 100, "Scoped utility did not expose its normal Mix default");
+        panel.fit.onClick();
+        const auto wire = [&](uint32_t from, uint32_t to) {
+            const auto start = panel.toScreen(panel.pinPoint(*panel.node(from), 0, true));
+            const auto end = panel.toScreen(panel.pinPoint(*panel.node(to), 0, false));
+            require(panel.canvas.getLocalBounds().toFloat().contains(start) && panel.canvas.getLocalBounds().toFloat().contains(end),
+                "Cable test pins fell outside the visible canvas");
+            panel.canvas.mouseDown(mouse(panel.canvas, start, start));
+            panel.canvas.mouseDrag(mouse(panel.canvas, end, start, true));
+            panel.canvas.mouseUp(mouse(panel.canvas, end, start, true));
+            require(linkExists(owner->getRoutingGraph(), from, to), "Scoped drag did not create the expected cable");
+        };
+        if (!legacy) { wire(wetIn, first); wire(first, wetOut); }
+        const auto beforeSplice = panel.positions.at(second);
+        dragOntoCable(panel, second, first, wetOut, true);
+        require(linkExists(owner->getRoutingGraph(), first, second) && linkExists(owner->getRoutingGraph(), second, wetOut)
+            && !linkExists(owner->getRoutingGraph(), first, wetOut), "Pocket splice did not replace its target cable");
+        panel.undo.onClick();
+        require(panel.wetScope == parent && panel.positions.at(second) == beforeSplice
+            && linkExists(owner->getRoutingGraph(), first, wetOut), "Pocket splice undo lost the cable, layout or scope");
+        panel.redo.onClick();
         const auto verifyOwned = [&](const Graph& current) {
-            const auto* child = mainBusFx::find(current, 101);
-            require(child && child->type == childType && child->wetOwner == 100, "Selected FX is not owned by its wet pocket");
-            require(current.links.size() == graph.links.size() && std::none_of(current.links.begin(), current.links.end(), [](const auto& link) {
-                return link.source == 101 || link.destination == 101;
-            }), "Wet-pocket selection created canvas cables");
+            for (const auto id : {wetIn, first, second, wetOut}) {
+                const auto* child = mainBusFx::find(current, id);
+                require(child && child->wetOwner == parent, "Pocket member has incorrect ownership");
+            }
+            require(linkExists(current, wetIn, first) && linkExists(current, first, second) && linkExists(current, second, wetOut)
+                && current.links.size() == graph.links.size() + 3, "Pocket wiring did not round-trip");
+            for (const auto& link : current.links) {
+                const auto* from = mainBusFx::find(current, link.source);
+                const auto* to = mainBusFx::find(current, link.destination);
+                require(from && to && from->wetOwner == to->wetOwner, "Cable crosses a scope boundary");
+            }
         };
         verifyOwned(owner->getRoutingGraph());
-        auto* insertMix = dynamic_cast<juce::Slider*>(find(panel, "fx2Mix"));
-        require(insertMix && insertMix->isShowing() && insertMix->getValue() == 100,
-            "Pocket did not reveal the insert's Mix at its normal default");
-        require(panel.inspectorTitle.getText() == "WET " + childLabel + " / " + parentLabel,
-            "Wet inspector did not show the insert and its owner's label");
-        require(panel.makeWetPocketMenu(101).getNumItems() == 0 && panel.makeWetPocketMenu(100).getNumItems() == 0,
-            "Selector offered a nested pocket or a second child");
-        const auto* insert = panel.node(101);
-        require(insert && panel.inputs(*insert) == 0 && panel.outputPins(*insert) == 0, "Wet insert shows cable ports");
-        require(pocketButton()->getButtonText() == "Wet pocket / " + childLabel, "Occupied pocket does not identify its child");
-        panel.inspectorToggle.onClick();
+        require(panel.displayLinks().size() == 3, "Pocket canvas displays outer cables");
+        panel.backToRouting.onClick();
+        require(!panel.wetScope && !panel.backToRouting.isShowing() && panel.pan == outerPan && panel.zoom == outerZoom
+            && !panel.nodeVisible(*panel.node(first)) && !panel.nodeVisible(*panel.node(wetOut)), "Back did not restore the outer canvas");
+        require(panel.displayLinks().size() <= graph.links.size() && menuHas(41), "Outer Routing retained scoped cables or menu");
         pocketButton()->onClick();
-        require(int(owner->getRoutingLayout().getProperty("selectedNode")) == 101
-            && panel.inspectorTitle.isShowing(), "Occupied pocket did not reopen its child's inspector");
+        panel.selectedNode = wetOut; panel.rebuildInspector();
+        require(!panel.remove.isEnabled(), "Wet Out can be deleted");
+        panel.selectedNode = second; panel.rebuildInspector();
+        panel.remove.onClick();
+        require(panel.wetScope == parent && !panel.node(second) && panel.displayLinks().size() == 1,
+            "Removing a scoped node left its cables or exited the pocket");
+        panel.undo.onClick();
+        require(panel.wetScope == parent, "Undo within a valid pocket exited it");
         verifyOwned(owner->getRoutingGraph());
         const auto file = juce::File::getCurrentWorkingDirectory().getChildFile("source/build/wet-pocket-" + juce::String(theme) + ".png");
         if (auto stream = file.createOutputStream()) {
             stream->setPosition(0); stream->truncate();
             juce::PNGImageFormat{}.writeImageToStream(panel.createComponentSnapshot(panel.getLocalBounds()), *stream);
         }
-        if (!legacy) {
-            auto copy = std::make_unique<Processor>();
-            require(copy->pasteSettings(owner->settingsText()), "Wet-pocket patch recall failed");
-            verifyOwned(copy->getRoutingGraph());
-        }
-        panel.remove.onClick();
-        require(mainBusFx::find(owner->getRoutingGraph(), 100) && !mainBusFx::find(owner->getRoutingGraph(), 101),
-            "Deleting the insert did not leave its owner intact");
-        require(pocketButton()->getButtonText() == "Wet pocket / Add FX", "Deleting an insert did not empty its owner's pocket");
-        panel.undo.onClick();
+        const auto saved = owner->settingsText();
+        require(owner->pasteSettings(saved), "Wet-pocket patch recall failed");
+        panel.refreshGraphFromOwner();
+        require(!panel.wetScope && !panel.undo.isEnabled(), "Preset recall retained a transient scope or stale undo");
         verifyOwned(owner->getRoutingGraph());
-        panel.selectedNode = 100;
+        panel.selectEffect(parent);
+        pocketButton()->onClick();
+        require(panel.displayLinks().size() == 3, "Recalled pocket did not display its wires");
+        panel.backToRouting.onClick();
         panel.remove.onClick();
         const auto erased = owner->getRoutingGraph();
-        require(!mainBusFx::find(erased, 100) && !mainBusFx::find(erased, 101), "Deleting the owner orphaned its insert");
+        for (const auto id : {parent, wetIn, first, second, wetOut})
+            require(!mainBusFx::find(erased, id), "Deleting the owner orphaned a pocket member");
+        require(std::none_of(erased.links.begin(), erased.links.end(), [&](const auto& link) {
+            return !mainBusFx::find(erased, link.source) || !mainBusFx::find(erased, link.destination);
+        }), "Deleting the owner orphaned a cable");
         panel.undo.onClick();
+        require(!panel.wetScope, "Undo of owner deletion implicitly entered the pocket");
         verifyOwned(owner->getRoutingGraph());
 
         ParameterKnob mix(*owner, "fx1Mix", "Mix", "%"); mix.setLinear(true); mix.setSize(320, 64);
@@ -393,6 +529,6 @@ inline void run() {
         slider.mouseUp(mouse(slider, to, from, true));
         require(slider.getMouseDragSensitivity() == originalSensitivity, "Drag sensitivity leaked after gesture");
     }
-    std::cout << "Granular/Delay and Delay/Reverb wet-pocket selection, ownership and 1:1 fat Mix drag passed in four themes\n";
+    std::cout << "Main and wet-pocket cable splicing, scoped routing, recall, undo, removal and 1:1 fat Mix drag passed\n";
 }
 }

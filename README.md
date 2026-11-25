@@ -10,7 +10,7 @@ HEAVEN is an open-source audio effect for **Windows x64 · CLAP and VST3**. Turn
 
 ## v1.15.0 — Effects inside effects
 
-In Routing, put an FX inside another FX’s wet pocket. Echo only the grains, add reverb to repeats, or EQ the reverb without touching its dry signal. The parent’s Mix controls the whole wet path. [How wet pockets work](docs/Getting-Started.md#shape-only-the-wet-signal).
+Open a Routing node’s wet pocket and patch a separate graph between **Wet In** and **Wet Out**. Echo only the grains, add reverb to repeats, or split the wet signal into parallel FX. To insert a disconnected node, drop it directly onto a cable. [How wet pockets work](docs/Getting-Started.md#shape-only-the-wet-signal).
 
 ### Bring your own double
 

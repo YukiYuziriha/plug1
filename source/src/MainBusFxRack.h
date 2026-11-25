@@ -153,9 +153,13 @@ inline Edit remove(const Graph& original, uint32_t id) {
     const auto it = std::find(ordered.begin(), ordered.end(), id);
     if (it == ordered.end()) { edit.error = "FX is no longer in the main bus."; return edit; }
     ordered.erase(it); wire(edit.graph, segment, ordered);
-    edit.graph.links.erase(std::remove_if(edit.graph.links.begin(), edit.graph.links.end(),
-        [=](const auto& link) { return link.destination == id; }), edit.graph.links.end());
-    edit.graph.nodes.erase(std::remove_if(edit.graph.nodes.begin(), edit.graph.nodes.end(), [=](const auto& node) { return node.id == id || node.wetOwner == id; }), edit.graph.nodes.end());
+    const auto removed = [&](const auto& node) { return node.id == id || node.wetOwner == id; };
+    edit.graph.links.erase(std::remove_if(edit.graph.links.begin(), edit.graph.links.end(), [&](const auto& link) {
+        return std::any_of(edit.graph.nodes.begin(), edit.graph.nodes.end(), [&](const auto& node) {
+            return removed(node) && (node.id == link.source || node.id == link.destination);
+        });
+    }), edit.graph.links.end());
+    edit.graph.nodes.erase(std::remove_if(edit.graph.nodes.begin(), edit.graph.nodes.end(), removed), edit.graph.nodes.end());
     edit.changed = true; return edit;
 }
 inline Edit move(const Graph& original, uint32_t id, size_t index) {

@@ -1124,9 +1124,16 @@ Processor::ProcessingRequirements Processor::processingRequirements(const Graph&
             const int slot = routingFxSlot(node.id);
             if (slot > 0) result.latencyEffects |= uint16_t(1u << slot);
         }
-        if (node.enabled && routingSupportsWetPocket(node.type))
-            for (size_t child = 0; child < graph.nodes.size(); ++child)
-                if (graph.nodes[child].wetOwner == node.id) walk(walk, child, mainWet);
+        if (node.enabled && !node.wetOwner && routingSupportsWetPocket(node.type)) {
+            const auto wetOut = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto& child) {
+                return child.wetOwner == node.id && child.type == NodeType::wetOutput;
+            });
+            const auto resultNode = wetOut != graph.nodes.end() ? wetOut
+                : std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto& child) {
+                    return child.wetOwner == node.id; // Legacy single unpatched insert.
+                });
+            if (resultNode != graph.nodes.end()) walk(walk, size_t(resultNode - graph.nodes.begin()), mainWet);
+        }
         for (const auto& link : graph.links) {
             if (link.destination != node.id) continue;
             if (!routingUsesInput(node, link.inputPin)) continue;
