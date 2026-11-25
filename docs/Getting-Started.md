@@ -10,7 +10,8 @@ host supports; installing both is optional. No installer or source build is
 required to use the supplied binaries.
 
 1. Download and extract the **Windows x64 ZIP** for the version you want from
-   [GitHub Releases](https://github.com/YukiYuziriha/plug1/releases).
+   [GitHub Releases](https://github.com/YukiYuziriha/plug1/releases). Open the
+   extracted `HEAVEN-<version>` directory to find the paths below.
 2. Close hosts that currently have HEAVEN (formerly Vocal Stack) loaded. Do not force replacement
    of a locked plugin or terminate the host to install it.
 3. Copy the appropriate item:
@@ -18,7 +19,7 @@ required to use the supplied binaries.
    | Format | From the extracted ZIP | Per-user destination |
    | --- | --- | --- |
    | CLAP | `Windows-x64/CLAP/HEAVEN by lil grass block.clap` | `%LOCALAPPDATA%\Programs\Common\CLAP\` |
-   | VST3 | **Entire** `Windows-x64/VST3/HEAVEN by lil grass block.vst3/` folder | `%LOCALAPPDATA%\Programs\Common\VST3\` |
+   | VST3 | **Entire** `Windows-x64/VST3/HEAVEN by lil grass block.vst3/` folder, including `Contents` | `%LOCALAPPDATA%\Programs\Common\VST3\` |
 
    System-wide alternatives are `C:\Program Files\Common Files\CLAP\` and
    `C:\Program Files\Common Files\VST3\`; writing there may require administrator
@@ -220,8 +221,9 @@ not recorded echoes or live grain waveforms. See the [showcase notes](showcase/R
 - **No sound:** check bypass/mutes, Lead / Stack, FX Mix and Output; inspect the
   cables into Output and any required Morph donor. At 100% Stack with no enabled
   generated voices, the voice bus is silent.
-- **Visible wiring seems inactive:** look for RESTART PENDING and re-prepare the
-  plugin. Do not assume transport stop applies a latency-changing edit.
+- **Visible wiring seems inactive:** a latency-changing edit waits for the host
+  to apply the requested reactivation. If it remains pending, re-prepare the plugin;
+  transport stop alone does not necessarily apply it.
 - **Unexpected levels/artifacts:** reduce extreme pitch/formant/drive values,
   inspect sample peaks and trim Output. Neither Gain Rider nor merge compensation
   prevents clipping or guarantees perceived loudness.

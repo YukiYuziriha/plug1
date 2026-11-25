@@ -7,10 +7,11 @@ Older parameter counts, screenshots, test totals and installation statuses belon
 to their named revisions. Local build artifacts are named for provenance but are
 not distributed here.
 
-Start with the [current overview](../README.md), [Getting Started](Getting-Started.md),
-[Building](Building.md) and [v1.11.0 release record](Release-1.11.0-Validation.md).
-For v1.11 Morph wiring and pending-topology behavior, the current guide takes precedence
-over older routing descriptions below.
+Start with the [current overview](../README.md), [Getting Started](Getting-Started.md)
+and [Building](Building.md). The [v1.11.0 release record](Release-1.11.0-Validation.md)
+provides historical context for the archived manual below. For current Morph wiring,
+latency and routing-activation behavior, Getting Started takes precedence over
+older descriptions below.
 
 ---
 

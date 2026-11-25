@@ -99,9 +99,9 @@ All 39 real-PCM/control review GIFs are preserved. Final incremental Release
 verification reported no work to do; packaged and installed CLAP/VST3 smoke passed
 through HalfCpu (6/12 logical processors). Actual DAW listening/transport is unperformed.
 
-The current revision removes the always-on 4096-sample no-Morph penalty. Latency
-is fixed per host preparation: no Morph 1344/2688 samples, declared Morph
-5440/6784. Latency-changing topology edits remain explicitly RESTART PENDING until
+At v1.11.0, the always-on 4096-sample no-Morph penalty was removed. Latency
+was fixed per host preparation: no Morph 1344/2688 samples, declared Morph
+5440/6784. In that release, latency-changing topology edits remained explicitly RESTART PENDING until
 host deactivate/reactivate; transport stop/reset cannot apply them. Pending slot
 type replacements that could initialize a still-running machine are rejected.
 Serial Morph paths exceeding the 4096-sample graph budget remain rejected. Original host indices 0–2251 are preserved;
