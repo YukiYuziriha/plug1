@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(VocalStack VERSION 1.14.0 LANGUAGES C CXX)
+project(VocalStack VERSION 1.14.1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -97,6 +97,9 @@ if(VOCALSTACK_BUILD_TESTS)
     add_executable(vocalstack_creativetail_tests tests/CreativeTailTests.cpp)
     target_include_directories(vocalstack_creativetail_tests PRIVATE src)
     add_test(NAME VocalStackCreativeTail COMMAND vocalstack_creativetail_tests)
+    # Explicit opt-in: audio assertions plus timings that need an otherwise idle machine.
+    add_executable(vocalstack_sidechainvoice_regression tests/SidechainVoiceRegressionTests.cpp)
+    target_link_libraries(vocalstack_sidechainvoice_regression PRIVATE vocalstack_dsp)
     # Informational, run separately to avoid timings polluted by parallel CTest jobs.
     add_executable(vocalstack_effects_benchmark tests/EffectsBenchmark.cpp)
     target_include_directories(vocalstack_effects_benchmark PRIVATE src)
@@ -183,6 +186,12 @@ if(VOCALSTACK_BUILD_TESTS)
         target_link_libraries(VocalStackSidechainProcessorTests PRIVATE VocalStack vocalstack_dsp
             juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
         add_test(NAME VocalStackSidechainProcessor COMMAND VocalStackSidechainProcessorTests)
+
+        juce_add_console_app(VocalStackRoutingActivationHostTests PRODUCT_NAME "Vocal Stack Routing Activation Host Tests")
+        target_sources(VocalStackRoutingActivationHostTests PRIVATE tests/RoutingActivationTests.cpp)
+        target_link_libraries(VocalStackRoutingActivationHostTests PRIVATE VocalStack vocalstack_dsp
+            juce::juce_audio_processors clap_juce_extensions juce::juce_recommended_config_flags)
+        add_test(NAME VocalStackRoutingActivationHost COMMAND VocalStackRoutingActivationHostTests)
 
         juce_add_console_app(VocalStackRoutingSplitterStateTests PRODUCT_NAME "Vocal Stack Routing Splitter State Tests")
         target_sources(VocalStackRoutingSplitterStateTests PRIVATE tests/RoutingSplitterStateTests.cpp)

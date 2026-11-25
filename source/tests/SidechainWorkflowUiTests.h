@@ -222,6 +222,9 @@ inline void sidechainBlendControls() {
             juce::PNGImageFormat{}.writeImageToStream(editor->createComponentSnapshot(editor->getLocalBounds()), *stream);
         }
     };
+    auto* version = dynamic_cast<juce::Label*>(find(*editor, "pluginVersion"));
+    require(version && version->isShowing() && version->getText() == "v" JucePlugin_VersionString,
+        "Loaded plugin version must be visible in the header");
     auto* blend = dynamic_cast<juce::Slider*>(find(*editor, "sidechainBlend"));
     auto* label = dynamic_cast<juce::Label*>(find(*editor, "sidechainBlendLabel"));
     require(blend && label && blend->isShowing() && label->isShowing(), "Sidechain Blend Stack controls missing");

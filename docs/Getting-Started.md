@@ -5,7 +5,7 @@
 
 ## Install on Windows x64
 
-This guide covers **HEAVEN by lil grass block v1.14.0**. Choose the format your
+This guide covers **HEAVEN by lil grass block v1.14.1**. Choose the format your
 host supports; installing both is optional. No installer or source build is
 required to use the supplied binaries.
 
@@ -226,7 +226,7 @@ not recorded echoes or live grain waveforms. See the [showcase notes](showcase/R
   inspect sample peaks and trim Output. Neither Gain Rider nor merge compensation
   prevents clipping or guarantees perceived loudness.
 - **Host-specific problems:** report the host and plugin format. Older release
-  validation records apply only to their named builds, not to v1.14.0 or to every host.
+  validation records apply only to their named builds, not to v1.14.1 or to every host.
 
 [Open an issue](https://github.com/YukiYuziriha/plug1/issues) with version, format,
 host/Windows versions, sample rate, block size and minimal reproduction steps.

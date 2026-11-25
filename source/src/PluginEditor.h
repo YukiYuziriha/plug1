@@ -92,7 +92,7 @@ private:
     std::array<ModulationSlider, knobParameterIds.size()> knobs;
     ParameterKnob globalMix;
     ModulationSlider sidechainBlend;
-    juce::Label assignmentBanner, sidechainLabel, gainRiderReadout;
+    juce::Label assignmentBanner, sidechainLabel, gainRiderReadout, versionLabel;
     juce::Component gainRiderControls;
     bool sidechainInsertionChecked = false;
     double nextSidechainPollMs = 0.0;

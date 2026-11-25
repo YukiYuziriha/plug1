@@ -1030,19 +1030,25 @@ void Processor::setAdvancedVisible(bool visible) {
 }
 
 void Processor::resetParameters() {
-    const std::lock_guard<std::recursive_mutex> lock(controlMutex);
-    for (const auto* id : parameterIds) {
-        auto* parameter = parameters.getParameter(id);
-        parameter->beginChangeGesture();
-        parameter->setValueNotifyingHost(parameter->getDefaultValue());
-        parameter->endChangeGesture();
+    bool requestActivation = false;
+    {
+        const std::lock_guard<std::recursive_mutex> lock(controlMutex);
+        for (const auto* id : parameterIds) {
+            auto* parameter = parameters.getParameter(id);
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost(parameter->getDefaultValue());
+            parameter->endChangeGesture();
+        }
+        routingLayout = juce::ValueTree("RoutingLayout");
+        juce::String error;
+        setModulationState({}, error);
+        endModulationAssignment();
+        setRoutingGraphLocked(defaultGraph(false, true), error);
+        advancedInitialized.store(false, std::memory_order_relaxed);
+        requestActivation = restartPending;
     }
-    routingLayout = juce::ValueTree("RoutingLayout");
-    juce::String error;
-    setModulationState({}, error);
-    endModulationAssignment();
-    setRoutingGraphLocked(defaultGraph(false, true), error);
-    advancedInitialized.store(false, std::memory_order_relaxed);
+    if (requestActivation)
+        updateHostDisplay(ChangeDetails{}.withLatencyChanged(true));
 }
 
 void Processor::timerCallback() {
@@ -1471,6 +1477,7 @@ void Processor::reconnectVoiceLocked(size_t slot) {
 }
 
 bool Processor::addVoice() {
+    bool requestActivation = false;
     {
         const std::lock_guard<std::recursive_mutex> lock(controlMutex);
         size_t slot = 0;
@@ -1482,13 +1489,15 @@ bool Processor::addVoice() {
         juce::String error;
         setRoutingGraphLocked(routingDraft, error);
         advancedInitialized.store(true, std::memory_order_relaxed);
+        requestActivation = restartPending;
     }
-    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true).withLatencyChanged(requestActivation));
     return true;
 }
 
 void Processor::removeVoice(size_t slot) {
     if (slot >= 8) return;
+    bool requestActivation = false;
     {
         const std::lock_guard<std::recursive_mutex> lock(controlMutex);
         setParameterValue(voicePresentParameterId(slot), 0);
@@ -1502,8 +1511,9 @@ void Processor::removeVoice(size_t slot) {
         juce::String error;
         setRoutingGraphLocked(routingDraft, error);
         advancedInitialized.store(true, std::memory_order_relaxed);
+        requestActivation = restartPending;
     }
-    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
+    updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true).withLatencyChanged(requestActivation));
 }
 
 std::array<VoiceSnapshot, 8> Processor::getVoiceSnapshots() const {

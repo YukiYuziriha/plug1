@@ -120,6 +120,12 @@ Editor::Editor(Processor& processor)
     getProperties().set(vocalstackAnimationTimeProperty, 0.0);
     addAndMakeVisible(stackViewport);
     stackViewport.setComponentID("stackViewport");
+    versionLabel.setComponentID("pluginVersion");
+    versionLabel.setText("v" JucePlugin_VersionString, dontSendNotification);
+    versionLabel.setJustificationType(Justification::centred);
+    versionLabel.setInterceptsMouseClicks(false, false);
+    versionLabel.setTooltip("Version of the plugin binary loaded in this instance");
+    layoutCanvas.addAndMakeVisible(versionLabel);
     layoutCanvas.setOpaque(true); // Every skin paints its full canvas background.
     stackViewport.setViewedComponent(&layoutCanvas, false);
     stackViewport.setScrollBarsShown(true, false);
@@ -346,6 +352,8 @@ void Editor::applyTheme() {
     advancedPanel.setNeon(style.flash);
     mainBusFxRack.setNeon(style.flash);
     routingPanel.setNeon(style.flash);
+    versionLabel.setFont(themeFont(*this, 11.5f));
+    versionLabel.setColour(Label::textColourId, palette.text);
     const auto foreground = palette.text;
     const auto muted = palette.muted;
     theme.setButtonText(selectedTheme == Theme::grass ? "SKIN / GRASS"
@@ -422,6 +430,7 @@ void Editor::resized() {
     switches[3].setBounds(right - 85, 25, 85, 28);
     globalMix.setBounds(right - 185, 10, 90, 54);
     theme.setBounds(right - 332, 25, 138, 28);
+    versionLabel.setBounds(right - 332, 53, 138, 13);
     reset.setBounds(24, 304, 72, 28);
     copy.setBounds(106, 304, 116, 28);
     paste.setBounds(232, 304, 72, 28);

@@ -1,13 +1,13 @@
 {
-  "base_commit_not_producing_revision": "85ef0237592d66e6dabb575a7678246cb4983224",
+  "base_commit_not_producing_revision": "00c0decaca862d95a785175340e58081b958a9c7",
   "build_directory": "source/build",
   "build_exit_code": 0,
-  "build_log": "source/build/release-build.log",
-  "build_log_sha256": "0dad0a5192228a9f45ed10a2075bb37662ab0992c93f7b721a7f2a92054fbbd8",
-  "observed_utc": "2026-11-25T07:24:17.633944+00:00",
+  "build_log": "source/build/release-1.14.1-final-build.log",
+  "build_log_sha256": "f965418a9c18c181c548bd7c897f93582a8687f051e587e751d8530022f5fe8b",
+  "observed_utc": "2026-11-25T08:13:07.001517+00:00",
   "packaged_binaries_sha256": {
-    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "5c8a2a9ef36ed37c1a2c611e36d5763414479b8dda504926b122cf2dc6f40bdf",
-    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "95e5657aa04b26796382da5de4a1a2dca76351a114deb12d3ef3cf39059b8376"
+    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "3bbfa01ba002031dd0942c041eb190848a3f83ee34a87d9558de911e00698832",
+    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "c2f8c33956e046e5e61f8cd2a574eea94f28fc5cb6b1693dd7cad7f4b0498360"
   },
   "source_inputs_sha256": {
     "ThirdParty/CLAP-Helpers.txt": "da7cee3f00825d45db7cad8e0c65abf150faad60f4acb0ab46137887ba536abe",
@@ -51,7 +51,7 @@
     "ThirdParty/Vital/src/synthesis/framework/utils.h": "03ab20657db95414fe8f4710413921cd0af6bf9cc06dc081d9ec054c4c5ebd74",
     "ThirdParty/Vital/src/synthesis/lookups/lookup_table.h": "f9a517b8a4443722f3b48557ac2178a204cec1f4f910525e7e313d956e882de4",
     "ThirdParty/Vital/src/synthesis/lookups/memory.h": "a74ac243b4b1a6c2b114c203ef247eb018b9bef61eec7d30d28eaf4343935b97",
-    "source/CMakeLists.txt": "41faf5debcc7bce70e55f5b5d7915452f871a937eae54d3b468f0aa54c284ee0",
+    "source/CMakeLists.txt": "c7a732523dcf1a0282d2ae3cb3bb54aed5aef1f8796c92891798ce4ef26cc0d6",
     "source/assets/OxaniumMedium.ttf": "d0676de4894cd22591b4bb538dae5b8e06c44e0fb943300a7cff3945fe643689",
     "source/assets/OxaniumSemiBold.ttf": "e2d77ec4ee67b0152166adf5d6393360550a012c2066e0d4589053e14a733cdc",
     "source/assets/PixelifySans.ttf": "9ba86cd010a4de309d263ceff8e8044092c9db7efda869620cb9ff1c4389e8a5",
@@ -86,9 +86,9 @@
     "source/src/ModulationUI.h": "f5dd6902e0bb6b33f34c7017f182792a168016a6d7dabd0c0310f10f77727cdd",
     "source/src/Multiband.h": "ec956049c3abbd502f09f9ed23230721e66976ce310483b5095310e7d4969d99",
     "source/src/ParameterKnob.h": "a04500e833f0b032de1622619c43f0353758924366185b4a7047d6c302d6366a",
-    "source/src/PluginEditor.cpp": "0223c7a58a0b9cc40bc56665c1ef50b119942dcd245f331ac092e9eef1551a2e",
-    "source/src/PluginEditor.h": "3d3980a529a4ad28793b3c8d8251b0c79493eb982b7e2376c0362381e0570c0a",
-    "source/src/PluginProcessor.cpp": "b7b0d4f096824cd035a2771a95979356c7f8cce415aef771dfcb0490752eb38a",
+    "source/src/PluginEditor.cpp": "358a597e0b12f4dd68575a90837a96b7a31544493ebfe7afd4f96673f543e5eb",
+    "source/src/PluginEditor.h": "bbe2b69ea26a5a113bac19b43bf3a7d39c594a8a1aa69ae545ce21fc96d33628",
+    "source/src/PluginProcessor.cpp": "fdf553f2703b3e37dd32df26cf3d766edf1848c65f83c814eaeb5f2ccd96cbcf",
     "source/src/PluginProcessor.h": "446edc6ea7b4e528489c5f52e40414ec57a670f0b1876cfa7e834ba308673884",
     "source/src/PresetManager.h": "8279a6d7224e7d80be1cef50768223236f37b8879085329aa0cf2938ed32b519",
     "source/src/ProcessorRoutingState.h": "04b6a0795bec7fa12280a927d8abc1af7a5d5cb1fb3a29a18765201924f4086d",
@@ -114,5 +114,5 @@
     "source/src/Waveshaper.h": "2e98576a2e9bb38864a7675629fce399b51cf3166daa840cb6fe385b17f47050"
   },
   "source_mode": "uncommitted-working-tree",
-  "version": "1.14.0"
+  "version": "1.14.1"
 }
