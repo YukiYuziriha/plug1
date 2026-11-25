@@ -1,6 +1,19 @@
 # Vocal Stack: Current roadmap and release history
 
+## Planned — shared spatial DSP, Spatial EQ and Signal Placer
+
+Design notes only; this roadmap is not authorization to implement these tools. See [spatial audio design notes](docs/Spatial-Audio-Plan.md) for the fuller concept.
+
+- [ ] Build a lightweight, reusable spatial DSP engine independent of EQ and UI: decorrelation/width, short early reflections, damping of generated space, transient-aware ducking and low-frequency protection. This is a clean-room implementation inspired by the reference description, not a claim to reproduce proprietary internals.
+- [ ] **Spatial EQ:** prove one frequency-local spatial band with a Depth knob before expanding to eight bands. Explore distinct boost/cut behavior; generate width even from mono input. Add generated space in the side signal and verify that mono fold-down preserves the conventional EQ response.
+- [ ] **Signal Placer (working name):** a separate tool using the same spatial engine. Collapse incoming mono/stereo audio to 100% mono, then place that source into a new stereo scene with direct-source positioning, width and distance. Define the downmix policy explicitly because anti-phase input can cancel. Panning, width and perceived distance are distinct controls; the placer's mono behavior needs its own acceptance criteria.
+- [ ] **UI later:** Signal Placer uses a top-down space with a draggable source-position dot. Left/right controls source position; near/far coordinates perceived distance cues. Width remains separately controllable. Spatial EQ may reuse this top-down view as an optional secondary view, not its main UI. Do not build the 3D UI before proving the DSP; begin with per-band Depth knobs.
+- [ ] Keep reusable DSP modules composable for related and experimental effects without building a speculative general-purpose framework. Use preallocated bounded processing, smoothed controls and inactive-branch bypass; benchmark CPU rather than assuming the reference plugin's slowdown is DSP-related.
+- [ ] Validate mono nulls, frequency localization, reflection timing, transient preservation, bass leakage, automation stability and CPU across sample rates/block sizes before visual polish. First milestone is one convincing spatial band, not the full EQ/placer/UI feature set.
+
 ## Planned — automatic pitch correction with transparent analysis caching (after UI polish)
+
+See [the dedicated Auto-Tune research and implementation-preparation plan](plan_autotune.md). It records the desired hard-tune artifacts, comparison against the installed Antares Auto-Tune Pro, selection of a complete compatible open-source tuner through a thin adapter, and retained per-instance analysis to reduce CPU across five parallel tuners. Correction/shifting remain live; this is not a corrected-audio cache. No donor or sonic comparison is validated yet, and the advanced-feature authorization restrictions below still apply.
 
 **Scope and authorization:** Do not start implementing the tuner merely because this roadmap exists. A request to implement automatic pitch correction / Auto-Tune authorizes the core requirements ONLY. Do NOT implement any advanced feature below unless the user separately and explicitly requests that specific feature (or explicitly authorizes the advanced feature set). A general request to implement Auto-Tune does not authorize advanced features. Core delivery is complete without them.
 
