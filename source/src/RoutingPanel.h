@@ -21,8 +21,11 @@ inline juce::PathStrokeType stroke(bool isSelected = false) {
 }
 }
 
+namespace workflowUiTests { inline void run(); }
+
 // Header-only presentation. The processor owns the accepted graph and publication.
 class RoutingPanel final : public juce::Component, private juce::Timer {
+    friend void workflowUiTests::run();
     PixelLookAndFeel routingStyle;
     struct EditState {
         Graph graph;
@@ -63,11 +66,10 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
     public:
         NodeCard(RoutingPanel& p, const RoutingNode& n) : panel(p), model(n) {
             const int slot = panel.fxSlot(n);
-            if (n.type == NodeType::granular) {
-                wetPocket.setButtonText("Wet pocket / Delay");
-                wetPocket.setComponentID("granularWetPocket");
-                wetPocket.setTooltip("Add or edit Delay inside Granular's wet signal. Granular Mix also controls its echoes.");
-                wetPocket.onClick = [this] { panel.openWetPocket(model.id); };
+            if (panel.canOwnWetPocket(n)) {
+                wetPocket.setComponentID("wetPocket");
+                wetPocket.setTooltip("Add or open one FX inside this machine's wet signal, before its Mix.");
+                wetPocket.onClick = [this] { panel.openWetPocket(model.id, wetPocket); };
                 addAndMakeVisible(wetPocket);
             }
             if (isEffect(n.type) && slot >= 0) {
@@ -186,6 +188,8 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             if (wheel.deltaY != 0) panel.zoomAt(e.getEventRelativeTo(&panel.canvas).position, wheel.deltaY > 0 ? 1.12f : 1 / 1.12f);
         }
         void refresh(const RoutingNode& n) {
+            if (wetPocket.getParentComponent())
+                wetPocket.setButtonText(panel.wetPocketLabel(n.id));
             if (n.type == NodeType::sidechainBlend) {
                 auto& knob = *knobs.front();
                 const bool available = panel.sidechainAvailable();
@@ -199,7 +203,10 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             if (localMix.getParentComponent() && !localMix.isMouseButtonDown(true))
                 localMix.setValue(n.mix * 100, juce::dontSendNotification);
         }
-        bool matches(const RoutingNode& n) const { return model.type == n.type && model.voiceSlot == n.voiceSlot && model.mainControls == n.mainControls; }
+        bool matches(const RoutingNode& n) const {
+            return model.type == n.type && model.voiceSlot == n.voiceSlot
+                && model.mainControls == n.mainControls && model.wetOwner == n.wetOwner;
+        }
     private:
         void addKnob(const juce::String& id, const juce::String& label, const char* unit) {
             knobs.push_back(std::make_unique<ParameterKnob>(panel.owner, id, label, unit));
@@ -407,7 +414,7 @@ public:
         zoomIn.onClick = [this] { zoomAt(canvas.getLocalBounds().getCentre().toFloat(), 1.2f); };
         canvas.setName("Routing node canvas");
         add.setTooltip("Add an effect, mixer, splitter, sidechain blend, or missing source");
-        remove.setTooltip("Delete the selected node and its cables. Output is retained");
+        remove.setTooltip("Delete the selected node, its cables, and any FX in its wet pocket. Output is retained.");
         bypass.setTooltip("Bypass the selected FX through its host parameter. Bypassed Multiband passes full-band audio on port 0 only.");
         graph = owner.getRoutingGraph();
         loadLayout(owner.getRoutingLayout());
@@ -760,9 +767,16 @@ private:
         return juce::Colours::grey;
     }
     juce::String title(const RoutingNode& n) const {
+        if (!n.wetOwner || names.count(n.id)) return nodeLabel(n);
+        return "WET " + nodeLabel(n) + " / " + wetOwnerLabel(n.wetOwner);
+    }
+    juce::String wetOwnerLabel(uint32_t id) const {
+        if (const auto* parent = node(id)) return nodeLabel(*parent);
+        return "Node " + juce::String(id);
+    }
+    juce::String nodeLabel(const RoutingNode& n) const {
         if (n.type == NodeType::sidechain) return sidechainLabel();
         if (const auto alias = names.find(n.id); alias != names.end()) return alias->second;
-        if (n.wetOwner) return "WET DELAY / GRANULAR " + juce::String(routingFxSlot(n.wetOwner));
         switch (n.type) {
         case NodeType::spectralMorph: return "SPECTRAL MORPH " + juce::String(routingFxSlot(n.id));
         case NodeType::lead: return "LEAD";
@@ -798,6 +812,9 @@ private:
     static bool isEffect(NodeType type) {
         return type == NodeType::chorale || type == NodeType::waveshaper
             || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
+    }
+    static bool canOwnWetPocket(const RoutingNode& n) {
+        return !n.wetOwner && routingSupportsWetPocket(n.type);
     }
     static int inputs(const RoutingNode& n) {
         return n.wetOwner ? 0 : routingInputCount(n.type);
@@ -851,7 +868,8 @@ private:
         const auto* mix = node(11); const auto* fx = node(12); const auto* out = node(13);
         if (!mix || mix->type != NodeType::mix || !mix->mainControls
             || !fx || fx->type != NodeType::chorale || !fx->mainControls
-            || effectEnabled(*fx) || isExpanded(*fx) || !out || out->type != NodeType::output) return {-1, -1};
+            || effectEnabled(*fx) || isExpanded(*fx) || wetPocketChild(fx->id)
+            || !out || out->type != NodeType::output) return {-1, -1};
         int incoming = -1, outgoing = -1, touching = 0;
         for (size_t i = 0; i < graph.links.size(); ++i) {
             const auto& l = graph.links[i];
@@ -866,7 +884,7 @@ private:
         if (n.type == NodeType::sum) return false;
         if (n.type == NodeType::voice) return voicePresent(n.voiceSlot);
         if (n.id == 12 && n.type == NodeType::chorale && n.mainControls && !effectEnabled(n)) {
-            if (isExpanded(n)) return true;
+            if (isExpanded(n) || wetPocketChild(n.id)) return true;
             if (foldedChain().first >= 0) return false;
             return std::any_of(graph.links.begin(), graph.links.end(), [](const auto& l) { return l.source == 12 || l.destination == 12; });
         }
@@ -971,6 +989,11 @@ private:
         return float(juce::jmax(64, 40 + rows * 22) + (isEffect(n.type) && !effectEnabled(n) ? 18 : 0) + 6);
     }
     juce::Point<int> bodySize(const RoutingNode& n) const {
+        auto size = bodyControlSize(n);
+        if (canOwnWetPocket(n)) size.y += 30;
+        return size;
+    }
+    static juce::Point<int> bodyControlSize(const RoutingNode& n) {
         if (n.type == NodeType::voice || n.type == NodeType::lead) return {400, 258};
         if (n.type == NodeType::spectralMorph) return {500, 310};
         if (isCreativeEffect(n.type)) return {500, 470};
@@ -1878,85 +1901,105 @@ private:
         for (const auto& child : graph.nodes) if (child.wetOwner == parent) return child.id;
         return 0;
     }
-    void openWetPocket(uint32_t parent) {
+    juce::String wetPocketLabel(uint32_t parent) const {
+        if (const auto* child = node(wetPocketChild(parent))) return "Wet pocket / " + nodeLabel(*child);
+        return "Wet pocket / Add FX";
+    }
+    juce::PopupMenu makeWetPocketMenu(uint32_t parent) {
+        juce::PopupMenu menu; menu.setLookAndFeel(&getLookAndFeel());
         const auto* source = node(parent);
-        if (!source || source->type != NodeType::granular) return;
+        if (!source || !canOwnWetPocket(*source) || wetPocketChild(parent)) return menu;
+        const auto revision = stateRevision();
+        juce::Component::SafePointer<RoutingPanel> safe(this);
+        menu.addSectionHeader("Wet pocket / " + nodeLabel(*source));
+        appendFxChoices(menu, fxCapacity(), [safe, parent, revision](int kind) {
+            if (safe && safe->stateRevision() == revision) safe->addNode(kind, {}, parent);
+        });
+        return menu;
+    }
+    void openWetPocket(uint32_t parent, juce::Component& target, bool atCursor = false) {
+        const auto* source = node(parent);
+        if (!source || !canOwnWetPocket(*source)) return;
         if (const auto child = wetPocketChild(parent)) {
             selectedNode = child; selectedLink = -1; inspectorVisible = true;
-            rebuildInspector(); resized(); canvas.repaint(); return;
+            rebuildInspector(); resized(); saveLayout(); canvas.repaint(); return;
         }
-        const auto id = nextFxNodeId();
-        if (!id || graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)
-            || std::count_if(graph.nodes.begin(), graph.nodes.end(), [](const auto& n) { return isEffect(n.type); }) >= 16) {
-            error = "No unused FX automation slot or node capacity for a wet Delay"; showStatus(); return;
+        if (!fxCapacity()) {
+            error = "No unused FX automation slot or node capacity for a wet insert"; showStatus(); return;
         }
-        const auto parentBounds = nodeBounds(*source);
+        const auto options = juce::PopupMenu::Options().withTargetComponent(target);
+        makeWetPocketMenu(parent).showMenuAsync(atCursor ? options.withMousePosition() : options);
+    }
+    juce::Point<float> wetPocketPosition(const RoutingNode& parent) const {
         std::vector<juce::Rectangle<float>> obstacles;
         for (const auto& existing : graph.nodes) if (nodeVisible(existing)) obstacles.push_back(nodeBounds(existing));
-        const auto anchor = parentBounds.getBottomLeft() + juce::Point<float>(0, 16);
-        const auto placement = packedPosition({anchor.x, anchor.y, 190, 64}, obstacles,
+        const auto anchor = nodeBounds(parent).getBottomLeft() + juce::Point<float>(0, 16);
+        return packedPosition({anchor.x, anchor.y, 190, 64}, obstacles,
             0, float(canvas.getWidth()) / zoom, anchor, true);
-        remember();
-        RoutingNode child; child.id = id; child.type = NodeType::delay; child.mix = 1.f; child.wetOwner = parent;
-        graph.nodes.push_back(child);
-        positions[id] = compactPositions[id] = placement;
-        expanded[id] = false; selectedNode = id; selectedLink = -1; inspectorVisible = true;
-        if (publish()) {
-            const auto slot = size_t(routingFxSlot(id));
-            setParameter(fxParameterId(slot, "On"), 1);
-            setParameter(fxParameterId(slot, "Mix"), 100);
-            for (size_t p = 0; p < creativeParameterCount; ++p)
-                setParameter(parameterIds[creativeParameterIndex(slot, p)], child.creative.values[p]);
+    }
+    struct FxChoice { int id; NodeType type; const char* label; };
+    static constexpr FxChoice fxChoices[] = {
+        {1, NodeType::chorale, "Chorale"},
+        {4, NodeType::waveshaper, "Waveshaper"},
+        {5, NodeType::equalizer, "EQ8"},
+        {6, NodeType::crossover, "Multiband | 2 / 3 bands"},
+        {50, NodeType::delay, "Delay | stereo / tempo sync"},
+        {51, NodeType::reverb, "Reverb | space / ducking"},
+        {52, NodeType::compressor, "Compressor | stereo dynamics"},
+        {53, NodeType::bitcrusher, "Bitcrusher | digital texture"},
+        {54, NodeType::granular, "Granular | capture / pitch"},
+        {58, NodeType::vocalGlitch, "Vocal Glitch | grab / fire"},
+        {57, NodeType::spectralMorph, "Spectral Morph | MAIN / DONOR"},
+        {55, NodeType::convolution, "Convolution | synthetic IR spaces"},
+        {56, NodeType::saturator, "Saturator | warm / 2x ADAA"},
+        {60, NodeType::gain, "Gain | level / mute"},
+        {61, NodeType::stereo, "Stereo | width / balance / polarity"},
+        {62, NodeType::gate, "Gate | downward expansion"},
+        {63, NodeType::xpFilter, "XP Filter | cascaded SVF"},
+        {64, NodeType::synthFilter, "Synth Filter | ladder / comb / formant"},
+    };
+    int effectCount() const {
+        return int(std::count_if(graph.nodes.begin(), graph.nodes.end(), [](const auto& n) { return isEffect(n.type); }));
+    }
+    bool fxCapacity() const {
+        return graph.nodes.size() < size_t(RoutingExecutor::maxNodes) && effectCount() < 16 && nextFxNodeId();
+    }
+    static void appendFxChoices(juce::PopupMenu& menu, bool enabled, const std::function<void(int)>& wetSelect = {}) {
+        for (const auto& choice : fxChoices) {
+            if (choice.type == NodeType::delay || choice.type == NodeType::gain) menu.addSeparator();
+            if (choice.type == NodeType::gain) menu.addSectionHeader("Utilities / filters");
+            if (!wetSelect) menu.addItem(choice.id, choice.label, enabled);
+            else if (routingSupportsWetInsert(choice.type))
+                menu.addItem(choice.label, enabled, false, [wetSelect, id = choice.id] { wetSelect(id); });
         }
-        rebuildInspector(); resized();
     }
     void showNodeMenu() {
         juce::PopupMenu menu; menu.setLookAndFeel(&getLookAndFeel());
         const auto* n = node(selectedNode);
         menu.addItem(1, "Delete node", n && n->type != NodeType::output);
         menu.addItem(2, "Toggle FX bypass", n && isEffect(n->type));
-        if (n && n->type == NodeType::granular)
-            menu.addItem(4, wetPocketChild(n->id) ? "Open wet pocket / Delay" : "Wet pocket / Add Delay");
+        if (n && canOwnWetPocket(*n)) menu.addItem(4, wetPocketLabel(n->id));
         menu.addItem(3, "Duplicate Dry / Wet", n && n->type == NodeType::mix && !n->mainControls
                      && graph.nodes.size() < size_t(RoutingExecutor::maxNodes));
         juce::Component::SafePointer<RoutingPanel> safe(this);
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&canvas).withMousePosition(), [safe](int result) {
-            if (!safe) return;
+        const auto target = selectedNode;
+        const auto revision = stateRevision();
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&canvas).withMousePosition(), [safe, target, revision](int result) {
+            if (!safe || safe->selectedNode != target || safe->stateRevision() != revision) return;
             if (result == 1) safe->deleteSelection(); else if (result == 2) safe->toggleBypass();
-                        else if (result == 3) safe->duplicateDryWet();
-                        else if (result == 4) safe->openWetPocket(safe->selectedNode);
+            else if (result == 3) safe->duplicateDryWet();
+            else if (result == 4) safe->openWetPocket(target, safe->canvas, true);
         });
     }
     void showAddMenu(bool atCursor) {
-            const auto insertion = toWorld(atCursor ? pointer : canvas.getLocalBounds().getCentre().toFloat());
+        const auto insertion = toWorld(atCursor ? pointer : canvas.getLocalBounds().getCentre().toFloat());
         juce::PopupMenu menu; menu.setLookAndFeel(&getLookAndFeel());
-        int effects = 0; for (const auto& n : graph.nodes) if (isEffect(n.type)) ++effects;
+        const int effects = effectCount();
         const bool room = graph.nodes.size() < size_t(RoutingExecutor::maxNodes);
         const bool freeFxSlot = nextFxNodeId() != 0;
-        const bool effectRoom = room && effects < 16 && freeFxSlot;
         menu.addSectionHeader(freeFxSlot ? "Independent FX | 15 automation slots"
                                         : "No unused FX slots | deleted slots cannot be reused");
-        menu.addItem(1, "Chorale", effectRoom);
-        menu.addItem(4, "Waveshaper", effectRoom);
-        menu.addItem(5, "EQ8", effectRoom);
-        menu.addItem(6, "Multiband | 2 / 3 bands", effectRoom);
-        menu.addSeparator();
-        menu.addItem(50, "Delay | stereo / tempo sync", effectRoom);
-        menu.addItem(51, "Reverb | space / ducking", effectRoom);
-        menu.addItem(52, "Compressor | stereo dynamics", effectRoom);
-        menu.addItem(53, "Bitcrusher | digital texture", effectRoom);
-        menu.addItem(54, "Granular | capture / pitch", effectRoom);
-        menu.addItem(58, "Vocal Glitch | grab / fire", effectRoom);
-        menu.addItem(57, "Spectral Morph | MAIN / DONOR", effectRoom);
-                menu.addItem(55, "Convolution | synthetic IR spaces", effectRoom);
-                menu.addItem(56, "Saturator | warm / 2x ADAA", effectRoom);
-        menu.addSeparator();
-        menu.addSectionHeader("Utilities / filters");
-        menu.addItem(60, "Gain | level / mute", effectRoom);
-        menu.addItem(61, "Stereo | width / balance / polarity", effectRoom);
-        menu.addItem(62, "Gate | downward expansion", effectRoom);
-        menu.addItem(63, "XP Filter | cascaded SVF", effectRoom);
-        menu.addItem(64, "Synth Filter | ladder / comb / formant", effectRoom);
+        appendFxChoices(menu, room && effects < 16 && freeFxSlot);
         menu.addSeparator();
         menu.addItem(3, "Dry / Wet Mix", room);
         menu.addItem(300, "Splitter | full-level A / B duplicates", room);
@@ -2009,39 +2052,30 @@ private:
         }
         selectSidechainBlend();
     }
-    void addNode(int kind, juce::Point<float> insertion) {
-        if (kind == 42 || kind == 43) { addSidechainBlend(kind == 43); return; }
+    static float newFxMix(NodeType type) { return type == NodeType::chorale ? .25f : 1.f; }
+    void addNode(int kind, juce::Point<float> insertion, uint32_t wetParent = 0) {
+        const auto* choice = std::find_if(std::begin(fxChoices), std::end(fxChoices), [kind](const auto& fx) { return fx.id == kind; });
+        if (wetParent) {
+            const auto* parent = node(wetParent);
+            if (!parent || !canOwnWetPocket(*parent) || wetPocketChild(wetParent)
+                || choice == std::end(fxChoices) || !routingSupportsWetInsert(choice->type)) return;
+            if (!fxCapacity()) {
+                error = "No unused FX automation slot or node capacity for a wet insert"; showStatus(); return;
+            }
+            insertion = wetPocketPosition(*parent);
+        } else if (kind == 42 || kind == 43) { addSidechainBlend(kind == 43); return; }
         if (graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
         RoutingNode n;
-        if (kind == 1 || kind == 4 || kind == 5 || kind == 6 || (kind >= 50 && kind <= 58) || (kind >= 60 && kind <= 64)) {
-            switch (kind) {
-                case 1: n.type = NodeType::chorale; break;
-                case 4: n.type = NodeType::waveshaper; break;
-                case 5: n.type = NodeType::equalizer; break;
-                case 6: n.type = NodeType::crossover; break;
-                case 50: n.type = NodeType::delay; break;
-                case 51: n.type = NodeType::reverb; break;
-                case 52: n.type = NodeType::compressor; break;
-                case 53: n.type = NodeType::bitcrusher; break;
-                case 54: n.type = NodeType::granular; break;
-                case 58: n.type = NodeType::vocalGlitch; n.mix = 1.f; break;
-                case 57: n.type = NodeType::spectralMorph; n.mix = 1.f; break;
-                                case 55: n.type = NodeType::convolution; n.mix = .25f; break;
-                                case 56: n.type = NodeType::saturator; n.mix = 1.f; break;
-                                case 60: n.type = NodeType::gain; break;
-                                case 61: n.type = NodeType::stereo; break;
-                                case 62: n.type = NodeType::gate; break;
-                                case 63: n.type = NodeType::xpFilter; break;
-                                case 64: n.type = NodeType::synthFilter; break;
-            }
+        if (choice != std::end(fxChoices)) {
+            n.type = choice->type;
             n.id = nextFxNodeId();
             if (!n.id) {
                 error = "No unused FX automation slots remain. Deleting FX does not free their slots; Undo can restore an original FX.";
                 showStatus(); return;
             }
-            int effects = 0;
-            for (const auto& existing : graph.nodes) if (isEffect(existing.type)) ++effects;
-            if (effects >= 16) return;
+            if (effectCount() >= 16) return;
+            n.wetOwner = wetParent;
+            n.mix = newFxMix(n.type);
         } else if (kind == 41) {
             for (const auto& existing : graph.nodes) if (existing.type == NodeType::sidechain) return;
             if (node(sidechainNodeId)) return;
@@ -2068,7 +2102,7 @@ private:
         if (node(n.id)) return;
         uint32_t automaticDonor = 0;
         bool createDonor = false;
-        if (n.type == NodeType::spectralMorph) {
+        if (n.type == NodeType::spectralMorph && !wetParent) {
             for (const auto& source : graph.nodes) if (source.type == NodeType::sidechain) automaticDonor = source.id;
             createDonor = automaticDonor == 0;
             if (createDonor) automaticDonor = 14;
@@ -2080,11 +2114,11 @@ private:
                 error = "SIDECHAIN already has a destination. Use a Splitter in Routing to share it."; showStatus(); return;
             }
         }
-        if (isUtilityEffect(n.type)) n.mix = 1.0f;
         remember();
         positions[n.id] = insertion; compactPositions[n.id] = insertion;
         expandedPositions.erase(n.id); expanded.erase(n.id);
         graph.nodes.push_back(n); selectedNode = n.id; selectedLink = -1;
+        if (wetParent) inspectorVisible = true;
         if (createDonor) {
             graph.nodes.push_back({automaticDonor, NodeType::sidechain});
             positions[automaticDonor] = insertion.translated(-230, 100);
@@ -2094,7 +2128,7 @@ private:
             // Initialize a new machine only after its graph is accepted.
             const auto slot = size_t(routingFxSlot(n.id));
             setParameter(fxParameterId(slot, "On"), 1);
-            setParameter(fxParameterId(slot, "Mix"), n.type == NodeType::chorale ? 25.0f : 100.0f);
+            setParameter(fxParameterId(slot, "Mix"), n.mix * 100.0f);
             setParameter(fxParameterId(slot, "Motion"), 35);
             for (size_t field = 0; field < creativeParameterCount; ++field)
                 setParameter(parameterIds[creativeParameterIndex(slot, field)], n.creative.values[field]);
@@ -2107,6 +2141,7 @@ private:
             }
         }
         rebuildInspector();
+        if (wetParent) resized();
     }
     void rebuildInspector() {
         validateSelection();
@@ -2137,8 +2172,7 @@ private:
         juce::String info = "Select a machine to edit its controls.\n\nInputs accept multiple voices with automatic merge compensation. Each output (each Multiband band) has one outgoing cable. Dragging it to another input replaces its existing links; dropping on empty space disconnects them. Saved fanout remains until that output is edited. A click without dragging leaves wiring unchanged.\n\nDrag an occupied input end to reconnect; drop it on empty space to disconnect that cable. Ctrl/Command-drag an output to move a cable's source. Wheel zooms at the cursor; Alt/middle-drag pans.\n\nAbsent voices and the untouched bypassed main Chorale are hidden without changing routing. Muted voices stay visible. Unconnected inputs receive silence; rejected edits retain accepted routing.";
         if (n) {
             info = "Node ID " + juce::String(n->id);
-            if (n->wetOwner) info += "\nInside Granular " + juce::String(routingFxSlot(n->wetOwner))
-                + " wet pocket: automatic internal signal, before its Mix. No canvas cables required. Delete this node to remove the insert.";
+
             if (n->type == NodeType::sidechain)
                 info += "\nOptional host auxiliary input. Mono duplicates; stereo preserves L/R. Configured channels do not prove a host cable is connected: connectivity is unknown. Missing input is silence, never main audio. Connect this source explicitly; no FX slot or level normalization.";
             if (n->type == NodeType::splitter)
@@ -2165,7 +2199,8 @@ private:
                         spectralPanel = std::make_unique<SpectralMorphPanel>(owner, size_t(slot));
                         spectralPanel->onOpenRouting = [this] { fitIfUnpositioned(); };
                         inspector.addAndMakeVisible(*spectralPanel);
-                        info += "\nMAIN and DONOR are independent. Unwired donor is silence. External configuration is not a host connection detector.";
+                        if (!n->wetOwner)
+                            info += "\nMAIN and DONOR are independent. Unwired donor is silence. External configuration is not a host connection detector.";
                     } else if (slot > 0 && isCreativeEffect(n->type)) {
                         creativePanel = std::make_unique<CreativeEffectPanel>(owner, size_t(slot), creativeKind(n->type));
                         creativePanel->setInspectorLayout(true);
@@ -2219,7 +2254,7 @@ private:
                         toneViewport.setViewedComponent(tonePanel.get(), false);
                         inspector.addAndMakeVisible(toneViewport);
                         info = "Slot " + juce::String(slot) + " | independent host automation";
-                        if (n->type == NodeType::crossover)
+                        if (n->type == NodeType::crossover && !n->wetOwner)
                             info += "\n2 bands: #0 Low / #1 High. 3 bands: #0 Low / #1 Mid / #2 High.\nStored #2 cables are silent in 2-band mode; #1 becomes High.\nBypass: full-band on #0 only; all other outputs silent.";
                     }
                 } else info += "\nNo matching host automation slot.";
@@ -2276,6 +2311,8 @@ private:
                 info += "\nUse the canvas knob to set the host-automatable blend: 0% Lead, 100% Sidechain. If the sidechain is unavailable or unwired, Lead passes through. Bus configuration does not indicate whether the host has connected a signal.";
             else if (n->type != NodeType::splitter && n->type != NodeType::sidechain)
                 info += "\nProcessed lead source. Connecting this output elsewhere moves its cable; inputs accept multiple sources.";
+            if (n->wetOwner)
+                info = "Inside " + wetOwnerLabel(n->wetOwner) + "'s wet pocket. No canvas cables.\n" + info;
         } else if (selectedLink >= 0 && selectedLink < int(graph.links.size())) {
             DisplayLink item;
             if (!displayLink(selectedLink, item)) return;

@@ -290,35 +290,95 @@ inline void sidechainBlendControls() {
 }
 inline void run() {
     guiTestDisplay::enumerate();
-    for (int theme = 0; theme < 3; ++theme) {
+    for (int theme = 0; theme <= int(Theme::grass); ++theme) {
+        const bool legacy = theme % 2 == 0;
+        const auto parentType = legacy ? NodeType::granular : NodeType::delay;
+        const auto childType = legacy ? NodeType::delay : NodeType::reverb;
+        const juce::String choiceLabel = legacy ? "Delay | stereo / tempo sync" : "Reverb | space / ducking";
+        const juce::String parentLabel = legacy ? "GRANULAR 1" : "Echo owner";
+        const juce::String childLabel = legacy ? "DELAY 2" : "REVERB 2";
         auto owner = std::make_unique<Processor>(); owner->setSkin(theme);
-        auto graph = mainBusFx::add(defaultGraph(), NodeType::granular).graph;
+        const auto graph = mainBusFx::add(defaultGraph(), parentType).graph;
         juce::String error;
-        require(owner->setRoutingGraph(graph, error), "Granular UI graph rejected");
+        require(owner->setRoutingGraph(graph, error), "Wet-pocket UI graph rejected");
         auto layout = owner->getRoutingLayout();
         layout.removeAllChildren(nullptr); layout.removeProperty("selectedVoiceSlot", nullptr);
         layout.setProperty("selectedNode", 100, nullptr); layout.setProperty("zoom", .8f, nullptr);
         layout.setProperty("inspectorVisible", true, nullptr);
         juce::ValueTree position("NODE"); position.setProperty("id", 100, nullptr);
         position.setProperty("x", 40, nullptr); position.setProperty("y", 40, nullptr);
-        position.setProperty("expanded", true, nullptr); layout.addChild(position, -1, nullptr);
+        position.setProperty("expanded", true, nullptr);
+        if (!legacy) position.setProperty("name", parentLabel, nullptr);
+        layout.addChild(position, -1, nullptr);
         owner->setRoutingLayout(layout);
-        RoutingPanel panel(*owner); panel.setNeon(theme == 1);
+        RoutingPanel panel(*owner); panel.setNeon(theme == int(Theme::neon));
         fitAndAttach(panel, 1200, 950);
-        auto* pocket = dynamic_cast<juce::Button*>(find(panel, "granularWetPocket"));
-        require(pocket && pocket->isShowing(), "Granular node has no visible wet-pocket action");
-        pocket->onClick();
-        const auto updated = owner->getRoutingGraph();
-        const auto* child = mainBusFx::find(updated, 101);
-        require(child && child->type == NodeType::delay && child->wetOwner == 100, "Node action did not create owned wet Delay");
-        auto* delayMix = dynamic_cast<juce::Slider*>(find(panel, "fx2Mix"));
-        require(delayMix && delayMix->isShowing(), "Pocket action did not reveal Delay controls");
-        require(delayMix->getValue() == 100, "New wet insert must default fully processed");
+        const auto pocketButton = [&]() -> juce::Button* {
+            auto* button = dynamic_cast<juce::Button*>(find(panel, "wetPocket"));
+            require(button && button->isShowing(), "FX node has no visible wet-pocket action");
+            return button;
+        };
+        require(pocketButton()->getButtonText() == "Wet pocket / Add FX", "Empty pocket did not offer Add FX");
+        pocketButton()->onClick();
+        require(juce::PopupMenu::dismissAllActiveMenus(), "Empty pocket did not show its FX selector");
+        require(!mainBusFx::find(owner->getRoutingGraph(), 101), "Opening the selector created an insert without a choice");
+
+        // Invoke the menu item's production action without driving the OS pointer or key focus.
+        const auto menu = panel.makeWetPocketMenu(100);
+        juce::PopupMenu::MenuItemIterator choices(menu);
+        std::function<void()> select;
+        while (choices.next()) {
+            const auto& item = choices.getItem();
+            if (item.text == choiceLabel && item.isEnabled) select = item.action;
+        }
+        require(bool(select), "Wet selector is missing the normal FX choice");
+        select();
+        const auto verifyOwned = [&](const Graph& current) {
+            const auto* child = mainBusFx::find(current, 101);
+            require(child && child->type == childType && child->wetOwner == 100, "Selected FX is not owned by its wet pocket");
+            require(current.links.size() == graph.links.size() && std::none_of(current.links.begin(), current.links.end(), [](const auto& link) {
+                return link.source == 101 || link.destination == 101;
+            }), "Wet-pocket selection created canvas cables");
+        };
+        verifyOwned(owner->getRoutingGraph());
+        auto* insertMix = dynamic_cast<juce::Slider*>(find(panel, "fx2Mix"));
+        require(insertMix && insertMix->isShowing() && insertMix->getValue() == 100,
+            "Pocket did not reveal the insert's Mix at its normal default");
+        require(panel.inspectorTitle.getText() == "WET " + childLabel + " / " + parentLabel,
+            "Wet inspector did not show the insert and its owner's label");
+        require(panel.makeWetPocketMenu(101).getNumItems() == 0 && panel.makeWetPocketMenu(100).getNumItems() == 0,
+            "Selector offered a nested pocket or a second child");
+        const auto* insert = panel.node(101);
+        require(insert && panel.inputs(*insert) == 0 && panel.outputPins(*insert) == 0, "Wet insert shows cable ports");
+        require(pocketButton()->getButtonText() == "Wet pocket / " + childLabel, "Occupied pocket does not identify its child");
+        panel.inspectorToggle.onClick();
+        pocketButton()->onClick();
+        require(int(owner->getRoutingLayout().getProperty("selectedNode")) == 101
+            && panel.inspectorTitle.isShowing(), "Occupied pocket did not reopen its child's inspector");
+        verifyOwned(owner->getRoutingGraph());
         const auto file = juce::File::getCurrentWorkingDirectory().getChildFile("source/build/wet-pocket-" + juce::String(theme) + ".png");
         if (auto stream = file.createOutputStream()) {
             stream->setPosition(0); stream->truncate();
             juce::PNGImageFormat{}.writeImageToStream(panel.createComponentSnapshot(panel.getLocalBounds()), *stream);
         }
+        if (!legacy) {
+            auto copy = std::make_unique<Processor>();
+            require(copy->pasteSettings(owner->settingsText()), "Wet-pocket patch recall failed");
+            verifyOwned(copy->getRoutingGraph());
+        }
+        panel.remove.onClick();
+        require(mainBusFx::find(owner->getRoutingGraph(), 100) && !mainBusFx::find(owner->getRoutingGraph(), 101),
+            "Deleting the insert did not leave its owner intact");
+        require(pocketButton()->getButtonText() == "Wet pocket / Add FX", "Deleting an insert did not empty its owner's pocket");
+        panel.undo.onClick();
+        verifyOwned(owner->getRoutingGraph());
+        panel.selectedNode = 100;
+        panel.remove.onClick();
+        const auto erased = owner->getRoutingGraph();
+        require(!mainBusFx::find(erased, 100) && !mainBusFx::find(erased, 101), "Deleting the owner orphaned its insert");
+        panel.undo.onClick();
+        verifyOwned(owner->getRoutingGraph());
+
         ParameterKnob mix(*owner, "fx1Mix", "Mix", "%"); mix.setLinear(true); mix.setSize(320, 64);
         auto& slider = mix.slider; slider.setValue(25, juce::dontSendNotification);
         const auto lanes = slider.getLookAndFeel().getSliderLayout(slider);
@@ -333,6 +393,6 @@ inline void run() {
         slider.mouseUp(mouse(slider, to, from, true));
         require(slider.getMouseDragSensitivity() == originalSensitivity, "Drag sensitivity leaked after gesture");
     }
-    std::cout << "Node wet-pocket creation/navigation and 1:1 fat Mix drag passed in three themes\n";
+    std::cout << "Granular/Delay and Delay/Reverb wet-pocket selection, ownership and 1:1 fat Mix drag passed in four themes\n";
 }
 }

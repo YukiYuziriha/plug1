@@ -207,6 +207,36 @@ void activationNotification(Edit edit, bool prepared, bool latencyChange) {
     processor->releaseResources();
 }
 
+void pocketLatency() {
+    auto processor = std::make_unique<Processor>();
+    Graph graph{{{1, NodeType::lead}, {100, NodeType::delay}, {101, NodeType::spectralMorph}, {13, NodeType::output}},
+                {{1, 100, 0}, {100, 13, 0}}};
+    graph.nodes[2].wetOwner = 100;
+    juce::String error;
+    check(processor->setRoutingGraph(graph, error), "wet Morph activation fixture rejected");
+    processor->prepareToPlay(48000., 137);
+    const int wet = processor->getLatencySamples();
+    check(wet == SpectralMorph::latencySamples, "wet Morph did not contribute latency");
+    const auto toggle = [&](const char* control, float value, int before, int after) {
+        {
+            ActivationListener listener(*processor);
+            parameter(*processor, control, value);
+            pumpActivationTimers();
+            check(listener.requests == 1 && listener.pendingAtRequest && listener.latencyAtRequest == before,
+                "wet Morph toggle didn't request automatic latency reactivation exactly once");
+        }
+        processor->releaseResources();
+        processor->prepareToPlay(48000., 137);
+        check(processor->getLatencySamples() == after && !processor->routingRestartPending(),
+            "wet Morph reactivation applied wrong latency");
+    };
+    toggle("fx1On", 0.f, wet, 0);
+    toggle("fx1On", 1.f, 0, wet);
+    toggle("fx2On", 0.f, wet, 0);
+    toggle("fx2On", 1.f, 0, wet);
+    processor->releaseResources();
+}
+
 void hostActivationNotifications() {
     int failures = 0;
     for (auto edit : {Edit::reset, Edit::add, Edit::remove}) {
@@ -235,6 +265,7 @@ int main() {
         granularSleep();
 #if JUCE_MODULE_AVAILABLE_juce_audio_processors
         hostActivationNotifications();
+        pocketLatency();
         std::cout << "Host activation notification tests passed\n";
 #endif
         std::cout << "Routing activation tests passed\n";

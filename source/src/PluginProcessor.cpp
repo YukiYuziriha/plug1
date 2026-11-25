@@ -1082,13 +1082,23 @@ Graph Processor::processingGraph(Graph graph, const Graph* previous) const {
         // A disabled host bus cannot activate a custom wet branch. A configured
         // bus is kept in the plan regardless of its audio or the automated mix.
         if (node.type == NodeType::sidechainBlend && !hasSidechainBus) node.enabled = false;
-        if (routingDeclaredLatency(node.type) == 0) continue;
+        const bool ownsLatencyInsert = std::any_of(graph.nodes.begin(), graph.nodes.end(), [&](const auto& child) {
+            return child.wetOwner == node.id && routingDeclaredLatency(child.type) != 0;
+        });
+        if (routingDeclaredLatency(node.type) == 0 && !ownsLatencyInsert) continue;
         const auto slot = routingFxSlot(node.id);
-        if (slot <= 0) continue;
+        if (slot < 0) continue;
         if (previous && std::none_of(previous->nodes.begin(), previous->nodes.end(), [&](const auto& old) {
                 return old.id == node.id && old.type == node.type && old.enabled == node.enabled;
             })) continue; // Newly added nodes and explicit graph edits initialize their slot below.
-        node.enabled = values[94 + (size_t(slot) - 1) * 3]->load(std::memory_order_relaxed) >= .5f;
+        const size_t on = slot == 0 ? 43u : 94u + (size_t(slot) - 1) * 3;
+        node.enabled = values[on]->load(std::memory_order_relaxed) >= .5f;
+    }
+    for (auto& child : graph.nodes) if (child.wetOwner && routingDeclaredLatency(child.type) != 0) {
+        const auto parent = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto& node) {
+            return node.id == child.wetOwner;
+        });
+        if (parent != graph.nodes.end() && !parent->enabled) child.enabled = false;
     }
     return graph;
 }
@@ -1114,6 +1124,9 @@ Processor::ProcessingRequirements Processor::processingRequirements(const Graph&
             const int slot = routingFxSlot(node.id);
             if (slot > 0) result.latencyEffects |= uint16_t(1u << slot);
         }
+        if (node.enabled && routingSupportsWetPocket(node.type))
+            for (size_t child = 0; child < graph.nodes.size(); ++child)
+                if (graph.nodes[child].wetOwner == node.id) walk(walk, child, mainWet);
         for (const auto& link : graph.links) {
             if (link.destination != node.id) continue;
             if (!routingUsesInput(node, link.inputPin)) continue;

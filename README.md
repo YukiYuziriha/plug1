@@ -8,7 +8,11 @@ HEAVEN is an open-source audio effect for **Windows x64 · CLAP and VST3**. Turn
 
 [Download the latest release](https://github.com/YukiYuziriha/plug1/releases/latest) · [Install](#download--install) · [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase)
 
-## v1.14.1 — Bring your own double
+## v1.15.0 — Effects inside effects
+
+In Routing, put an FX inside another FX’s wet pocket. Echo only the grains, add reverb to repeats, or EQ the reverb without touching its dry signal. The parent’s Mix controls the whole wet path. [How wet pockets work](docs/Getting-Started.md#shape-only-the-wet-signal).
+
+### Bring your own double
 
 Send a recorded double to HEAVEN’s host sidechain and blend it with your Lead right from Stack. **Sidechain Blend** comes wired in the standard patch, and the independent **Sidechain card** lets you tune, pan and shape the double without touching the Lead. Leave **Process** off to blend the raw take instead. The card follows the host-enabled bus, not whether a track is routed to it or making sound.
 
