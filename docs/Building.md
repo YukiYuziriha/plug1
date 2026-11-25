@@ -1,10 +1,11 @@
-# Building Vocal Stack
+# Building HEAVEN
 
 [Overview](../README.md) · [Getting Started](Getting-Started.md) ·
 [Windows resource-limit policy](Windows-Resource-Limits.md)
 
-The current source project is **v1.11.0**, C++20, with CLAP/VST3 plugin targets and
-DSP, processor, state, module-host and UI tests. These are reproducible commands
+HEAVEN uses C++20, with CLAP/VST3 plugin targets and DSP, processor, state,
+module-host and UI tests. The project version is declared in
+[`source/CMakeLists.txt`](../source/CMakeLists.txt). These are reproducible commands
 for a fresh Windows checkout, not references to machine-local delivery scripts.
 
 ## Prerequisites
@@ -46,8 +47,8 @@ job-budget policy, not a guaranteed instantaneous CPU percentage cap.
 Artifacts appear under:
 
 ```text
-source/build-vs2022/VocalStack_artefacts/Release/CLAP/Vocal Stack.clap
-source/build-vs2022/VocalStack_artefacts/Release/VST3/Vocal Stack.vst3/
+source/build-vs2022/VocalStack_artefacts/Release/CLAP/HEAVEN by lil grass block.clap
+source/build-vs2022/VocalStack_artefacts/Release/VST3/HEAVEN by lil grass block.vst3/
 ```
 
 `COPY_PLUGIN_AFTER_BUILD` is false: a successful build does not install plugins or
@@ -59,8 +60,10 @@ a plugin loaded by a running host.
 CTest includes native UI fixtures. An unlocked, unoccluded desktop is needed for
 native interaction checks; the project prefers an available non-primary monitor.
 Offscreen/component snapshots are not proof of native input or host rendering
-performance. The [v1.11 release record](Release-1.11.0-Validation.md) documents the
-remaining occlusion blocker and distinguishes automated tests from listening.
+performance. The [historical v1.11.0 release record](Release-1.11.0-Validation.md)
+documents a desktop-occlusion blocker from that run; it is not a current test
+result. See the [v1.14.0 release record](Release-1.14.0-Validation.md) for its
+recorded regression scope and host-testing limitations.
 These commands have not been rerun as part of this documentation-only update.
 
 ## DSP-only configuration
@@ -107,7 +110,7 @@ JUCE entitlement is asserted.
 
 ## Build from the complete corresponding-source ZIP
 
-Extract the ZIP, enter `VocalStack-source`, and use the same prerequisites and
+Extract the ZIP, enter its `HEAVEN-<version>` directory, and use the same prerequisites and
 half-CPU wrapper as above. Python is needed only to create/verify the source
 package, not to build the ordinary targets. The ZIP contains pristine dependency
 sources in `external`; no dependency fetch is needed. Apply the initial CLAP
