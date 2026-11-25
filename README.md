@@ -8,11 +8,11 @@ HEAVEN is an open-source audio effect for **Windows x64 · CLAP and VST3**. Turn
 
 [Download the latest release](https://github.com/YukiYuziriha/plug1/releases/latest) · [Install](#download--install) · [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase)
 
-## v1.14.0 — Bring your own double
+## v1.14.1 — Bring your own double
 
 Send a recorded double to HEAVEN’s host sidechain and blend it with your Lead right from Stack. **Sidechain Blend** comes wired in the standard patch, and the independent **Sidechain card** lets you tune, pan and shape the double without touching the Lead. Leave **Process** off to blend the raw take instead. The card follows the host-enabled bus, not whether a track is routed to it or making sound.
 
-The Lead card now houses **Gain Rider**, with a live dB readout so you can see what it adds or cuts. **Neon** is the default for fresh instances, and **Grass Block** adds a pixel-style skin. [Set up a sidechain double](docs/Getting-Started.md#blend-a-recorded-double-with-sidechain).
+The Lead card now houses **Gain Rider**, with a live dB readout so you can see what it adds or cuts. **Neon** is the default for fresh instances, and **Grass Block** adds a pixel-style skin. v1.14.1 also fixes latency-change requests and shows the actually loaded plugin version. [Set up a sidechain double](docs/Getting-Started.md#blend-a-recorded-double-with-sidechain).
 
 ## What you can make
 
