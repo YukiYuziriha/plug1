@@ -1,5 +1,7 @@
 # HEAVEN by lil grass block
 
+**The plugin might have critical bugs leading to severe performance losses.**
+
 **Build a vocal stack. Split it into parallel effects. Or run just the delay.**
 
 HEAVEN is an open-source audio effect for **Windows x64 · CLAP and VST3**. Turn one take into **up to eight generated voices plus an independent Lead**, shape each branch, and bring it all back together in a modular effects graph. Stack and Routing are two views of the same patch.
