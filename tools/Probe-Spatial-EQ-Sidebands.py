@@ -51,12 +51,12 @@ def tone(hz):
     return np.cos(2 * np.pi * ((hz * np.arange(END)) % RATE) / RATE)
 
 
-def centered(bed, probe, eps):
+def centered(bed, probe, eps, *, fresh=True):
     signals = [(bed + sign * eps * probe).astype(np.float32) for sign in (1, -1)]
     derivatives = []
     for depth in (0.0, 1.0):
-        # Each run is a fresh instance. Capture returns float64 after hosting in float32.
-        plus, minus = (capture(x, depth, fresh=True) for x in signals)
+        # Capture resets before processing and returns float64 after hosting in float32.
+        plus, minus = (capture(x, depth, fresh=fresh) for x in signals)
         derivatives.append(ms(plus - minus) / (2 * eps))
     off, full = derivatives
     return off, full - off

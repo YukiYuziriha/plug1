@@ -159,6 +159,7 @@ def main():
         get = mode_capture(name, raw)
         # Reuse the shared centered renderer; substitute only the host capture for other modes.
         differentiate = FunctionType(centered.__code__, dict(centered.__globals__, capture=get))
+        differentiate.__kwdefaults__ = centered.__kwdefaults__
         baselines = {}
         for i, (_, route) in enumerate(ROUTES):
             probe = np.asarray(route)[:, None] * comb
