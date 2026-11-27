@@ -211,9 +211,22 @@ Each boost sums eligible extraction-filter magnitudes at its own center frequenc
 
 [`Test-Spatial-EQ-Multiband.py`](../tools/Test-Spatial-EQ-Multiband.py) compares overlapping and separated bells, mixed shelves and bells, eight-band holdouts, and mixed boost/cut slot orders. The fixtures include asymmetric impulses and sweeps. Across 90 Mid/Side comparisons, the worst Depth-delta RMS error was **−93.1 dBr**; its maximum residual was `1.92e-7` FS RMS and `1.73e-6` FS peak. Full output peaked at `2.99e-6` FS residual. Removing the model's wet path as a negative control failed the overlapping-bell Depth checks while direct EQ still passed.
 
-### Next: moving overlap weights
+### Moving overlap weights and cuts
 
-The code updates bands in slot order every 32 samples. A receiver uses its newly smoothed center frequency. Earlier contributors use this tick's working frequency and Q; later contributors still use their previous values. Eligibility uses the target snapshot. Each weight has its own 18 ms tick-rate smoother, seeded during prepare/reset but not at wet-dormant re-entry. These rules are traced, not yet verified on automated multiband renders.
+The code updates bands in slot order every 32 samples. A receiver uses its newly smoothed center frequency. Earlier contributors use this tick's working frequency and Q; later contributors still use their previous values. Eligibility uses the target snapshot. Each weight has its own 18 ms tick-rate smoother, seeded during prepare/reset but not at wet-dormant re-entry. For negative Bells, the direct and wet filters share moving coefficients but keep separate histories; the wet blend is scaled by cut amount and enable.
+
+[`Test-Spatial-EQ-MultibandAutomation.py`](../tools/Test-Spatial-EQ-MultibandAutomation.py) verified the moving-band traces at 48 and 96 kHz. Swapping two moving Bell slots changed reference wet Side by up to `1.566e-3` FS peak; the model reproduced the contrast within `3.789e-8` FS peak. Advancing all filters before scoring receivers failed the dedicated order check. At both rates, changing the buffer from 512 to 257 samples and adding irregular no-op call boundaries did not change the reference waveform. Four/eight-band holdouts cover shelf moves, Depth ramps, switches, and reset; the largest full-output Mid/Side residual was `1.461e-6` FS peak. The moving negative Bell fixture passed in both slot orders; its Depth-on minus Depth-off comparison includes the Depth-dependent direct Mid cut, not just the wet return.
+
+### Recorded voice check
+
+[`Test-Spatial-EQ-Voice.py`](../tools/Test-Spatial-EQ-Voice.py) compares both processors at 48 kHz on a static four-band body/low-mid/presence/air boost preset with 40–85% Depth. Fixtures were Garth Comira's mono audiobook narration ([librosa `libri1`](https://librosa.org/data/audio/5703-47212-0000.txt), CC BY 4.0) and Sofie Sigrinn's native stereo recording of [Harmonica singing *Tourdion*](https://commons.wikimedia.org/wiki/File:Harmonica_sings_Tourdion.flac) (CC BY-SA 4.0). The latter is choir, not isolated solo singing. Neither render was time-aligned or level-corrected for these metrics.
+
+| Fixture | Full L/R residual RMS / sample peak | Depth-delta L/R residual RMS |
+| --- | ---: | ---: |
+| Mono narration | −134.40 / −115.57 dBFS | −142.96 dBFS |
+| Stereo choir | −134.27 / −113.25 dBFS | −140.38 dBFS |
+
+The model/reference RMS gain difference was less than `0.000001` dB on narration and `0.000030` dB on choir. Optional `--ab` exports local reference/model WAVs with pooled L/R RMS matched, not perceptual loudness matched. No human listening test has been performed.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Shelves.py
@@ -222,6 +235,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Automation.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Probe-Spatial-EQ-Tails.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Multiband.py --with-cuts
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-MultibandAutomation.py
+# After downloading either attributed fixture to the current directory:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Voice.py Harmonica_sings_Tourdion.flac --seconds 40 --ab
 ```
 
-**Remaining scope:** negative shelves and other shapes/modes, multiband automation and VST3 in-block parameter delivery, and real-audio listening. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.
+**Remaining scope:** negative shelves and other shapes/modes, automated shape or gain-sign changes, VST3 in-block parameter delivery, human listening, and realtime integration/benchmarks. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.

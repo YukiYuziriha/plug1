@@ -1,4 +1,4 @@
-"""Offline automation and lifecycle for one positive Stereo Bell.
+"""Offline automation for up to eight static-shape Stereo EQ bands.
 
 Initial controls are settled, with empty histories and control tick phase zero.
 Events specify when targets become visible to the DSP. Host-specific resets
@@ -6,7 +6,7 @@ or reprepare behavior and VST3 queue semantics are not modeled.
 """
 
 from collections.abc import Mapping
-from math import exp, expm1, isfinite, log
+from math import cos, exp, expm1, isfinite, log, pi, sin
 from operator import index
 from pathlib import Path
 from runpy import run_path
@@ -38,13 +38,16 @@ def _log_step(current, target, alpha):
     return np.float32(exp(float(new_log - old_log) * alpha + float(old_log)))
 
 
-def _controls(initial, steps, size, sample_rate, moving_eq):
+def _controls(initial, steps, size, sample_rate, moving_eq, *, overlap_state=None):
     step32 = 1.0 - exp(-_TICK / (0.018 * sample_rate))
     step1 = 1.0 - exp(-1.0 / (0.012 * sample_rate))
     target = initial.copy()
     depth, frequency, gain, q = (initial[k] for k in ("depth", "frequency", "gain_db", "q"))
-    boost_weight = -expm1(-float(gain) / 3.0)
+    cut = gain < 0.0
+    boost_weight = 1.0 if cut else -expm1(-float(gain) / 3.0)
     current = float(depth) * 0.01 * boost_weight
+    if overlap_state is not None and not cut and not _STATIC["_wet_boost_gain_eligible"](gain):
+        current = 0.0
     amount_target = current
     enable = float(initial["active"] and initial["enabled"])
     enable_target = enable
@@ -62,7 +65,8 @@ def _controls(initial, steps, size, sample_rate, moving_eq):
             enable_target = float(target["active"] and target["enabled"])
             event += 1
         if i % _TICK == 0:
-            if i == 0 or target["active"] or enable >= _SLEEP_THRESHOLD:
+            updates = i == 0 or target["active"] or enable >= _SLEEP_THRESHOLD
+            if updates:
                 depth = _linear_step(depth, target["depth"], step32)
                 # The callback enables flush-to-zero for float32 subnormals.
                 if depth < _FLOAT_TINY:
@@ -72,11 +76,19 @@ def _controls(initial, steps, size, sample_rate, moving_eq):
                     q = _log_step(q, target["q"], step32)
                     gain = _linear_step(gain, target["gain_db"], step32)
                     design = (float(frequency), float(gain), float(q))
-                    boost_weight = -expm1(-float(gain) / 3.0)
+                    if not cut:
+                        boost_weight = -expm1(-float(gain) / 3.0)
                 amount_target = float(depth) * 0.01 * boost_weight
             else:
                 # A fully inactive slot stores controls but suspends design updates.
                 depth, frequency, gain, q = (target[k] for k in ("depth", "frequency", "gain_db", "q"))
+            if overlap_state is not None:
+                eligible = (target["active"] and target["enabled"]
+                            and target["depth"] > _STATIC["_OVERLAP_MIN_DEPTH_PERCENT"]
+                            and target["gain_db"] > _STATIC["_OVERLAP_MIN_GAIN_DB"])
+                overlap_state.append((float(frequency), float(q), eligible, updates))
+                if updates and not cut and not _STATIC["_wet_boost_gain_eligible"](target["gain_db"]):
+                    amount_target = 0.0
             designs.append(design)
             targets[i // _TICK] = amount_target
         enable += (enable_target - enable) * step1
@@ -130,17 +142,21 @@ def _tick_filter(signal, coeffs, frames):
     return np.array([np.fromiter(samples(lane), dtype=np.float64, count=lane.size) for lane in signal])
 
 
-def _eq_target(frequency, gain_db, q, sample_rate):
+def _eq_target(frequency, gain_db, q, sample_rate, *, band_kind=None):
     if not isfinite(frequency) or not 20.0 <= frequency <= min(20000.0, 0.475 * sample_rate):
         raise ValueError("automated frequency must be in [20, min(20000, 0.475 * sample_rate)] Hz")
-    if not isfinite(gain_db) or not 1e-5 < gain_db <= 30.0 or np.float32(gain_db).item() <= 1e-5:
-        raise ValueError("automated gain_db must exceed 1e-5 dB after rounding and be at most 30 dB")
-    if not isfinite(q) or not 0.5 <= q <= 30.0:
-        raise ValueError("automated Q must be in [0.5, 30]")
+    lower_gain = 1e-5 if band_kind is None else 0.0
+    signed_magnitude = -gain_db if band_kind == "cut" else gain_db
+    if (not isfinite(gain_db) or not lower_gain < signed_magnitude <= 30.0
+            or np.float32(signed_magnitude).item() <= lower_gain):
+        raise ValueError("automated gain_db must preserve its supported sign and range")
+    min_q = 0.5 if band_kind in (None, "bell") else 0.1
+    if not isfinite(q) or not min_q <= q <= 30.0:
+        raise ValueError(f"automated Q must be in [{min_q}, 30]")
     return dict(frequency=np.float32(frequency), gain_db=np.float32(gain_db), q=np.float32(q))
 
 
-def _prepare_events(steps, size, initial, sample_rate):
+def _prepare_events(steps, size, initial, sample_rate, *, band_kind=None):
     events = []
     targets = initial.copy()
     previous = -1
@@ -161,7 +177,8 @@ def _prepare_events(steps, size, initial, sample_rate):
         targets.update((key, value) for key, value in update.items() if key != "reset")
         if update.keys() & {"frequency", "gain_db", "q"}:
             moving_eq = True
-            eq = _eq_target(targets["frequency"], targets["gain_db"], targets["q"], sample_rate)
+            eq = _eq_target(targets["frequency"], targets["gain_db"], targets["q"], sample_rate,
+                            band_kind=band_kind)
             update.update((key, eq[key]) for key in update.keys() & eq.keys())
         events.append((sample, update))
         previous = sample
@@ -230,48 +247,83 @@ def process_components(stereo, initial_depth, *, steps=(), sample_rate=48000,
 
 
 def _render_segment(stereo, initial, steps, sample_rate, moving_eq):
-    targets, amounts, enables, designs, running, wet_running = _controls(
-        initial, steps, stereo.shape[1], sample_rate, moving_eq)
-    frames = np.flatnonzero(running)
-    direct = stereo.copy()
-    wet = np.zeros_like(stereo)
-    if not frames.size:
-        return direct, wet
+    controls = _controls(initial, steps, stereo.shape[1], sample_rate, moving_eq)
+    direct = _band_direct(stereo, initial, sample_rate, moving_eq, controls)
+    wet = _band_wet(direct, initial, sample_rate, moving_eq, controls)
+    return direct, _STATIC["_wet_highpass"](wet, sample_rate)
 
+
+def _direct_designs(sample_rate, designs, shape, *, gate_tiny_eq):
     matched = _STATIC["_matched_pole"]
-    ticks = frames // _TICK
-    counts = np.bincount(ticks, minlength=len(targets)).tolist()
+    return [(1.0, 0.0, 0.0, 0.0, 0.0) if gate_tiny_eq and abs(gain) < 1e-9
+            else matched(sample_rate, f, width, shape, gain) for f, gain, width in designs]
+
+
+def _band_direct(stereo, initial, sample_rate, moving_eq, controls, *, coeffs=None):
+    targets, amounts, enables, designs, running, _ = controls
+    direct = stereo.copy()
+    frames = np.flatnonzero(running)
+    if not frames.size:
+        return direct
     source = stereo[:, frames]
     if moving_eq:
-        bell = [matched(sample_rate, f, width, "bell", gain) for f, gain, width in designs]
-        eq = _tick_filter(source, bell, counts)
+        if coeffs is None:
+            coeffs = _direct_designs(sample_rate, designs, "bell", gate_tiny_eq=False)
+        counts = np.bincount(frames // _TICK, minlength=len(targets)).tolist()
+        eq = _tick_filter(source, coeffs, counts)
     else:
         eq = _STATIC["process_direct_eq"](source, sample_rate=sample_rate, frequency=initial["frequency"],
                                            gain_db=initial["gain_db"], q=initial["q"])
     blend = enables[frames]
     transition = blend != 1.0
     eq[:, transition] = source[:, transition] + (eq[:, transition] - source[:, transition]) * blend[transition]
+    if initial["gain_db"] < 0.0:
+        # Restore the Mid deficit after the band's enable blend.
+        eq += _STATIC["_cut_mid_restore"](source, eq, amounts[frames])
     direct[:, frames] = eq
+    return direct
 
-    # Missing frames pause the band; Depth dormancy instead starts a fresh
-    # per-band wet epoch. The shared high-pass still runs on the full timeline.
-    wet_gate = wet_running[frames]
-    if wet_gate.any():
-        feed = ([matched(sample_rate, f, width, "bandpass") for f, _, width in designs] if moving_eq else
-                [matched(sample_rate, initial["frequency"], initial["q"], "bandpass")] * len(targets))
+
+def _wet_epochs(running, wet_running):
+    frames = np.flatnonzero(running)
+    edges = np.flatnonzero(np.diff(wet_running[frames], prepend=False, append=False))
+    for begin, end in zip(edges[::2], edges[1::2]):
+        positions = frames[begin:end]
+        ticks = positions // _TICK
+        first, last = ticks[0], ticks[-1] + 1
+        yield positions, ticks, slice(first, last), np.bincount(ticks - first, minlength=last - first).tolist()
+
+
+def _band_wet(direct, initial, sample_rate, moving_eq, controls, *, overlap=None, shape="bell"):
+    targets, amounts, enables, designs, running, wet_running = controls
+    wet = np.zeros_like(direct)
+    # Missing frames pause the band; Depth dormancy starts a fresh wet epoch.
+    if np.any(running & wet_running):
+        matched = _STATIC["_matched_pole"]
+        build_feed = _STATIC["_extraction_coeffs"]
+        feed = ([build_feed(sample_rate, f, width, shape) for f, _, width in designs] if moving_eq else
+                [build_feed(sample_rate, initial["frequency"], initial["q"], shape)] * len(targets))
         return_coeffs = [matched(sample_rate, 16000.0 - 9500.0 * k, _STATIC["_RETURN_Q"], "lowpass")
                          for k in targets.tolist()]
-        edges = np.flatnonzero(np.diff(wet_gate, prepend=False, append=False))
-        for begin, end in zip(edges[::2], edges[1::2]):
-            section = slice(begin, end)
-            positions = frames[section]
-            wet_ticks = ticks[section]
-            first, last = wet_ticks[0], wet_ticks[-1] + 1
-            lengths = np.bincount(wet_ticks - first, minlength=last - first).tolist()
-            wet[:, positions] = _wet_epoch(eq[:, section], feed[first:last], return_coeffs[first:last],
-                                           lengths, amounts[positions], enables[positions],
-                                           targets[wet_ticks], sample_rate)
-    return direct, _STATIC["_wet_highpass"](wet, sample_rate)
+        for positions, wet_ticks, span, lengths in _wet_epochs(running, wet_running):
+            contribution = _wet_epoch(direct[:, positions], feed[span], return_coeffs[span],
+                                      lengths, amounts[positions], enables[positions],
+                                      targets[wet_ticks], sample_rate)
+            # Weight only the completed per-band wet sample, not its histories.
+            if overlap is not None:
+                contribution *= overlap[wet_ticks]
+            wet[:, positions] = contribution
+    return wet
+
+
+def _apply_wet_cut(wet, coeffs, controls):
+    _, amounts, enables, _, running, wet_running = controls
+    for positions, _, span, counts in _wet_epochs(running, wet_running):
+        source = wet[:, positions]
+        # Coefficients are shared for a fixed negative Bell, but this filter
+        # has separate history and only runs while the cut amount is live.
+        filtered = _tick_filter(source, coeffs[span], counts)
+        wet[:, positions] = source + (filtered - source) * enables[positions] * amounts[positions]
 
 
 def _wet_epoch(eq, feed, return_coeffs, counts, amounts, enables, targets, sample_rate):
@@ -292,3 +344,127 @@ def _wet_epoch(eq, feed, return_coeffs, counts, amounts, enables, targets, sampl
     wet[0] += side
     wet[1] -= side
     return wet
+
+
+def _ordered_overlap(sample_rate, starts, shapes, states):
+    alpha = 1.0 - exp(-_TICK / (0.018 * sample_rate))
+    build = _STATIC["_extraction_coeffs"]
+    working = [build(sample_rate, band["frequency"], band["q"], shape)
+               for band, shape in zip(starts, shapes)]
+    previous_designs = [(float(band["frequency"]), float(band["q"])) for band in starts]
+    weights = np.ones((len(starts), len(states[0])), dtype=np.float64)
+    weight = [1.0] * len(starts)
+    for tick, row in enumerate(zip(*states)):
+        # Eligibility uses the new host snapshot for all slots; design
+        # fields advance one slot at a time. Later slots still have the
+        # previous tick's extraction coefficients during this receiver's scan.
+        eligible = [j for j, (_, _, contributes, _) in enumerate(row) if contributes]
+        for i, (frequency, q, _, updates) in enumerate(row):
+            design = (frequency, q)
+            if design != previous_designs[i]:
+                working[i] = build(sample_rate, frequency, q, shapes[i])
+                previous_designs[i] = design
+            if updates:
+                angle = (frequency * (2.0 * pi)) / sample_rate
+                z1 = complex(cos(angle), -sin(angle))
+                z2 = z1 * z1
+                total = 0.0
+                for j in eligible:
+                    b0, b1, b2, a1, a2 = working[j]
+                    total += abs((b0 + b1 * z1 + b2 * z2) / (1.0 + a1 * z1 + a2 * z2))
+                target = 1.0 / max(1.0, total)
+                weight[i] = target if tick == 0 else weight[i] + (target - weight[i]) * alpha
+            weights[i, tick] = weight[i]
+    return weights
+
+
+def _render_multiband_segment(stereo, starts, shapes, steps, sample_rate):
+    boosts, cuts, states = [], [], []
+    direct = stereo
+    for slot, initial in starts.items():
+        state = []
+        control = _controls(initial, steps[slot], stereo.shape[1], sample_rate, True, overlap_state=state)
+        shape = shapes[slot]
+        coeffs = _direct_designs(sample_rate, control[3], shape, gate_tiny_eq=True)
+        direct = _band_direct(direct, initial, sample_rate, True, control, coeffs=coeffs)
+        if initial["gain_db"] < 0.0:
+            cuts.append((coeffs, control))
+        else:
+            boosts.append((initial, shape, control))
+            states.append(state)
+    wet = np.zeros_like(stereo)
+    if boosts:
+        weights = _ordered_overlap(sample_rate, [b[0] for b in boosts], [b[1] for b in boosts], states)
+        for (initial, shape, control), weight in zip(boosts, weights):
+            wet += _band_wet(direct, initial, sample_rate, True, control, overlap=weight, shape=shape)
+        for coeffs, control in cuts:
+            _apply_wet_cut(wet, coeffs, control)
+    return direct, _STATIC["_wet_highpass"](wet, sample_rate)
+
+
+def process_bands_components(stereo, bands, *, steps=(), sample_rate=48000):
+    """Return (direct EQ, wet) as channel-first (2, N) float64 arrays.
+
+    Bands use (slot, frequency_hz, gain_db, depth[, q[, shape]]); Q defaults
+    to 1. Supports Stereo Bell boosts and cuts and positive Low/High Shelves;
+    shape and gain sign must remain fixed. Listed slots start active and
+    enabled; unlisted slots cannot receive events. Use strictly
+    increasing (sample, {slot: {field: target}}) events. Fields are frequency,
+    q, gain_db, depth, active, enabled and reset (as in process_components).
+    A reset in any slot resets the entire renderer, including the tick phase
+    and overlap weights, with all targets in that event applied first.
+    """
+    stereo = _STATIC["_validate_input"](stereo, sample_rate)
+    specs = sorted(_STATIC["_band_spec"](*band) for band in bands)
+    starts, shapes, kinds = {}, {}, {}
+    for slot, frequency, gain, depth, q, shape in specs:
+        if slot in starts:
+            raise ValueError("band slots must be unique")
+        shapes[slot] = shape
+        kinds[slot] = "cut" if gain < 0.0 else shape
+        initial = _eq_target(frequency, gain, q, sample_rate, band_kind=kinds[slot])
+        starts[slot] = dict(initial, depth=_depth_percent(depth), active=True, enabled=True)
+
+    size = stereo.shape[1]
+    per_slot = {slot: [] for slot in starts}
+    previous = -1
+    for sample, changes in steps:
+        sample = index(sample)
+        if not previous < sample < size:
+            raise ValueError("step samples must be strictly increasing in [0, N)")
+        if not isinstance(changes, Mapping) or not changes or changes.keys() - starts.keys():
+            raise ValueError("step must map listed slots to control updates")
+        for slot, change in changes.items():
+            if not isinstance(change, Mapping):
+                raise ValueError("slot update must be a field-to-target mapping")
+            per_slot[slot].append((sample, change))
+        previous = sample
+
+    events = {}
+    for slot, initial in starts.items():
+        prepared, _ = _prepare_events(per_slot[slot], size, initial, sample_rate, band_kind=kinds[slot])
+        for sample, update in prepared:
+            events.setdefault(sample, {})[slot] = update
+
+    direct, wet = stereo.copy(), np.zeros_like(stereo)
+    if not starts or not size:
+        return direct, wet
+    target = {slot: band.copy() for slot, band in starts.items()}
+    local_steps = {slot: [] for slot in starts}
+    start = 0
+    for sample, changes in sorted(events.items()):
+        reset = any(update.get("reset", False) for update in changes.values())
+        if reset and sample > start:
+            direct[:, start:sample], wet[:, start:sample] = _render_multiband_segment(
+                stereo[:, start:sample], starts, shapes, local_steps, sample_rate)
+        for slot, update in changes.items():
+            target[slot].update((key, value) for key, value in update.items() if key != "reset")
+            if not reset:
+                local_steps[slot].append((sample - start, update))
+        if reset:
+            start = sample
+            starts = {slot: band.copy() for slot, band in target.items()}
+            local_steps = {slot: [] for slot in starts}
+    direct[:, start:], wet[:, start:] = _render_multiband_segment(
+        stereo[:, start:], starts, shapes, local_steps, sample_rate)
+    return direct, wet
