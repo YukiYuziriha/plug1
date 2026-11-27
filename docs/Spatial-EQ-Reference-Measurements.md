@@ -160,7 +160,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1
 
 ### Calibration-free one-band delay network
 
-[`Spatial-EQ-DelayModel.py`](../tools/Spatial-EQ-DelayModel.py) implements the two fixed tap banks, four-line feedback, both Side injections, and the band-conditioned gain on the filtered return. It uses no captured impulse response, reference binary, or fitted coefficients when processing. The matched-pole filter designs include their analog Nyquist targets; the previous detector experiment used the same band-pass poles and center gain but forced a Nyquist zero. The model is limited to a settled, static, positive-gain Stereo Bell. It returns the Depth delta rather than reimplementing all host and EQ modes.
+[`Spatial-EQ-DelayModel.py`](../tools/Spatial-EQ-DelayModel.py) implements the two fixed tap banks, four-line feedback, both Side injections, and the band-conditioned gain on the filtered return. It uses no captured impulse response, reference binary, or fitted coefficients when processing. The matched-pole filter designs include their analog Nyquist targets; the previous detector experiment used the same band-pass poles and center gain but forced a Nyquist zero. This initial validation covered the settled positive-gain Stereo Bell Depth delta. The later shelf and cut extensions below retain that path.
 
 [`Test-Spatial-EQ-DelayModel.py`](../tools/Test-Spatial-EQ-DelayModel.py) retains the preceding 24 held-out overlaps at 33/71/96% Depth and compares against the installed reference without gain fitting, time alignment, or calibration. Dual-mono alone hid a left/right routing error on one late tap; checking the asymmetric impulse localized the first divergence, and correcting the tap routing resolved it at both 44.1 and 48 kHz.
 
@@ -179,4 +179,28 @@ Off-anchor checks set and read back the controller display values. At 800 Hz/+3 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-DelayModel.py
 ```
 
-**Remaining scope:** cuts, overlapping bands, other shapes and modes, automation, and real-audio listening. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.
+### Positive Stereo shelves
+
+The Low Shelf feeds the existing reflection engine through a low-pass on the post-EQ signal; the High Shelf uses a high-pass instead. Both extraction filters use the band center and fixed Q `1/√2`, independent of the shelf EQ's own Q. This is not a filter on `EQ output − dry`. The direct EQ uses matched-pole shelves; the High Shelf boost is constructed as the reciprocal of a matched High Shelf cut.
+
+[`Test-Spatial-EQ-Shelves.py`](../tools/Test-Spatial-EQ-Shelves.py) covers two positive settings per shape, dual-mono and asymmetric stereo impulses and sweeps, and 44.1/48/96 kHz. At 0/50/100% Depth it separates direct EQ from the Depth delta. The worst grouped Mid/Side errors were **−98.19 dBr direct** and **−104.06 dBr Depth delta**. Maximum grouped residuals were `2.37e-7` FS RMS and `2.10e-6` FS peak for direct EQ, and `2.30e-7` FS RMS and `4.68e-6` FS peak for the Depth delta. The modeled Depth-zero delta was exactly zero.
+
+### Negative Stereo Bell and one boost/cut pair
+
+A cut uses the reciprocal of a positive matched-pole Bell at the absolute gain. In the direct pass, cut Depth restores a fraction of the cut Mid toward its uncut value but leaves Side fully cut. Boost extraction reads the final post-EQ stereo signal, after both direct bands. An independent cut blends the accumulated wet signal toward its cut version by the same Depth fraction, on both channels, before the common wet high-pass. The cut itself does not generate spatial energy.
+
+[`Test-Spatial-EQ-Cuts.py`](../tools/Test-Spatial-EQ-Cuts.py) compares full outputs and Depth contrasts at 48 kHz for an isolated −6 dB Bell, a coincident +6/−6 dB pair in both slot orders, and a separated-frequency control. It checks an asymmetric impulse and a dual-mono multisine independently. The coincident cut changed generated Side at 2.4 kHz by **−6.00 / −4.98 / −6.00 dB** at 0/50/100% cut Depth, but the equal endpoint tone levels did not imply equal waveforms. Tests report both relative error and absolute residuals, including near-null interaction contrasts.
+
+### Automation: first Depth target change
+
+The trace indicates a persistent **32-sample** control tick with an **18 ms** one-pole step. Frequency and Q interpolate in log space; gain interpolates in dB and Depth in percent. The resulting boost/cut amount has a separate **12 ms** per-sample slew. Some return coefficients follow the tick-level target rather than the slewed amount. Band enable has its own 12 ms slew; its wet-tail behavior is not yet verified.
+
+[`Probe-Spatial-EQ-Automation.py`](../tools/Probe-Spatial-EQ-Automation.py) measured a 33→71% Depth step with no instance reset at 48 and 96 kHz. Boundaries at phases 13, 27, and 3 modulo 32 first changed the output 19, 5, and 29 samples later, respectively. No-op splits matched unsplit runs exactly; host buffers of 257 and 512 samples gave the same result. Explicit reset changed even the no-op waveform. This verifies the tick at host-call boundaries, not VST3 in-block queue timing or the exact automated waveform of a candidate.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Shelves.py
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Cuts.py
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Probe-Spatial-EQ-Automation.py
+```
+
+**Remaining scope:** multiple simultaneous spatial boosts, negative shelves and other shapes/modes, an automated model and tail lifecycle checks, and real-audio listening. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.
