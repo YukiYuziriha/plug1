@@ -205,9 +205,15 @@ The trace indicates a persistent **32-sample** control tick with an **18 ms** on
 
 Explicit reset clears direct and wet history and restarts the tick. The reference and modeled silent suffixes were sample-exact zeros after reset. The model does not emulate Pedalboard-specific reprepare behavior or VST3 in-block automation.
 
-### Next: simultaneous boosts
+### Static simultaneous boosts
 
-The local trace indicates that each band sums eligible extraction-filter magnitudes at its own center frequency, including its own filter if eligible. The reciprocal of that sum, floored at unity before inversion, scales both Side injections and the filtered return, not the delay writes or the energy detector. This coefficient rule has not yet been verified against multi-boost renders.
+Each boost sums eligible extraction-filter magnitudes at its own center frequency, including its own filter if eligible. The reciprocal of that sum, floored at unity before inversion, scales both Side injections and the filtered return, not the delay writes or the energy detector. Contributions use the extraction filter response with no further gain or Depth scaling. Only enabled positive Bell/Low Shelf/High Shelf bands above `1e-5` dB and above `0.001` percentage points of Depth count toward overlap. The Depth threshold excludes a band from the sum, but does not by itself silence its wet path. Multiple complete boost returns are summed before the wet-only cuts and common high-pass. Two coincident Bells verified the normalization from the first block, without a warm-up ramp from unity.
+
+[`Test-Spatial-EQ-Multiband.py`](../tools/Test-Spatial-EQ-Multiband.py) compares overlapping and separated bells, mixed shelves and bells, eight-band holdouts, and mixed boost/cut slot orders. The fixtures include asymmetric impulses and sweeps. Across 90 Mid/Side comparisons, the worst Depth-delta RMS error was **−93.1 dBr**; its maximum residual was `1.92e-7` FS RMS and `1.73e-6` FS peak. Full output peaked at `2.99e-6` FS residual. Removing the model's wet path as a negative control failed the overlapping-bell Depth checks while direct EQ still passed.
+
+### Next: moving overlap weights
+
+The code updates bands in slot order every 32 samples. A receiver uses its newly smoothed center frequency. Earlier contributors use this tick's working frequency and Q; later contributors still use their previous values. Eligibility uses the target snapshot. Each weight has its own 18 ms tick-rate smoother, seeded during prepare/reset but not at wet-dormant re-entry. These rules are traced, not yet verified on automated multiband renders.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Shelves.py
@@ -215,6 +221,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Probe-Spatial-EQ-Automation.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Automation.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Probe-Spatial-EQ-Tails.py
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Multiband.py --with-cuts
 ```
 
-**Remaining scope:** multiple simultaneous spatial boosts, negative shelves and other shapes/modes, multiband automation and VST3 in-block parameter delivery, and real-audio listening. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.
+**Remaining scope:** negative shelves and other shapes/modes, multiband automation and VST3 in-block parameter delivery, and real-audio listening. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.

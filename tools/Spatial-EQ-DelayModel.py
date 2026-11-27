@@ -1,8 +1,8 @@
 """Offline static Stereo EQ and spatial Depth model.
 
-Supports a Bell or shelf boost, a Bell cut, or one of each. Controls are
-settled from sample zero, with empty histories on every call. No automation,
-dynamics, other channel modes or host processing is modeled.
+Supports up to eight Bell or shelf boosts and Bell cuts in total. Controls
+are settled from sample zero, with empty histories on every call. No
+automation, dynamics, other channel modes or host processing is modeled.
 """
 
 from math import cos, cosh, exp, expm1, floor, isfinite, pi, sin, sqrt
@@ -22,6 +22,9 @@ _FEEDBACK_MS = (31.1, 37.3, 43.7, 53.3)
 _RETURN_Q = 0.70710678
 _SHELF_FEEDS = {"low_shelf": "lowpass", "high_shelf": "highpass"}
 _SHELF_FEED_Q = 0.70710678
+_WET_MIN_GAIN_DB = 1e-5
+_OVERLAP_MIN_DEPTH_PERCENT = np.float32(0.001)
+_OVERLAP_MIN_GAIN_DB = np.float32(1e-5)
 
 
 def _matched_pole(sample_rate, hz, q, response, gain_db=0.0):
@@ -250,6 +253,12 @@ def process_direct_eq(stereo, *, sample_rate=48000, frequency=2400.0, gain_db=6.
     return _filter_stereo(stereo, _matched_pole(sample_rate, frequency, q, shape, gain_db))
 
 
+def _wet_boost_gain_eligible(gain_db):
+    # The wet path promotes the float32 target gain before comparing it
+    # with a double threshold. Overlap eligibility is a separate test.
+    return np.float32(gain_db).item() > _WET_MIN_GAIN_DB
+
+
 def process_depth_delta(stereo, depth, *, sample_rate=48000, frequency=2400.0,
                         gain_db=6.0, q=1.0, shape="bell"):
     """Return Depth on minus off as a channel-first (2, N) float64 array.
@@ -261,7 +270,7 @@ def process_depth_delta(stereo, depth, *, sample_rate=48000, frequency=2400.0,
     stereo = _validate_input(stereo, sample_rate)
     _validate_band(frequency, gain_db, q, shape)
     _validate_depth(depth)
-    if depth == 0.0 or stereo.shape[1] == 0 or (shape in _SHELF_FEEDS and gain_db <= 1e-5):
+    if depth == 0.0 or stereo.shape[1] == 0 or (gain_db > 0.0 and not _wet_boost_gain_eligible(gain_db)):
         return np.zeros_like(stereo)
 
     eq = _filter_stereo(stereo, _matched_pole(sample_rate, frequency, q, shape, gain_db))
@@ -271,21 +280,25 @@ def process_depth_delta(stereo, depth, *, sample_rate=48000, frequency=2400.0,
     return _wet_highpass(_boost_wet(eq, depth, sample_rate, frequency, gain_db, q, shape), sample_rate)
 
 
-def _boost_wet(eq, depth, sample_rate, frequency, gain_db, q, shape):
-    amount = depth * -expm1(-gain_db / 3.0)
+def _extraction_coeffs(sample_rate, frequency, q, shape):
     feed_shape = _SHELF_FEEDS.get(shape, "bandpass")
     feed_q = q if shape == "bell" else _SHELF_FEED_Q
-    feed = _matched_pole(sample_rate, frequency, feed_q, feed_shape)
+    return _matched_pole(sample_rate, frequency, feed_q, feed_shape)
+
+
+def _boost_wet(eq, depth, sample_rate, frequency, gain_db, q, shape, *, overlap=1.0):
+    amount = depth * -expm1(-gain_db / 3.0)
+    feed = _extraction_coeffs(sample_rate, frequency, q, shape)
     eq_left, eq_right = eq
     extracted = np.array((_filtered(eq_left, feed), _filtered(eq_right, feed)))
     mid = 0.5 * (extracted[0] + extracted[1])
     existing_side = _filtered(0.5 * (eq_left - eq_right), feed)
-    side = amount * (0.55 * existing_side + 0.625 * _diffused_side(mid, sample_rate))
+    side = (amount * overlap) * (0.55 * existing_side + 0.625 * _diffused_side(mid, sample_rate))
 
     wet = _tapped_reflections(extracted, sample_rate, amount)
     _add_feedback(wet, mid, sample_rate, amount)
     lowpass = _matched_pole(sample_rate, 16000.0 - 9500.0 * amount, _RETURN_Q, "lowpass")
-    return_gain = 0.65 * amount * _return_duck(extracted, sample_rate)
+    return_gain = (0.65 * amount * overlap) * _return_duck(extracted, sample_rate)
     wet[0] = _filtered(wet[0], lowpass) * return_gain + side
     wet[1] = _filtered(wet[1], lowpass) * return_gain - side
     return wet
@@ -303,41 +316,64 @@ def _band_spec(slot, frequency, gain_db, depth, q=1.0, shape="bell"):
     return slot, frequency, gain_db, depth, q, shape
 
 
+def _overlap_weights(sample_rate, boosts):
+    # The reference compares the float32 target fields. The Depth control
+    # is stored in percentage points, whereas the model API uses a fraction.
+    contributors = [
+        _extraction_coeffs(sample_rate, frequency, q, shape)
+        for frequency, gain_db, depth, q, shape in boosts
+        if (np.float32(100.0 * float(np.float32(depth))) > _OVERLAP_MIN_DEPTH_PERCENT
+            and np.float32(gain_db) > _OVERLAP_MIN_GAIN_DB)
+    ]
+    for frequency, _, _, _, _ in boosts:
+        angle = 2.0 * pi * frequency / sample_rate
+        z1 = complex(cos(angle), -sin(angle))
+        z2 = z1 * z1
+        # Include the receiving band when eligible, and sum magnitudes rather
+        # than powers or complex responses. The reset path seeds this weight
+        # directly, without starting an overlap slew from unity.
+        overlap = sum(abs((b0 + b1 * z1 + b2 * z2) / (1.0 + a1 * z1 + a2 * z2))
+                      for b0, b1, b2, a1, a2 in contributors)
+        yield 1.0 / max(1.0, overlap)
+
+
 def process_bands(stereo, bands, *, sample_rate=48000):
     """Return the full (direct + wet) settled output as a (2, N) float64 array.
 
     Each band is (slot, frequency, gain_db, depth[, q[, shape]]), with Q=1
-    and shape='bell' by default. Slots are unique and processed in ascending
-    order, independent of the input sequence. Supports at most one boost
-    and one Bell cut. Depth zero leaves a band's conventional EQ enabled.
+    and shape='bell' by default. Supplied slots are active and enabled;
+    omit inactive slots. Slots 1–8 are unique and run in ascending order,
+    independent of the input sequence. Depth zero leaves conventional EQ
+    enabled but contributes neither spatial audio nor overlap weight.
     """
     stereo = _validate_input(stereo, sample_rate)
     specs = sorted(_band_spec(*band) for band in bands)
     slots = {band[0] for band in specs}
     if len(slots) != len(specs):
         raise ValueError("band slots must be unique")
-    if len(specs) > 2 or (len(specs) == 2 and (specs[0][2] > 0) == (specs[1][2] > 0)):
-        raise ValueError("at most one boost and one cut are supported")
-
     direct = stereo.copy()
-    boost = wet_cut = None
+    boosts, wet_cuts = [], []
     for _, frequency, gain_db, depth, q, shape in specs:
         coeffs = _matched_pole(sample_rate, frequency, q, shape, gain_db)
         eq = _filter_stereo(direct, coeffs)
         if gain_db < 0.0 and depth > 0.0:
             eq += _cut_mid_restore(direct, eq, depth)
-            wet_cut = coeffs, depth
-        elif gain_db > 0.0 and depth > 0.0 and (shape == "bell" or gain_db > 1e-5):
-            boost = depth, sample_rate, frequency, gain_db, q, shape
+            wet_cuts.append((coeffs, depth))
+        elif depth > 0.0 and _wet_boost_gain_eligible(gain_db):
+            boosts.append((frequency, gain_db, depth, q, shape))
         direct = eq
 
-    if boost is None or stereo.shape[1] == 0:
+    if not boosts or stereo.shape[1] == 0:
         return direct
 
-    # Extraction sees the final post-EQ pair; the cut's separate wet state
-    # processes the accumulated return before the global bass high-pass.
-    wet = _boost_wet(direct, *boost)
-    if wet_cut is not None:
-        coeffs, depth = wet_cut
+    # Every extractor sees the same final post-EQ pair. Wet cuts run in
+    # slot order after accumulation and before the shared bass high-pass.
+    weights = _overlap_weights(sample_rate, boosts) if len(boosts) > 1 else (1.0,)
+    returns = (_boost_wet(direct, depth, sample_rate, frequency, gain_db, q, shape, overlap=weight)
+               for (frequency, gain_db, depth, q, shape), weight in zip(boosts, weights))
+    wet = next(returns)
+    for contribution in returns:
+        wet += contribution
+    for coeffs, depth in wet_cuts:
         wet += depth * (_filter_stereo(wet, coeffs) - wet)
     return direct + _wet_highpass(wet, sample_rate)
