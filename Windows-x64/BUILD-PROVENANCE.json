@@ -1,13 +1,13 @@
 {
-  "base_commit_not_producing_revision": "7265116e3ccc99503d9f881294ee301a011f4897",
+  "base_commit_not_producing_revision": "463dc922a00ff64bae257a05dec138c8949afda2",
   "build_directory": "source/build",
   "build_exit_code": 0,
-  "build_log": "source/build/wet-graphs-build.log",
-  "build_log_sha256": "d78d657613a64b95684636cc04220261a2f9e97087c701a658290916f71b05d8",
-  "observed_utc": "2026-11-25T14:00:45.287313+00:00",
+  "build_log": "source/build/wet-pins-build.log",
+  "build_log_sha256": "675372697891f22d587769c8b1925975d9fc44f57873de1755b2a47b7c8321a7",
+  "observed_utc": "2026-11-27T08:24:13.833296+00:00",
   "packaged_binaries_sha256": {
-    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "b59618cbf3db3223231c4a920e2add5ef3765d97c56628e992d539ec03975dce",
-    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "a10a409bfa0ae8823b2e52c6df6cd5127ffdfa52677026827e13ec731f3b03ac"
+    "Windows-x64/CLAP/HEAVEN by lil grass block.clap": "15f9ead79ef8f376efb1bc21cf2306f008a9a1ec12b748ddbade4666ed42ba55",
+    "Windows-x64/VST3/HEAVEN by lil grass block.vst3/Contents/x86_64-win/HEAVEN by lil grass block.vst3": "c1dac6babeec713ef535a7c29036cb1a3575fe247703919a4b75e6929d63e4b3"
   },
   "source_inputs_sha256": {
     "ThirdParty/CLAP-Helpers.txt": "da7cee3f00825d45db7cad8e0c65abf150faad60f4acb0ab46137887ba536abe",
@@ -51,7 +51,7 @@
     "ThirdParty/Vital/src/synthesis/framework/utils.h": "03ab20657db95414fe8f4710413921cd0af6bf9cc06dc081d9ec054c4c5ebd74",
     "ThirdParty/Vital/src/synthesis/lookups/lookup_table.h": "f9a517b8a4443722f3b48557ac2178a204cec1f4f910525e7e313d956e882de4",
     "ThirdParty/Vital/src/synthesis/lookups/memory.h": "a74ac243b4b1a6c2b114c203ef247eb018b9bef61eec7d30d28eaf4343935b97",
-    "source/CMakeLists.txt": "42beed3e7d1b484359c261dccf412f2da907e43c12ce036935f831c54d831b25",
+    "source/CMakeLists.txt": "729278d964ebc25a2f3f03f7572e55881a480b0260072dedaf8a38f1e27f40a5",
     "source/assets/OxaniumMedium.ttf": "d0676de4894cd22591b4bb538dae5b8e06c44e0fb943300a7cff3945fe643689",
     "source/assets/OxaniumSemiBold.ttf": "e2d77ec4ee67b0152166adf5d6393360550a012c2066e0d4589053e14a733cdc",
     "source/assets/PixelifySans.ttf": "9ba86cd010a4de309d263ceff8e8044092c9db7efda869620cb9ff1c4389e8a5",
@@ -95,7 +95,7 @@
     "source/src/ReactiveFxVisualModels.h": "b3512340e0e4938da45fd56d9469d69422dd9a20e6032c059e637881cab36712",
     "source/src/ReactiveMaterial.h": "1b3af30dcbae621e84a7e9673dc23dd0ceb8d7f8c3b7a2a52fe05beda7627491",
     "source/src/Routing.h": "edeb99133cac00bf94fde0ea39b6c7181f82102000e8fa887f5a085be5ced20e",
-    "source/src/RoutingPanel.h": "577af30b11bfe0576c4ecec6489ac333932d5a1798b5f7eaa2f92fba0e7de27a",
+    "source/src/RoutingPanel.h": "b5323017cb9f08891d876d4c05af0cf6de3dbbffa56dbfb9c789469a292db143",
     "source/src/SpectralMorph.h": "38c7aba399d853fb429b0b35703c7b4e8eb0314f8323e119dbb22825b4da0bf7",
     "source/src/SpectralMorphBridge.h": "04f82118810ff883bb8bbc3a9a52d3c914f8772304bacc8cc1bdd7c91c258506",
     "source/src/SpectralMorphVisual.h": "c4f5098684369153822c3927d2a70461b14e87f550aef28ea036617fac909ee7",
@@ -111,8 +111,9 @@
     "source/src/VocalGlitch.h": "a6bcdd4425856eb7c92bf22833d48a286a5de726578d84287f8292a1a3eb0bd0",
     "source/src/VoiceBridge.h": "99814f40c0094008b9e0ca374968d6be12d3404eb343eef98ad00e1d69351f98",
     "source/src/VoiceMonitor.h": "ffb8850b8b60a80c359adfb309d57e66db4b2c106e04e725b863167d915930e8",
-    "source/src/Waveshaper.h": "2e98576a2e9bb38864a7675629fce399b51cf3166daa840cb6fe385b17f47050"
+    "source/src/Waveshaper.h": "2e98576a2e9bb38864a7675629fce399b51cf3166daa840cb6fe385b17f47050",
+    "source/src/WetPinConnections.h": "bc00851905614e14fc562a6ffc98a55a1ed03e3867d9eea4ed2ef6823cda4a44"
   },
   "source_mode": "uncommitted-working-tree",
-  "version": "1.15.0"
+  "version": "1.15.1"
 }

@@ -241,51 +241,39 @@ void voiceVisibility() {
     }
 }
 
+// Keep the existing EditorTests registration for the former fold behavior.
 void foldedMainChorale() {
     for (const bool neon : {false, true}) {
         const auto graph = vocalstack::defaultGraph();
         Fixture f(graph, neon);
         setParameter(f.owner, vocalstack::fxParameterId(0, "On"), 0);
         pumpTimers();
-        f.selected(12, "CHORALE / MAIN", false);
-        f.expectGraph(graph, "Folding bypass published a different graph");
-        const auto midpoint = (f.pin(11, true) + f.pin(13, false)) * 0.5f;
-        click(f.canvas(), midpoint);
-        expect(labelIs(*f.panel, "AUDIO CONNECTION"), "Folded wire could not be selected");
-        action(*f.panel, "Disconnect");
-        auto disconnected = graph;
-        disconnected.links.erase(disconnected.links.end() - 2, disconnected.links.end());
-        f.expectGraph(disconnected, "Folded Disconnect did not remove BOTH real chain links");
-        action(*f.panel, "Undo");
-        f.expectGraph(graph, "Folded Disconnect undo did not restore real chain");
-        drag(f.canvas(), f.pin(13, false), {760, 500});
-        f.expectGraph(disconnected, "Folded input-end empty drop retained hidden chain");
-        action(*f.panel, "Undo");
-        auto direct = disconnected;
-        direct.links.push_back({11, 13, 0});
-        drag(f.canvas(), f.pin(11, true), f.pin(13, false));
-        f.expectGraph(direct, "Folded output rewire did not create one real direct cable");
-        action(*f.panel, "Undo");
-        drag(f.canvas(), f.pin(11, true), {760, 500});
-        f.expectGraph(disconnected, "Folded output empty drop retained hidden chain");
-        action(*f.panel, "Undo");
-
-        click(f.canvas(), midpoint);
-        setParameter(f.owner, vocalstack::fxParameterId(0, "On"), 1);
-        pumpTimers();
-        expect(vocalstack::toneUiTests::find<juce::Label>(*f.panel, [](auto& label) {
-                   return label.getText().contains("Transparent bypass:");
-               }) == nullptr, "Host enabling Chorale left a stale folded-wire inspector");
         f.selected(12, "CHORALE / MAIN", true);
         auto* enabled = findButton(*f.panel, "FX enabled");
-        expect(enabled && enabled->getToggleState(), "Host mainChorale On did not reveal enabled inspector");
+        expect(enabled && !enabled->getToggleState(), "Bypassed Main Chorale did not show its inspector");
+        f.expectGraph(graph, "Bypass changed the stored canonical chain");
+
+        auto disconnected = graph;
+        disconnected.links.erase(std::remove_if(disconnected.links.begin(), disconnected.links.end(), [](const auto& link) {
+            return link.source == 12 && link.destination == 13;
+        }), disconnected.links.end());
+        drag(f.canvas(), f.pin(12, true), {760, 500});
+        f.expectGraph(disconnected, "Dragging bypassed Chorale's output did not remove only its outgoing link");
+        action(*f.panel, "Undo");
+        f.expectGraph(graph, "Undo did not restore the real Chorale cable");
+
+        f.selected(12, "CHORALE / MAIN", true);
+        setParameter(f.owner, vocalstack::fxParameterId(0, "On"), 1);
+        pumpTimers();
+        enabled = findButton(*f.panel, "FX enabled");
+        expect(enabled && enabled->getToggleState(), "Main Chorale inspector did not follow host enable");
         setParameter(f.owner, vocalstack::fxParameterId(0, "On"), 0);
         pumpTimers();
-        expect(!labelIs(*f.panel, "CHORALE / MAIN"), "Host bypass left folded node selected");
-        f.selected(12, "CHORALE / MAIN", false);
-        f.expectGraph(graph, "Host bypass changed stored canonical chain");
+        enabled = findButton(*f.panel, "FX enabled");
+        expect(labelIs(*f.panel, "CHORALE / MAIN") && enabled && !enabled->getToggleState(),
+               "Host bypass hid the selected Main Chorale or left its switch on");
+        f.expectGraph(graph, "Host bypass changed the stored canonical chain");
 
-        // A custom bypassed effect remains a machine, never a transparent cable.
         Fixture custom(serialFxGraph(), neon);
         setParameter(custom.owner, "fx1On", 0);
         pumpTimers();
@@ -301,7 +289,7 @@ void foldedMainChorale() {
         setParameter(noncanonical.owner, vocalstack::fxParameterId(0, "On"), 0);
         pumpTimers();
         noncanonical.selected(12, "CHORALE / MAIN", true);
-        noncanonical.expectGraph(altered, "Noncanonical bypass was folded or changed");
+        noncanonical.expectGraph(altered, "Noncanonical bypass changed saved routing");
     }
 }
 

@@ -5,7 +5,7 @@
 
 ## Install on Windows x64
 
-This guide covers **HEAVEN by lil grass block v1.15.0**. Choose the format your
+This guide covers **HEAVEN by lil grass block v1.15.1**. Choose the format your
 host supports; installing both is optional. No installer or source build is
 required to use the supplied binaries.
 
@@ -197,27 +197,26 @@ reported latency stay aligned. Same-latency routing edits apply without reactiva
 
 ## Shape only the wet signal
 
-In **Routing**, open an FX node’s **Wet pocket**. This opens a separate canvas
-with **Wet In** and **Wet Out**, initially connected. Add normal nodes with the
-Routing Add menu and wire them between the endpoints. For example, patch
-`Wet In → Delay → Reverb → Wet Out` inside Granular to hear the echoes and
-reverb only with Granular’s wet signal. Unwired nodes do not process that
-signal; disconnecting Wet Out silences the pocket. The parent’s dry path stays
-untouched, and its Mix controls the complete wet path. **Back to Routing**
-returns to the main graph. Old Granular → Delay pockets keep their sound and
-open with the Delay already wired.
+In **Routing**, an FX node’s **Wet Out** (right) and **Wet Return** (left) are
+visible on the same canvas, even when the node is collapsed. Add normal FX
+nodes and patch them between those pins. For example, wire
+`Granular Wet Out → Delay → Granular Wet Return`. Leave Granular’s normal
+output connected to the rest of the graph. Its Mix controls how much of the
+whole wet path you hear, without sending the dry signal through Delay.
 
-In either graph, drag a **disconnected node** over a cable. Drop when the
-cable highlights to insert that node between its existing ends, using the
-node’s primary input and output. Undo restores both the cable and the node’s
-position in one step.
+Before patching the wet pins the effect works normally. Once you patch them,
+an unwired Wet Return is silent; wire Wet Out directly to Wet Return to restore
+the unmodified wet signal. Old wet graphs appear inline with their cables intact.
 
-Pocket cables stay inside their pocket. Pockets cannot nest and share the
-normal node and FX slot limits. Only FX with a single wet path can own a
-pocket. Multiband can be used inside a pocket but has no single wet pocket of
-its own. RAW host inputs are available in the main graph only; a pocket Morph
-can take its donor from a branch within that pocket. EQ8 has no Mix control;
-its pocket follows EQ8’s bypass. Stack is unchanged.
+Drop a **disconnected node** onto a highlighted cable to insert it between
+both existing ends. Undo restores its original position and the original
+cable in one step. Wet chains can branch within their owner’s wet path but
+can’t share cables with the main signal or another wet path. A chain must be
+disconnected from the main path before attaching it to a wet pin.
+
+Only FX with one wet path have these pins. Multiband can go in a wet path, but
+its own band outputs use ordinary cables. EQ8’s wet path follows its bypass.
+Stack is unchanged.
 
 ## Modulation, presets and displays
 
@@ -249,7 +248,7 @@ not recorded echoes or live grain waveforms. See the [showcase notes](showcase/R
   inspect sample peaks and trim Output. Neither Gain Rider nor merge compensation
   prevents clipping or guarantees perceived loudness.
 - **Host-specific problems:** report the host and plugin format. Older release
-  validation records apply only to their named builds, not to v1.15.0 or to every host.
+  validation records apply only to their named builds, not to v1.15.1 or to every host.
 
 [Open an issue](https://github.com/YukiYuziriha/plug1/issues) with version, format,
 host/Windows versions, sample rate, block size and minimal reproduction steps.

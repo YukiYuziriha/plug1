@@ -8,9 +8,9 @@ HEAVEN is an open-source audio effect for **Windows x64 · CLAP and VST3**. Turn
 
 [Download the latest release](https://github.com/YukiYuziriha/plug1/releases/latest) · [Install](#download--install) · [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase)
 
-## v1.15.0 — Effects inside effects
+## v1.15.1 — Patch the wet signal
 
-Open a Routing node’s wet pocket and patch a separate graph between **Wet In** and **Wet Out**. Echo only the grains, add reverb to repeats, or split the wet signal into parallel FX. To insert a disconnected node, drop it directly onto a cable. [How wet pockets work](docs/Getting-Started.md#shape-only-the-wet-signal).
+Connect an FX node’s **Wet Out** through other nodes and back to its **Wet Return**, right on the Routing canvas. Echo only the grains, add reverb to repeats, or split the wet signal into parallel FX. Drop a disconnected node on a cable to insert it. [How wet routing works](docs/Getting-Started.md#shape-only-the-wet-signal).
 
 ### Bring your own double
 

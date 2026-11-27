@@ -1,10 +1,10 @@
 # HEAVEN: licenses, corresponding source and build provenance
 
-This notice covers **HEAVEN by lil grass block 1.15.0**. See
+This notice covers **HEAVEN by lil grass block 1.15.1**. See
 [Getting Started](../docs/Getting-Started.md) for Sidechain Blend, the independent
 Sidechain card, Gain Rider and the four skins. Use `BUILD-PROVENANCE.json` from
 an archive of this version to check its build evidence and exact binary and
-source-input hashes. See the [v1.15.0 validation record](../docs/Release-1.15.0-Validation.md)
+source-input hashes. See the [v1.15.1 validation record](../docs/Release-1.15.1-Validation.md)
 for the checks run on this build.
 
 These CLAP/VST3 binaries combine GPLv3-covered Vocal Stack/Vital code with JUCE
@@ -22,10 +22,10 @@ repository and corresponding-source ZIP for build and license details.
 
 ## Release source and evidence
 
-The release assets are named `HEAVEN-1.15.0-Windows-x64.zip`,
-`HEAVEN-1.15.0-corresponding-source.zip` and `SHA256SUMS.txt`. Corresponding
+The release assets are named `HEAVEN-1.15.1-Windows-x64.zip`,
+`HEAVEN-1.15.1-corresponding-source.zip` and `SHA256SUMS.txt`. Corresponding
 source is offered at no extra charge under GPLv3/AGPLv3 section 6(d). The source
-archive root is `HEAVEN-1.15.0/`; other versions use their selected version.
+archive root is `HEAVEN-1.15.1/`; other versions use their selected version.
 
 The source ZIP includes the editable project, build/patch scripts, retained
 Vital subset, embedded fonts, licenses/notices, and complete pinned sources for
@@ -58,12 +58,12 @@ containing `0`. Use the actual build/log locations for your build.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Test-Release-Bundles.py
 ```
 
-After completing and validating the 1.15.0 Release build:
+After completing and validating the 1.15.1 Release build:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Refresh-Windows-Package.py --build-directory source/build --build-log source/build/release-build.log --build-exit-file source/build/release-build.exit --version 1.15.0
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Release-Assets.py --working-tree --version 1.15.0 --deps-cache source/build/_deps --output-directory source/build/publication-1.15.0
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Verify-Release-Assets.py --directory source/build/publication-1.15.0 --version 1.15.0
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Refresh-Windows-Package.py --build-directory source/build --build-log source/build/release-build.log --build-exit-file source/build/release-build.exit --version 1.15.1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Release-Assets.py --working-tree --version 1.15.1 --deps-cache source/build/_deps --output-directory source/build/publication-1.15.1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Verify-Release-Assets.py --directory source/build/publication-1.15.1 --version 1.15.1
 ```
 
 Refresh changes repository delivery files only, never installed plugins. It
@@ -79,7 +79,7 @@ documents; it includes the selected release validation document if present.
 Use a new output directory; existing ZIPs are not overwritten. Source-only export:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Corresponding-Source.py --working-tree --deps-cache source/build/_deps --output source/build/HEAVEN-1.15.0-corresponding-source.zip
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python tools/Bundle-Corresponding-Source.py --working-tree --deps-cache source/build/_deps --output source/build/HEAVEN-1.15.1-corresponding-source.zip
 ```
 
 `--revision COMMIT` is available for an exact, independently established

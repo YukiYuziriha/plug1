@@ -8,8 +8,10 @@
 #include "UtilityEffectPanel.h"
 #include "ModulationPanel.h"
 #include "FluidBackground.h"
+#include "WetPinConnections.h"
 #include <map>
 #include <limits>
+#include <optional>
 
 namespace vocalstack {
 
@@ -66,13 +68,6 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
     public:
         NodeCard(RoutingPanel& p, const RoutingNode& n) : panel(p), model(n) {
             const int slot = panel.fxSlot(n);
-            if (panel.canOwnWetPocket(n)) {
-                wetPocket.setComponentID("wetPocket");
-                wetPocket.setTooltip("Open this machine's wet routing, before its Mix.");
-                wetPocket.setButtonText("Open Wet Pocket");
-                wetPocket.onClick = [p = &panel, id = model.id] { p->openWetPocket(id); };
-                addAndMakeVisible(wetPocket);
-            }
             if (isEffect(n.type) && slot >= 0) {
                 enabled.setModulationOwner(panel.owner);
                 enabled.setComponentID(fxParameterId(size_t(slot), "On"));
@@ -142,7 +137,6 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         void resized() override {
             auto body = getLocalBounds();
             if (enabled.getParentComponent()) { enabled.setBounds(body.removeFromTop(28).withWidth(150)); body.removeFromTop(4); }
-            if (wetPocket.getParentComponent()) { wetPocket.setBounds(body.removeFromTop(26)); body.removeFromTop(4); }
             if (voice) voice->setBounds(body);
             if (tone) tone->setBounds(body);
             if (spectral) spectral->setBounds(body);
@@ -176,8 +170,6 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
             enabled.setColour(juce::TextButton::buttonOnColourId, p.accent);
             enabled.setColour(juce::TextButton::textColourOffId, p.text);
             enabled.setColour(juce::TextButton::textColourOnId, p.background);
-            wetPocket.setColour(juce::TextButton::buttonColourId, p.inset);
-            wetPocket.setColour(juce::TextButton::textColourOffId, p.text);
             modulationui::styleRotary(localMix, neon);
         }
         void reveal(const juce::String& id) {
@@ -204,7 +196,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         }
         bool matches(const RoutingNode& n) const {
             return model.type == n.type && model.voiceSlot == n.voiceSlot
-                && model.mainControls == n.mainControls && model.wetOwner == n.wetOwner;
+                && model.mainControls == n.mainControls;
         }
     private:
         void addKnob(const juce::String& id, const juce::String& label, const char* unit) {
@@ -218,7 +210,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         RoutingPanel& panel;
         RoutingNode model;
         bool editing = false;
-        modulationui::Button enabled, wetPocket;
+        modulationui::Button enabled;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enabledLink;
         std::unique_ptr<VoiceControls> voice;
         std::unique_ptr<ToneEffectPanel> tone;
@@ -363,10 +355,6 @@ public:
             updateModulationPanel(); saveLayout(); updateButtons();
         };
         addAndMakeVisible(status);
-        addChildComponent(backToRouting);
-        backToRouting.setButtonText("Back to Routing");
-        backToRouting.setComponentID("backToRouting");
-        backToRouting.onClick = [this] { refreshGraphFromOwner(); changeRoutingScope(0); };
                 addAndMakeVisible(modulatorViewport); modulatorViewport.setViewedComponent(&modulatorStrip, false);
                 modulatorViewport.setScrollBarThickness(scrollbarMetrics::standard);
                 toneViewport.setScrollBarThickness(scrollbarMetrics::standard);
@@ -417,9 +405,9 @@ public:
         zoomIn.onClick = [this] { zoomAt(canvas.getLocalBounds().getCentre().toFloat(), 1.2f); };
         canvas.setName("Routing node canvas");
         add.setTooltip("Add an effect, mixer, splitter, sidechain blend, or missing source");
-        remove.setTooltip("Delete the selected node, its cables, and any FX in its wet pocket. Output is retained.");
+        remove.setTooltip("Delete the selected node, its cables, and any FX on its wet path. Output is retained.");
         bypass.setTooltip("Bypass the selected FX through its host parameter. Bypassed Multiband passes full-band audio on port 0 only.");
-        graph = owner.getRoutingGraph();
+        graph = readCanvasGraph();
         loadLayout(owner.getRoutingLayout());
         ensurePositions();
         rebuildModulatorStrip();
@@ -450,14 +438,14 @@ public:
     }
     // Rack topology edits share Routing's history, including lifecycle parameter snapshots.
     bool commitExternalGraphEdit(const Graph& candidate, juce::String& rejectionReason) {
-        auto latest = owner.getRoutingGraph();
+        auto latest = readCanvasGraph();
         const auto next = signature(latest);
         const auto savedLayout = owner.getRoutingLayout();
         const auto layoutSignature = savedLayout.toXmlString();
         const auto revision = stateRevision();
         if (next != lastSignature || layoutSignature != lastLayoutSignature || revision != lastStateRevision) {
-            if (revision != lastStateRevision) setRoutingScope(0);
             lastStateRevision = revision;
+            cancelCanvasGesture();
             // Hidden panels may not have observed a preset/host graph or layout change.
             undoStates.clear(); redoStates.clear(); selectedLink = -1;
             graph = std::move(latest);
@@ -505,7 +493,7 @@ public:
             selected && selected->type == NodeType::sidechain ? sidechainColour() : palette.text);
         inspectorInfo.setColour(juce::Label::textColourId, palette.muted);
         status.setColour(juce::Label::textColourId, error.isEmpty() ? palette.secondary : palette.accent);
-        for (auto* b : std::initializer_list<juce::TextButton*>{&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn, &disconnect, &addModulator, &assignmentBanner, &expandAll, &collapseAll, &inspectorToggle, &modulationToggle, &backToRouting}) {
+        for (auto* b : std::initializer_list<juce::TextButton*>{&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn, &fxOn, &disconnect, &addModulator, &assignmentBanner, &expandAll, &collapseAll, &inspectorToggle, &modulationToggle}) {
             b->setColour(juce::TextButton::buttonColourId, palette.panel);
             b->setColour(juce::TextButton::buttonOnColourId, palette.accent);
             b->setColour(juce::TextButton::textColourOffId, palette.text);
@@ -543,17 +531,10 @@ public:
             g.drawHorizontalLine(modulationDivider.getBounds().getCentreY(), float(canvas.getX()), float(canvas.getRight()));
         g.setColour(palette.muted);
         g.setFont(themeFont(theme, 11.5f));
-        if (wetScope) {
-            g.drawFittedText("Wet pocket / " + wetOwnerLabel(wetScope), 146, 43,
-                             juce::jmax(0, assignmentBanner.isVisible() ? assignmentBanner.getX() - 154 : getWidth() - 158),
-                             24, juce::Justification::centredLeft, 1);
-        } else {
-            g.drawText("Output drag: move / empty drop disconnects  |  Ctrl/Cmd+drag output: source  |  Wheel: zoom  |  Alt/middle drag: pan", 12, 43, getWidth() - 24, 22, juce::Justification::centredLeft);
-        }
+        g.drawText("Output drag: move / empty drop disconnects  |  Ctrl/Cmd+drag output: source  |  Wheel: zoom  |  Alt/middle drag: pan", 12, 43, getWidth() - 24, 22, juce::Justification::centredLeft);
     }
     void resized() override {
         auto toolbar = getLocalBounds().reduced(12).removeFromTop(28);
-        backToRouting.setBounds(12, 43, 126, 24);
         for (auto* b : {&add, &undo, &redo, &remove, &bypass, &fit, &zoomOut, &zoomIn}) {
             const int width = b == &zoomIn || b == &zoomOut ? 30 : b == &remove ? 102 : b == &bypass ? 90 : 66;
             b->setBounds(toolbar.removeFromLeft(width)); toolbar.removeFromLeft(6);
@@ -597,7 +578,6 @@ public:
     void selectVoice(int slot) {
         for (const auto& n : graph.nodes)
             if ((slot < 0 && n.type == NodeType::lead) || (n.type == NodeType::voice && int(n.voiceSlot) == slot)) {
-                setRoutingScope(0);
                 selectedNode = n.id; selectedLink = -1;
                 rebuildInspector(); saveLayout(); syncNodeCards(); canvas.repaint(); return;
             }
@@ -605,11 +585,6 @@ public:
     void selectEffect(uint32_t id) {
         const auto* target = node(id);
         if (!target || !isEffect(target->type)) return;
-        if (target->wetOwner != wetScope) {
-            const auto scope = target->wetOwner;
-            if (scope) openWetPocket(scope); else changeRoutingScope(0);
-            if (wetScope != scope) return;
-        }
         selectedNode = id; selectedLink = -1;
         rebuildInspector(); saveLayout(); canvas.repaint();
     }
@@ -618,7 +593,6 @@ public:
         refreshGraphFromOwner();
         const auto* blend = node(sidechainBlendNodeId);
         if (!blend || blend->type != NodeType::sidechainBlend) return false;
-        setRoutingScope(0);
         selectedNode = blend->id; selectedLink = -1;
         revealExpanded(*blend);
         rebuildInspector(); saveLayout(); syncNodeCards(); canvas.repaint();
@@ -728,7 +702,7 @@ private:
                 const bool mix = n.type == NodeType::mix && (n.mainControls ? id == "double" : id == localMixParameterId(n.id));
                 const bool output = id == "outputGain" && n.type == NodeType::output;
                 if (fx || legacyFx) { selectEffect(n.id); break; }
-                if (mix || output) { changeRoutingScope(n.wetOwner); selectedNode = n.id; selectedLink = -1; rebuildInspector(); break; }
+                if (mix || output) { selectedNode = n.id; selectedLink = -1; rebuildInspector(); break; }
             }
         }
         if (!inspectorVisible) if (const auto* n = node(selectedNode); n && isExpanded(*n)) {
@@ -786,10 +760,6 @@ private:
         return juce::Colours::grey;
     }
 
-    juce::String wetOwnerLabel(uint32_t id) const {
-        if (const auto* parent = node(id)) return nodeLabel(*parent);
-        return "Node " + juce::String(id);
-    }
     juce::String nodeLabel(const RoutingNode& n) const {
         if (n.type == NodeType::sidechain) return sidechainLabel();
         if (const auto alias = names.find(n.id); alias != names.end() && !isWetBoundary(n.type)) return alias->second;
@@ -800,8 +770,8 @@ private:
         case NodeType::sidechainBlend: return "Sidechain Blend";
         case NodeType::voice: return "VOICE " + juce::String(n.voiceSlot + 1);
         case NodeType::chorale: return n.mainControls ? "CHORALE / MAIN" : "CHORALE " + juce::String(int(n.id) - 98);
-        case NodeType::wetInput: return "Wet In";
-        case NodeType::wetOutput: return "Wet Out";
+        case NodeType::wetInput: return "Wet Out";
+        case NodeType::wetOutput: return "Wet Return";
         case NodeType::sum: return {}; // Legacy nodes are stripped by the processor.
         case NodeType::mix: return n.mainControls ? "LEAD / STACK" : "DRY / WET MIX";
         case NodeType::output: return "OUTPUT";
@@ -880,72 +850,51 @@ private:
             return basicVoiceSettings(0).at(size_t(slot)).present;
         return toneui::value(owner, voicePresentParameterId(size_t(slot)), slot < 2 ? 1.0f : 0.0f) >= 0.5f;
     }
-    // Only the untouched canonical main chain may be represented as a direct
-    // bypass cable. No alternate graph is published or used for processing.
-    std::pair<int, int> foldedChain() const {
-        if (wetScope) return {-1, -1};
-        const auto* mix = node(11); const auto* fx = node(12); const auto* out = node(13);
-        if (!mix || mix->type != NodeType::mix || !mix->mainControls
-            || !fx || fx->type != NodeType::chorale || !fx->mainControls
-            || effectEnabled(*fx) || isExpanded(*fx) || hasWetMembers(fx->id)
-            || !out || out->type != NodeType::output) return {-1, -1};
-        int incoming = -1, outgoing = -1, touching = 0;
-        for (size_t i = 0; i < graph.links.size(); ++i) {
-            const auto& l = graph.links[i];
-            if (l.source == 12 || l.destination == 12) ++touching;
-            if (l.source == 11 && l.sourcePin == 0 && l.destination == 12 && l.inputPin == 0) incoming = int(i);
-            if (l.source == 12 && l.sourcePin == 0 && l.destination == 13 && l.inputPin == 0) outgoing = int(i);
-        }
-        return touching == 2 && incoming >= 0 && outgoing >= 0
-            ? std::make_pair(incoming, outgoing) : std::make_pair(-1, -1);
-    }
     bool nodeVisible(const RoutingNode& n) const {
-        if (n.wetOwner != wetScope || n.type == NodeType::sum) return false;
-        if (n.type == NodeType::voice) return voicePresent(n.voiceSlot);
-        if (n.id == 12 && n.type == NodeType::chorale && n.mainControls && !effectEnabled(n)) {
-            if (isExpanded(n) || hasWetMembers(n.id)) return true;
-            if (foldedChain().first >= 0) return false;
-            return std::any_of(graph.links.begin(), graph.links.end(), [](const auto& l) { return l.source == 12 || l.destination == 12; });
-        }
+        return n.type != NodeType::sum && !isWetBoundary(n.type)
+            && (n.type != NodeType::voice || voicePresent(n.voiceSlot));
+    }
+    static constexpr int wetPin = -1;
+    struct VisualPin {
+        uint32_t id = 0;
+        int pin = 0;
+        explicit operator bool() const { return id != 0; }
+        bool operator==(const VisualPin& other) const { return id == other.id && pin == other.pin; }
+    };
+    VisualPin visualPin(uint32_t id, int pin) const {
+        if (const auto* n = node(id); n && isWetBoundary(n->type)) return {n->wetOwner, wetPin};
+        return {id, pin};
+    }
+    struct DisplayLink { RoutingLink link; int index; };
+    bool displayLink(int index, DisplayLink& result) const {
+        if (index < 0 || index >= int(graph.links.size())) return false;
+        const auto& link = graph.links[size_t(index)];
+        const auto* a = node(visualPin(link.source, link.sourcePin).id);
+        const auto* b = node(visualPin(link.destination, link.inputPin).id);
+        if (!a || !b || !nodeVisible(*a) || !nodeVisible(*b)) return false;
+        result = {link, index};
         return true;
     }
-    struct DisplayLink { RoutingLink link; int index; int foldedEnd = -1; };
     std::vector<DisplayLink> displayLinks() const {
         std::vector<DisplayLink> result;
-        const auto fold = foldedChain();
-        for (size_t i = 0; i < graph.links.size(); ++i) {
-            if (int(i) == fold.second) continue;
-            auto l = graph.links[i];
-            if (int(i) == fold.first) { l.destination = 13; l.inputPin = 0; }
-            const auto* a = node(l.source); const auto* b = node(l.destination);
-            if (a && b && nodeVisible(*a) && nodeVisible(*b))
-                result.push_back({l, int(i), int(i) == fold.first ? fold.second : -1});
+        for (int i = 0; i < int(graph.links.size()); ++i) {
+            DisplayLink item;
+            if (displayLink(i, item)) result.push_back(item);
         }
         return result;
     }
-    bool displayLink(int index, DisplayLink& result) const {
-        for (const auto& item : displayLinks()) if (item.index == index) { result = item; return true; }
-        return false;
-    }
     static void eraseDisplayedLink(Graph& target, const DisplayLink& item) {
-        if (item.foldedEnd >= 0) {
-            target.links.erase(target.links.begin() + juce::jmax(item.index, item.foldedEnd));
-            target.links.erase(target.links.begin() + juce::jmin(item.index, item.foldedEnd));
-        } else target.links.erase(target.links.begin() + item.index);
+        target.links.erase(target.links.begin() + item.index);
     }
-    void eraseDisplayedLink(const DisplayLink& item) { eraseDisplayedLink(graph, item); }
-    void clearOutput(std::uint32_t source, int pin) {
-        const auto fold = foldedChain();
-        if (source == 11 && pin == 0 && fold.first >= 0)
-            eraseDisplayedLink({{}, fold.first, fold.second});
-        graph.links.erase(std::remove_if(graph.links.begin(), graph.links.end(), [source, pin](const auto& l) {
+    static void clearOutput(Graph& target, uint32_t source, int pin) {
+        target.links.erase(std::remove_if(target.links.begin(), target.links.end(), [source, pin](const auto& l) {
             return l.source == source && l.sourcePin == pin;
-        }), graph.links.end());
+        }), target.links.end());
     }
     void disconnectSelection() {
         DisplayLink item;
         if (!displayLink(selectedLink, item)) return;
-        remember(); eraseDisplayedLink(item); selectedLink = -1;
+        remember(); eraseDisplayedLink(graph, item); selectedLink = -1;
         publish(); rebuildInspector();
     }
     void validateSelection() {
@@ -988,11 +937,11 @@ private:
             }
             inspectorDragging = true; updateButtons();
         };
-        panel.onValueChanged = [this] { graph = owner.getRoutingGraph(); lastSignature = signature(graph); };
+        panel.onValueChanged = [this] { graph = readCanvasGraph(); lastSignature = signature(graph); };
         panel.onEndEdit = [this, &editing] {
             if (!editing) return;
             editing = false;
-            inspectorDragging = false; graph = owner.getRoutingGraph(); lastSignature = signature(graph); updateButtons();
+            inspectorDragging = false; graph = readCanvasGraph(); lastSignature = signature(graph); updateButtons();
         };
     }
     bool expandable(const RoutingNode& n) const {
@@ -1005,15 +954,10 @@ private:
         return expandable(n) && it != expanded.end() && it->second;
     }
     float bodyTop(const RoutingNode& n) const {
-        const int rows = juce::jmax(inputs(n), outputPins(n) + (hasStoredPort(n) ? 1 : 0));
+        const int rows = pinRows(n) + int(canOwnWetPocket(n));
         return float(juce::jmax(64, 40 + rows * 22) + (isEffect(n.type) && !effectEnabled(n) ? 18 : 0) + 6);
     }
-    juce::Point<int> bodySize(const RoutingNode& n) const {
-        auto size = bodyControlSize(n);
-        if (canOwnWetPocket(n)) size.y += 30;
-        return size;
-    }
-    static juce::Point<int> bodyControlSize(const RoutingNode& n) {
+    static juce::Point<int> bodySize(const RoutingNode& n) {
         if (n.type == NodeType::voice || n.type == NodeType::lead) return {400, 258};
         if (n.type == NodeType::spectralMorph) return {500, 310};
         if (isCreativeEffect(n.type)) return {500, 470};
@@ -1124,11 +1068,11 @@ private:
     }
     void setAllExpanded(bool value) {
         bool changed = inspectorVisible != !value;
-        for (const auto& n : graph.nodes) changed |= n.wetOwner == wetScope && expandable(n) && isExpanded(n) != value;
+        for (const auto& n : graph.nodes) changed |= expandable(n) && isExpanded(n) != value;
         if (!changed) return;
         rememberLayout();
         std::vector<std::uint32_t> automatic;
-        for (const auto& n : graph.nodes) if (n.wetOwner == wetScope && expandable(n)) {
+        for (const auto& n : graph.nodes) if (expandable(n)) {
             if (isExpanded(n) != value) {
                 (isExpanded(n) ? expandedPositions : compactPositions)[n.id] = positions[n.id];
                 expanded[n.id] = value;
@@ -1197,15 +1141,39 @@ private:
         }
         return {p.x, p.y, 190.0f, bodyTop(n) - 6};
     }
+    int pinRows(const RoutingNode& n) const {
+        return juce::jmax(inputs(n), outputPins(n) + int(hasStoredPort(n)));
+    }
     juce::Point<float> pinPoint(const RoutingNode& n, int pin, bool output) const {
         const auto b = nodeBounds(n);
-        return {output ? b.getRight() : b.getX(), b.getY() + 42 + float(pin * 22)};
+        const int row = pin == wetPin ? pinRows(n) : pin;
+        return {output ? b.getRight() : b.getX(), b.getY() + 42 + float(row * 22)};
+    }
+    juce::Point<float> pinPoint(VisualPin pin, bool output) const {
+        return pinPoint(*node(pin.id), pin.pin, output);
     }
     bool pinHit(juce::Point<float> pin, juce::Point<float> point) const {
         // Twice the painted pin at <=100%; cap at 20 screen pixels above
         // that so adjacent port targets remain disjoint at every zoom.
         const float half = 10 * juce::jmin(1.0f, zoom);
         return juce::Rectangle<float>(pin.x - half, pin.y - half, half * 2, half * 2).contains(point);
+    }
+    VisualPin pinAt(juce::Point<float> point, bool output, bool includeStored = false) const {
+        VisualPin nearest;
+        float distance = std::numeric_limits<float>::infinity();
+        for (auto it = graph.nodes.rbegin(); it != graph.nodes.rend(); ++it) {
+            if (!nodeVisible(*it)) continue;
+            const auto consider = [&](int pin) {
+                const auto centre = toScreen(pinPoint(*it, pin, output));
+                if (!pinHit(centre, point)) return;
+                const auto d = centre.getDistanceFrom(point);
+                if (d < distance) { nearest = {it->id, pin}; distance = d; }
+            };
+            const int count = output ? outputPins(*it) + int(includeStored && hasStoredPort(*it)) : inputs(*it);
+            for (int pin = 0; pin < count; ++pin) consider(pin);
+            if (canOwnWetPocket(*it)) consider(wetPin);
+        }
+        return nearest;
     }
     juce::Point<float> toScreen(juce::Point<float> p) const { return p * zoom + pan; }
     juce::Point<float> toWorld(juce::Point<float> p) const { return (p - pan) / zoom; }
@@ -1216,7 +1184,21 @@ private:
     }
     juce::Path displayedCablePath(const DisplayLink& item) const {
         const auto& l = item.link;
-        return cable(pinPoint(*node(l.source), l.sourcePin, true), pinPoint(*node(l.destination), l.inputPin, false));
+        const auto from = visualPin(l.source, l.sourcePin), to = visualPin(l.destination, l.inputPin);
+        const auto a = pinPoint(from, true), b = pinPoint(to, false);
+        if (to.pin != wetPin || a.x < b.x) return cable(a, b);
+        // Route a backward wet return below the two cards so it remains
+        // distinguishable and editable even when it follows the send back.
+        const auto start = toScreen(a), end = toScreen(b);
+        const float y = toScreen({0.f, juce::jmax(nodeBounds(*node(from.id)).getBottom(),
+                                                  nodeBounds(*node(to.id)).getBottom()) + 22.f}).y;
+        const float offset = 18 * zoom;
+        juce::Path path;
+        path.startNewSubPath(start);
+        path.cubicTo(start.x + offset * 2.f, start.y, start.x + offset * 2.f, y, start.x + offset, y);
+        path.lineTo(end.x - offset, y);
+        path.cubicTo(end.x - offset * 2.f, y, end.x - offset * 2.f, end.y, end.x, end.y);
+        return path;
     }
     bool cableHit(const DisplayLink& item, juce::Point<float> point) const {
         const auto path = displayedCablePath(item);
@@ -1228,7 +1210,7 @@ private:
     }
     int spliceAt(juce::Point<float> point, Graph* result = nullptr) const {
         const auto* n = node(draggingNode);
-        if (!n || !nodeVisible(*n) || isWetBoundary(n->type) || !inputs(*n) || !outputPins(*n)
+        if (!n || !nodeVisible(*n) || !inputs(*n) || !outputPins(*n)
             || !canvas.getLocalBounds().toFloat().contains(point)
             || std::any_of(graph.links.begin(), graph.links.end(), [id = n->id](const auto& l) {
                 return l.source == id || l.destination == id;
@@ -1238,20 +1220,16 @@ private:
             if (!cableHit(*it, point)) continue;
             const auto& l = it->link;
             auto candidate = graph;
+            const RoutingLink in{l.source, n->id, 0, l.sourcePin}, out{n->id, l.destination, l.inputPin, 0};
+            if (!prepareWetPinConnection(candidate, in) || !prepareWetPinConnection(candidate, out)) continue;
             eraseDisplayedLink(candidate, *it);
-            candidate.links.push_back({l.source, n->id, 0, l.sourcePin});
-            candidate.links.push_back({n->id, l.destination, l.inputPin, 0});
+            candidate.links.push_back(in);
+            candidate.links.push_back(out);
             if (!RoutingExecutor::validate(candidate)) continue;
             if (result) *result = std::move(candidate);
             return it->index;
         }
         return -1;
-    }
-    int connectionCount(std::uint32_t id, int pin) const {
-        int count = 0;
-        for (const auto& item : displayLinks())
-            if (item.link.destination == id && item.link.inputPin == pin) ++count;
-        return count;
     }
     void paintCanvas(juce::Graphics& g) {
         struct PaintMeasurement {
@@ -1289,7 +1267,7 @@ private:
             auto* a = node(l.source); auto* b = node(l.destination);
             if (!a || !b) continue;
             const bool inactive = inactiveSource(l);
-            const auto wireAccent = a->type == NodeType::sidechain ? sidechainAccent : accent;
+            const auto wireAccent = a->type == NodeType::sidechain ? sidechainAccent : a->wetOwner ? palette.secondary : accent;
             g.setColour(i == selectedLink ? palette.secondary
                 : inactive ? (a->type == NodeType::sidechain ? sidechainAccent : palette.muted).withAlpha(.5f)
                            : wireAccent.withAlpha(.7f));
@@ -1305,13 +1283,14 @@ private:
         }
         if (rewiringLink >= 0 && rewiringSource) {
             DisplayLink item;
-            if (displayLink(rewiringLink, item)) if (auto* target = node(item.link.destination)) {
+            if (displayLink(rewiringLink, item)) {
                 const auto& link = item.link;
                 g.setColour(accent);
-                g.strokePath(cable(toWorld(pointer), pinPoint(*target, link.inputPin, false)), routingCableStyle::stroke());
+                g.strokePath(cable(toWorld(pointer), pinPoint(visualPin(link.destination, link.inputPin), false)), routingCableStyle::stroke());
             }
-        } else if (connecting) if (auto* n = node(connecting); n && nodeVisible(*n) && connectingPin < outputPins(*n)) {
-            g.setColour(accent); g.strokePath(cable(pinPoint(*n, connectingPin, true), toWorld(pointer)), routingCableStyle::stroke());
+        } else if (connecting && node(connecting.id)) {
+            g.setColour(accent);
+            g.strokePath(cable(pinPoint(connecting, true), toWorld(pointer)), routingCableStyle::stroke());
         }
         for (const auto& n : graph.nodes) {
             if (!nodeVisible(n)) continue;
@@ -1375,6 +1354,15 @@ private:
                 g.setColour(palette.muted);
                 g.drawText("Stored #2 | silent", int(p.x - 164), int(p.y - 8), 155, 16, juce::Justification::centredRight);
             }
+            if (canOwnWetPocket(n)) {
+                for (bool output : {false, true}) {
+                    const auto p = pinPoint(n, wetPin, output) - b.getTopLeft();
+                    g.setColour(palette.secondary);
+                    g.fillRect(p.x - 5, p.y - 5, 10.0f, 10.0f);
+                    g.drawText(output ? "Wet Out" : "Wet Return", int(p.x + (output ? -87 : 9)), int(p.y - 9), 78, 18,
+                               output ? juce::Justification::centredRight : juce::Justification::centredLeft);
+                }
+            }
             if (isEffect(n.type) && !effectEnabled(n)) {
                 // Keep status out of the title lane, even on compact long names.
                 const auto badge = juce::Rectangle<float>(face.getWidth() - 86, bodyTop(n) - 23, 80, 15);
@@ -1398,36 +1386,37 @@ private:
         cancelCanvasGesture();
         const auto world = toWorld(e.position);
         if (e.mods.isMiddleButtonDown() || e.mods.isAltDown()) { panning = true; return; }
-        const auto pickEnd = [&](int index, bool sourceEnd) {
-            if (index < 0 || index >= int(graph.links.size())) return false;
-            DisplayLink item;
-            if (!displayLink(index, item)) return false;
-            const auto& link = item.link;
-            const auto* target = node(sourceEnd ? link.source : link.destination);
-            if (!target || !pinHit(toScreen(pinPoint(*target, sourceEnd ? link.sourcePin : link.inputPin, sourceEnd)), e.position)) return false;
-            rewiringLink = selectedLink = index; rewiringSource = sourceEnd; selectedNode = 0;
-            if (!sourceEnd) { connecting = link.source; connectingPin = link.sourcePin; }
-            rebuildInspector(); canvas.repaint(); return true;
+        const auto pickEnd = [&](VisualPin pin, bool sourceEnd) {
+            if (!pin) return false;
+            const auto tryLink = [&](int index) {
+                DisplayLink item;
+                if (!displayLink(index, item)) return false;
+                const auto& link = item.link;
+                const auto end = sourceEnd ? visualPin(link.source, link.sourcePin) : visualPin(link.destination, link.inputPin);
+                if (!(end == pin)) return false;
+                rewiringLink = selectedLink = index; rewiringSource = sourceEnd; selectedNode = 0;
+                if (!sourceEnd) connecting = visualPin(link.source, link.sourcePin);
+                rebuildInspector(); canvas.repaint(); return true;
+            };
+            if (tryLink(selectedLink)) return true;
+            for (int i = int(graph.links.size()) - 1; i >= 0; --i) if (tryLink(i)) return true;
+            return false;
         };
-        // Custom single-output policy, not Blender's fanout behavior: ordinary
-        // output drags move destinations, even when a cable is selected.
-        // Only Ctrl/Command opts into moving the source of a selected/last link.
+        // Output drags move destinations; Ctrl/Command moves a selected/last source.
         if (!e.mods.isPopupMenu()) {
-            if (e.mods.isCtrlDown() || e.mods.isCommandDown()) {
-                if (pickEnd(selectedLink, true)) return;
-                for (int i = int(graph.links.size()) - 1; i >= 0; --i) if (pickEnd(i, true)) return;
+            if ((e.mods.isCtrlDown() || e.mods.isCommandDown()) && pickEnd(pinAt(e.position, true, true), true)) return;
+            const auto input = pinAt(e.position, false), output = pinAt(e.position, true);
+            if (input && (!output || toScreen(pinPoint(input, false)).getDistanceFrom(e.position)
+                                      <= toScreen(pinPoint(output, true)).getDistanceFrom(e.position))) {
+                if (pickEnd(input, false)) return;
             }
-            if (pickEnd(selectedLink, false)) return;
-            for (int i = int(graph.links.size()) - 1; i >= 0; --i) if (pickEnd(i, false)) return;
+            if (output) {
+                connecting = output; selectedNode = output.id; selectedLink = -1;
+                rebuildInspector(); canvas.repaint(); return;
+            }
         }
         for (auto it = graph.nodes.rbegin(); it != graph.nodes.rend(); ++it) {
             if (!nodeVisible(*it)) continue;
-            if (!e.mods.isPopupMenu()) for (int pin = 0; pin < outputPins(*it); ++pin) {
-                if (pinHit(toScreen(pinPoint(*it, pin, true)), e.position)) {
-                    connecting = it->id; connectingPin = pin; selectedNode = it->id; selectedLink = -1;
-                    rebuildInspector(); canvas.repaint(); return;
-                }
-            }
             if (!e.mods.isPopupMenu() && expandable(*it) && expansionButton(*it).contains(world)) {
                 toggleExpanded(*it); return;
             }
@@ -1459,72 +1448,69 @@ private:
         } else if (panning) pan = startPan + e.position - dragStart;
         syncNodeCards(); canvas.repaint();
     }
+    // A visual wet pin can exist without any graph endpoints. Map both pins
+    // lazily on a candidate graph; never publish a half-created wet path.
+    static uint32_t realPinId(Graph& target, VisualPin pin, bool output, bool create) {
+        if (pin.pin != wetPin) return pin.id;
+        const auto findBoundary = [&](NodeType type) -> uint32_t {
+            for (const auto& n : target.nodes) if (n.wetOwner == pin.id && n.type == type) return n.id;
+            return 0;
+        };
+        const auto in = findBoundary(NodeType::wetInput), out = findBoundary(NodeType::wetOutput);
+        if (in && out) return output ? in : out;
+        if (!create || in || out || target.nodes.size() + 2 > size_t(RoutingExecutor::maxNodes)) return 0;
+        // A bounded legacy migration may have left an implicit child in place.
+        // Do not overwrite its signal path by creating empty endpoints.
+        if (std::any_of(target.nodes.begin(), target.nodes.end(), [&](const auto& n) { return n.wetOwner == pin.id; })) return 0;
+        const auto wetOut = wetBoundaryId(pin.id, false), wetReturn = wetBoundaryId(pin.id, true);
+        if (std::any_of(target.nodes.begin(), target.nodes.end(), [&](const auto& n) { return n.id == wetOut || n.id == wetReturn; })) return 0;
+        RoutingNode send{wetOut, NodeType::wetInput}, receive{wetReturn, NodeType::wetOutput};
+        send.wetOwner = receive.wetOwner = pin.id;
+        target.nodes.push_back(send); target.nodes.push_back(receive);
+        return output ? wetOut : wetReturn;
+    }
+    void finishCableEdit(juce::Point<float> point) {
+        auto candidate = graph;
+        DisplayLink old;
+        const bool rewire = rewiringLink >= 0;
+        if (rewire && !displayLink(rewiringLink, old)) return;
+        const auto drop = pinAt(point, rewiringSource);
+        const auto source = rewiringSource ? drop : connecting;
+        const auto destination = rewiringSource ? visualPin(old.link.destination, old.link.inputPin) : drop;
+        if (drop) {
+            const RoutingLink link{realPinId(candidate, source, true, true), realPinId(candidate, destination, false, true),
+                                   destination.pin == wetPin ? 0 : destination.pin, source.pin == wetPin ? 0 : source.pin};
+            if (!link.source || !link.destination) {
+                error = "No routing capacity for this wet path's endpoints"; showStatus(); return;
+            }
+            // Check ownership against existing wiring before removing any links:
+            // an edit must not claim a still-connected main chain by replacing its cable.
+            const auto prepared = prepareWetPinConnection(candidate, link);
+            if (!prepared) { error = juce::String(prepared.message); showStatus(); return; }
+            if (rewire) clearOutput(candidate, old.link.source, old.link.sourcePin);
+            clearOutput(candidate, link.source, link.sourcePin);
+            candidate.links.push_back(link);
+        } else if (rewire) {
+            eraseDisplayedLink(candidate, old);
+        } else {
+            const auto realId = realPinId(candidate, source, true, false);
+            const int pin = source.pin == wetPin ? 0 : source.pin;
+            clearOutput(candidate, realId, pin);
+            if (candidate.links.size() == graph.links.size()) return;
+        }
+        releaseDetachedWetNodes(candidate);
+        const auto validation = RoutingExecutor::validate(candidate);
+        if (!validation) { error = juce::String(validation.message); showStatus(); return; }
+        auto previousRedo = std::move(redoStates);
+        remember(); graph = std::move(candidate); selectedLink = -1; rewiringLink = -1;
+        if (!publish()) redoStates = std::move(previousRedo);
+    }
     void canvasUp(const juce::MouseEvent& e) {
         if (stateRevision() != lastStateRevision) {
             cancelCanvasGesture(); refreshGraphFromOwner(); return;
         }
-        const bool cableEdit = connecting != 0 || rewiringLink >= 0;
-        if (rewiringLink >= 0) {
-            if (e.position.getDistanceFrom(dragStart) > 2) {
-                DisplayLink item;
-                if (!displayLink(rewiringLink, item)) { connecting = 0; rewiringLink = -1; rebuildInspector(); return; }
-                auto moved = item.link;
-                bool found = false;
-                for (const auto& n : graph.nodes) {
-                    if (!nodeVisible(n)) continue;
-                    if (rewiringSource) {
-                        for (int pin = 0; pin < outputPins(n); ++pin)
-                            if (pinHit(toScreen(pinPoint(n, pin, true)), e.position)) {
-                                moved.source = n.id; moved.sourcePin = pin; found = true; break;
-                            }
-                    } else {
-                        for (int pin = 0; pin < inputs(n); ++pin)
-                            if (pinHit(toScreen(pinPoint(n, pin, false)), e.position)) {
-                                moved.destination = n.id; moved.inputPin = pin; found = true; break;
-                            }
-                    }
-                    if (found) break;
-                }
-                remember();
-                // Erase both canonical links for a folded cable before making
-                // a real direct replacement. Other saved fanout is untouched
-                // until its source output is explicitly edited.
-                eraseDisplayedLink(item);
-                if (found) {
-                    clearOutput(item.link.source, item.link.sourcePin);
-                    clearOutput(moved.source, moved.sourcePin);
-                    graph.links.push_back(moved);
-                }
-                selectedLink = -1; rewiringLink = -1; publish();
-            }
-        } else if (connecting && e.position.getDistanceFrom(dragStart) > 2) {
-            // A click is selection only. A real output drag replaces all old
-            // destinations (including dormant saved fanout), or clears them on
-            // an empty drop. clearOutput also removes both folded chain links.
-            const auto* source = node(connecting);
-            if (source && nodeVisible(*source) && connectingPin < outputPins(*source)) {
-                RoutingLink replacement{connecting, 0, 0, connectingPin};
-                bool found = false;
-                for (const auto& n : graph.nodes) {
-                    if (!nodeVisible(n)) continue;
-                    for (int pin = 0; pin < inputs(n); ++pin) {
-                        if (pinHit(toScreen(pinPoint(n, pin, false)), e.position)) {
-                            replacement.destination = n.id; replacement.inputPin = pin;
-                            found = true; break;
-                        }
-                    }
-                    if (found) break;
-                }
-                const bool occupied = std::any_of(graph.links.begin(), graph.links.end(), [this](const auto& l) {
-                    return l.source == connecting && l.sourcePin == connectingPin;
-                });
-                if (found || occupied) {
-                    remember(); clearOutput(connecting, connectingPin);
-                    if (found) graph.links.push_back(replacement);
-                    selectedLink = -1; publish();
-                }
-            }
-        }
+        const bool cableEdit = bool(connecting) || rewiringLink >= 0;
+        if (cableEdit && e.position.getDistanceFrom(dragStart) > 2) finishCableEdit(e.position);
         bool spliced = false;
         if (draggingNode && nodeDragMoved && e.position.getDistanceFrom(dragStart) > 2) {
             positions[draggingNode] = startNode + (e.position - dragStart) / zoom;
@@ -1547,7 +1533,7 @@ private:
         canvas.repaint();
     }
     void cancelCanvasGesture() {
-        connecting = 0; connectingPin = 0; draggingNode = 0; rewiringLink = -1; rewiringSource = false; panning = false;
+        connecting = {}; draggingNode = 0; rewiringLink = -1; rewiringSource = false; panning = false;
         nodeDragMoved = false; spliceHighlight = -1;
     }
     void zoomAt(juce::Point<float> point, float factor) {
@@ -1572,14 +1558,13 @@ private:
         tree.setProperty("modulationHeight", desiredModulationHeight, nullptr);
         tree.setProperty("modulationVisible", modulationVisible, nullptr);
 
-        // Pocket navigation is local to this panel; reopening a preset starts in Routing.
-        tree.setProperty("selectedNode", int(wetScope ? wetScope : selectedNode), nullptr);
+        tree.setProperty("inlineWetPins", true, nullptr);
+        tree.setProperty("selectedNode", int(selectedNode), nullptr);
         tree.setProperty("selectedModulator", int(selectedModulator), nullptr);
         if (const auto* n = node(selectedNode); n && (n->type == NodeType::voice || n->type == NodeType::lead))
             tree.setProperty("selectedVoiceSlot", n->type == NodeType::lead ? -1 : int(n->voiceSlot), nullptr);
-        const auto routingPan = wetScope ? outerPan : pan;
-        tree.setProperty("zoom", wetScope ? outerZoom : zoom, nullptr);
-        tree.setProperty("panX", routingPan.x, nullptr); tree.setProperty("panY", routingPan.y, nullptr);
+        tree.setProperty("zoom", zoom, nullptr);
+        tree.setProperty("panX", pan.x, nullptr); tree.setProperty("panY", pan.y, nullptr);
         for (const auto& p : positions) {
             juce::ValueTree child("NODE"); child.setProperty("id", int(p.first), nullptr);
             child.setProperty("x", p.second.x, nullptr); child.setProperty("y", p.second.y, nullptr);
@@ -1611,7 +1596,6 @@ private:
         positions.clear(); compactPositions.clear(); expandedPositions.clear(); expanded.clear(); names.clear();
         inspectorVisible = bool(tree.getProperty("inspectorVisible", true));
         modulationVisible = bool(tree.getProperty("modulationVisible", true));
-        const auto pocketSelection = selectedNode;
         selectedNode = uint32_t(int(tree.getProperty("selectedNode", 0)));
         selectedModulator = uint32_t(int(tree.getProperty("selectedModulator", 0)));
         const int voice = int(tree.getProperty("selectedVoiceSlot", -2));
@@ -1627,23 +1611,21 @@ private:
         juce::Point<float> savedPan {float(tree.getProperty("panX", 20.0f)), float(tree.getProperty("panY", 18.0f))};
         if (!std::isfinite(savedZoom)) savedZoom = 0.72f;
         if (!std::isfinite(savedPan.x) || !std::isfinite(savedPan.y)) savedPan = {20, 18};
-        if (wetScope && !hasWetBoundaries(wetScope)) {
-            const auto savedSelection = selectedNode;
-            setRoutingScope(0);
-            selectedNode = savedSelection;
-        }
-        if (wetScope) {
-            outerZoom = savedZoom; outerPan = savedPan; selectedNode = pocketSelection;
-        } else {
-            zoom = savedZoom; pan = savedPan;
-        }
+        zoom = savedZoom; pan = savedPan;
+        const bool inlineWetPins = bool(tree.getProperty("inlineWetPins", false));
         for (const auto& c : tree) {
             if (!c.hasType("NODE")) continue;
             const int id = int(c.getProperty("id"));
             const float x = float(c.getProperty("x")), y = float(c.getProperty("y"));
             if (id > 0 && std::isfinite(x) && std::isfinite(y)) {
                 const auto key = std::uint32_t(id);
+                const auto* n = node(key);
+                if (n && isWetBoundary(n->type)) continue;
                 expanded[key] = bool(c.getProperty("expanded", false));
+                const auto alias = c.getProperty("name").toString().trim().substring(0, 48);
+                if (alias.isNotEmpty()) names[key] = alias;
+                // Old pocket coordinates used a separate origin and can cover main cards.
+                if (!inlineWetPins && n && n->wetOwner) continue;
                 const auto readPosition = [&](auto& saved, const char* px, const char* py) {
                     const float sx = float(c.getProperty(px)), sy = float(c.getProperty(py));
                     if (c.hasProperty(px) && c.hasProperty(py) && std::isfinite(sx) && std::isfinite(sy)) saved[key] = {sx, sy};
@@ -1655,9 +1637,6 @@ private:
                 if (active.count(key) == 0) active[key] = {x, y};
                 if (compactPositions.count(key) == 0) compactPositions[key] = {x, y};
                 positions[key] = active[key];
-
-                const auto alias = c.getProperty("name").toString().trim().substring(0, 48);
-                if (alias.isNotEmpty()) names[std::uint32_t(id)] = alias;
             }
         }
 
@@ -1666,15 +1645,15 @@ private:
 
     void ensurePositions() {
         int extra = 0;
-        for (const auto& n : graph.nodes) if (positions.count(n.id) == 0) {
+        for (const auto& n : graph.nodes) if (!n.wetOwner && positions.count(n.id) == 0) {
             juce::Point<float> p;
             switch (n.type) {
             case NodeType::lead: p = {24, 20}; break;
             case NodeType::sidechain:
             case NodeType::sidechainBlend: continue;
             case NodeType::voice: p = {24, 100.0f + float(n.voiceSlot * 70)}; break;
-            case NodeType::wetInput: p = {24, 30}; break;
-            case NodeType::wetOutput: p = {624, 30}; break;
+            case NodeType::wetInput:
+            case NodeType::wetOutput: continue;
             case NodeType::sum: p = {}; break;
             case NodeType::mix: p = {490, 30}; break;
             case NodeType::chorale:
@@ -1698,16 +1677,22 @@ private:
             case NodeType::splitter: p = {710, 130}; break;
             case NodeType::output: p = {930, 30}; break;
             }
-            if (isWetBoundary(n.type)) {
-                positions[n.id] = compactPositions[n.id] = p;
-            } else if (!n.wetOwner) {
-                if (n.id >= 100) p = {270.0f + float(extra % 3) * 200, 460.0f + float(extra / 3) * 100};
-                positions[n.id] = compactPositions[n.id] = p; ++extra;
-            }
+            if (n.id >= 100) p = {270.0f + float(extra % 3) * 220, 460.0f + float(extra / 3) * 140};
+            positions[n.id] = compactPositions[n.id] = p; ++extra;
         }
-        for (const auto& n : graph.nodes) if (n.wetOwner && !positions.count(n.id)) {
-            const juce::Point<float> anchor {324, 30};
-            positions[n.id] = compactPositions[n.id] = pocketNodePosition(n, anchor);
+        for (const auto& n : graph.nodes) if (n.wetOwner && !isWetBoundary(n.type) && !positions.count(n.id)) {
+            const auto* parent = node(n.wetOwner);
+            if (!parent) continue;
+            const auto anchor = nodeBounds(*parent).getBottomLeft().translated(0, 24);
+            const auto card = nodeBounds(n);
+            std::vector<juce::Rectangle<float>> obstacles;
+            for (const auto& other : graph.nodes)
+                if (nodeVisible(other) && positions.count(other.id)) obstacles.push_back(nodeBounds(other));
+            const float left = juce::jmin(0.f, anchor.x);
+            auto& saved = isExpanded(n) ? expandedPositions : compactPositions;
+            positions[n.id] = saved[n.id] = packedPosition(card, obstacles,
+                left, juce::jmax(1200.f, anchor.x - left + card.getWidth()), anchor, false);
+            if (!compactPositions.count(n.id)) compactPositions[n.id] = positions[n.id];
         }
         // Older layouts may already place every other machine. Fit only the new
         // sidechain cards around those bounds rather than shifting saved cards.
@@ -1718,7 +1703,7 @@ private:
                                                                       : juce::Point<float>{244, 20};
                 const auto card = nodeBounds(n);
                 float left = anchor.x, right = anchor.x + card.getWidth();
-                for (const auto& other : graph.nodes) if (positions.count(other.id) && !other.wetOwner && (!wetScope ? nodeVisible(other) : other.type != NodeType::sum)) {
+                for (const auto& other : graph.nodes) if (positions.count(other.id) && nodeVisible(other)) {
                     const auto bounds = nodeBounds(other);
                     obstacles.push_back(bounds);
                     left = juce::jmin(left, bounds.getX());
@@ -1891,7 +1876,7 @@ private:
         // publish() retires the departing identity's maps. Restore only after
         // graph acceptance, so a replacement cannot inherit the outgoing maps.
         if (restoreModulation && !owner.setModulationState(modulation, error)) showStatus();
-        graph = owner.getRoutingGraph(); lastSignature = signature(graph);
+        graph = readCanvasGraph(); lastSignature = signature(graph);
         rebuildInspector();
     }
 
@@ -1918,16 +1903,17 @@ private:
                     // Topology/history snapshots must not replay old bases into
                     // unchanged machine identities. Lifecycle undo restores its
                     // parameter arrays explicitly after graph acceptance.
+                    const auto wetOwner = n.wetOwner;
                     n = old;
+                    n.wetOwner = wetOwner;
                 }
                 break;
             }
         juce::String problem;
         const bool accepted = owner.setRoutingGraphImpl(graph, problem, historyRevision);
         error = problem;
-        graph = owner.getRoutingGraph();
+        graph = readCanvasGraph();
         ensurePositions();
-        if (wetScope && !hasWetBoundaries(wetScope)) setRoutingScope(0);
         validateSelection();
         if (!accepted) {
             selectedLink = -1;
@@ -1987,9 +1973,9 @@ private:
         // Snapshot the live base, not the potentially stale canvas model or a
         // modulated effective value. Copies are unwired: no implicit fanout or
         // output merge may change the accepted signal path.
-        const auto current = owner.getRoutingGraph();
+        const auto current = readCanvasGraph();
         const auto source = std::find_if(current.nodes.begin(), current.nodes.end(), [this](const auto& n) {
-            return n.id == selectedNode && n.wetOwner == wetScope && n.type == NodeType::mix && !n.mainControls;
+            return n.id == selectedNode && n.type == NodeType::mix && !n.mainControls;
         });
         if (source == current.nodes.end() || current.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
         auto copy = *source;
@@ -2011,69 +1997,6 @@ private:
     }
     static bool canDelete(const RoutingNode& n) {
         return n.type != NodeType::output && !isWetBoundary(n.type);
-    }
-    bool hasWetMembers(uint32_t parent) const {
-        return std::any_of(graph.nodes.begin(), graph.nodes.end(), [parent](const auto& n) { return n.wetOwner == parent; });
-    }
-    bool hasWetBoundaries(uint32_t parent) const {
-        const auto* source = node(parent);
-        if (!source || !canOwnWetPocket(*source)) return false;
-        bool in = false, out = false;
-        for (const auto& n : graph.nodes) if (n.wetOwner == parent) {
-            in |= n.type == NodeType::wetInput;
-            out |= n.type == NodeType::wetOutput;
-        }
-        return in && out;
-    }
-    void setRoutingScope(uint32_t scope) {
-        if (wetScope == scope) return;
-        if (!wetScope) { outerZoom = zoom; outerPan = pan; }
-        else if (!scope) { zoom = outerZoom; pan = outerPan; }
-        selectedNode = scope ? 0 : wetScope;
-        selectedLink = -1;
-        cancelCanvasGesture();
-        wetScope = scope;
-        backToRouting.setVisible(scope != 0);
-        add.setTooltip(scope ? "Add an unwired node inside this wet pocket"
-                             : "Add an effect, mixer, splitter, sidechain blend, or missing source");
-        lastPortSignature = portSignature();
-        repaint();
-    }
-    void changeRoutingScope(uint32_t scope) {
-        if (wetScope == scope || (scope && !hasWetBoundaries(scope))) return;
-        setRoutingScope(scope);
-        rebuildInspector();
-        if (scope) fitGraph(); else { saveLayout(); syncNodeCards(); canvas.repaint(); }
-    }
-    void openWetPocket(uint32_t parent) {
-        refreshGraphFromOwner();
-        const auto* source = node(parent);
-        if (!source || !canOwnWetPocket(*source)) return;
-        if (!hasWetBoundaries(parent)) {
-            const uint32_t in = 0x10000u + 2u * parent, out = in + 1;
-            uint32_t legacyChild = 0;
-            for (const auto& n : graph.nodes) if (n.wetOwner == parent) legacyChild = n.id;
-            if (node(in) || node(out) || graph.nodes.size() + 2 > size_t(RoutingExecutor::maxNodes)
-                || graph.links.size() + (legacyChild ? 2 : 1) > size_t(RoutingExecutor::maxLinks)) {
-                error = "No routing capacity for this wet pocket's boundaries"; showStatus(); return;
-            }
-            remember();
-            RoutingNode wetIn{in, NodeType::wetInput}, wetOut{out, NodeType::wetOutput};
-            wetIn.wetOwner = wetOut.wetOwner = parent;
-            graph.nodes.push_back(wetIn); graph.nodes.push_back(wetOut);
-            // Preserve the implicit legacy path; a new pocket is a direct pass-through.
-            if (legacyChild) graph.links.push_back({in, legacyChild, 0, 0});
-            graph.links.push_back({legacyChild ? legacyChild : in, out, 0, 0});
-            if (!publish()) return;
-        }
-        changeRoutingScope(parent);
-    }
-    juce::Point<float> pocketNodePosition(const RoutingNode& n, juce::Point<float> anchor) const {
-        std::vector<juce::Rectangle<float>> obstacles;
-        for (const auto& existing : graph.nodes)
-            if (existing.wetOwner == n.wetOwner && positions.count(existing.id)) obstacles.push_back(nodeBounds(existing));
-        return packedPosition(nodeBounds(n), obstacles, juce::jmin(0.f, anchor.x),
-            juce::jmax(800.f, float(canvas.getWidth()) / zoom), anchor, false);
     }
     struct FxChoice { int id; NodeType type; const char* label; };
     static constexpr FxChoice fxChoices[] = {
@@ -2101,7 +2024,6 @@ private:
     }
     void appendFxChoices(juce::PopupMenu& menu, bool enabled) const {
         for (const auto& choice : fxChoices) {
-            if (wetScope && !routingSupportsWetInsert(choice.type)) continue;
             if (choice.type == NodeType::delay || choice.type == NodeType::gain) menu.addSeparator();
             if (choice.type == NodeType::gain) menu.addSectionHeader("Utilities / filters");
             menu.addItem(choice.id, choice.label, enabled);
@@ -2112,7 +2034,6 @@ private:
         const auto* n = node(selectedNode);
         menu.addItem(1, "Delete node", n && canDelete(*n));
         menu.addItem(2, "Toggle FX bypass", n && isEffect(n->type));
-        if (n && canOwnWetPocket(*n)) menu.addItem(4, "Open Wet Pocket");
         menu.addItem(3, "Duplicate Dry / Wet", n && n->type == NodeType::mix && !n->mainControls
                      && graph.nodes.size() < size_t(RoutingExecutor::maxNodes));
         juce::Component::SafePointer<RoutingPanel> safe(this);
@@ -2122,7 +2043,6 @@ private:
             if (!safe || safe->selectedNode != target || safe->stateRevision() != revision) return;
             if (result == 1) safe->deleteSelection(); else if (result == 2) safe->toggleBypass();
             else if (result == 3) safe->duplicateDryWet();
-            else if (result == 4) safe->openWetPocket(target);
         });
     }
     juce::PopupMenu makeAddMenu() {
@@ -2134,9 +2054,8 @@ private:
                                         : "No unused FX slots | deleted slots cannot be reused");
         appendFxChoices(menu, room && effects < 16 && freeFxSlot);
         menu.addSeparator();
-        if (!wetScope || routingSupportsWetInsert(NodeType::mix)) menu.addItem(3, "Dry / Wet Mix", room);
-        if (!wetScope || routingSupportsWetInsert(NodeType::splitter)) menu.addItem(300, "Splitter | full-level A / B duplicates", room);
-        if (wetScope) return menu;
+        menu.addItem(3, "Dry / Wet Mix", room);
+        menu.addItem(300, "Splitter | full-level A / B duplicates", room);
         menu.addSeparator();
         menu.addItem(10, "Restore Lead source", room && !hasSource(-1));
         menu.addItem(41, "Sidechain | external host input (unwired)", room && !node(sidechainNodeId));
@@ -2157,14 +2076,13 @@ private:
         const auto insertion = toWorld(atCursor ? pointer : canvas.getLocalBounds().getCentre().toFloat());
         juce::Component::SafePointer<RoutingPanel> safe(this);
         const auto revision = stateRevision();
-        const auto scope = wetScope;
         auto* target = atCursor ? static_cast<juce::Component*>(&canvas) : &add;
         const auto options = juce::PopupMenu::Options().withTargetComponent(target);
-        makeAddMenu().showMenuAsync(atCursor || !scope ? options.withMousePosition() : options,
-            [safe, insertion, revision, scope](int result) {
+        makeAddMenu().showMenuAsync(options.withMousePosition(),
+            [safe, insertion, revision](int result) {
                 if (!safe || !result || safe->stateRevision() != revision) return;
                 safe->refreshGraphFromOwner();
-                if (safe->wetScope == scope) safe->addNode(result, insertion);
+                safe->addNode(result, insertion);
             });
     }
     bool hasSource(int slot) const {
@@ -2189,7 +2107,7 @@ private:
             auto before = state();
             if (!owner.ensureSidechainBlend(error)) { showStatus(); return; }
             undoStates.push_back(std::move(before)); limitHistory(); redoStates.clear();
-            graph = owner.getRoutingGraph();
+            graph = readCanvasGraph();
             lastSignature = signature(graph);
             lastPortSignature = portSignature();
             ensurePositions(); showStatus();
@@ -2199,17 +2117,7 @@ private:
     static float newFxMix(NodeType type) { return type == NodeType::chorale ? .25f : 1.f; }
     void addNode(int kind, juce::Point<float> insertion) {
         const auto* choice = std::find_if(std::begin(fxChoices), std::end(fxChoices), [kind](const auto& fx) { return fx.id == kind; });
-        const auto scope = wetScope;
-        if (scope) {
-            if (!hasWetBoundaries(scope)) return;
-            if (choice != std::end(fxChoices)) {
-                if (!routingSupportsWetInsert(choice->type)) return;
-            } else if (kind == 3) {
-                if (!routingSupportsWetInsert(NodeType::mix)) return;
-            } else if (kind == 300) {
-                if (!routingSupportsWetInsert(NodeType::splitter)) return;
-            } else return;
-        } else if (kind == 42 || kind == 43) { addSidechainBlend(kind == 43); return; }
+        if (kind == 42 || kind == 43) { addSidechainBlend(kind == 43); return; }
         if (graph.nodes.size() >= size_t(RoutingExecutor::maxNodes)) return;
         RoutingNode n;
         if (choice != std::end(fxChoices)) {
@@ -2246,11 +2154,9 @@ private:
         }
         else return;
         if (node(n.id)) return;
-        n.wetOwner = scope;
-        if (scope) insertion = pocketNodePosition(n, insertion);
         uint32_t automaticDonor = 0;
         bool createDonor = false;
-        if (n.type == NodeType::spectralMorph && !scope) {
+        if (n.type == NodeType::spectralMorph) {
             for (const auto& source : graph.nodes) if (source.type == NodeType::sidechain) automaticDonor = source.id;
             createDonor = automaticDonor == 0;
             if (createDonor) automaticDonor = 14;
@@ -2289,7 +2195,6 @@ private:
             }
         }
         rebuildInspector();
-        if (scope && selectedNode == n.id && !canvas.getLocalBounds().toFloat().contains(toScreen(nodeBounds(n).getCentre()))) fitGraph();
     }
     void rebuildInspector() {
         validateSelection();
@@ -2317,7 +2222,7 @@ private:
             updateButtons(); return;
         }
         inspectorTitle.setText(n ? nodeLabel(*n) : selectedLink >= 0 ? "AUDIO CONNECTION" : "ROUTING INSPECTOR", juce::dontSendNotification);
-        juce::String info = "Select a machine to edit its controls.\n\nInputs accept multiple voices with automatic merge compensation. Each output (each Multiband band) has one outgoing cable. Dragging it to another input replaces its existing links; dropping on empty space disconnects them. Saved fanout remains until that output is edited. A click without dragging leaves wiring unchanged. Drop a disconnected node on a highlighted cable to splice it in.\n\nDrag an occupied input end to reconnect; drop it on empty space to disconnect that cable. Ctrl/Command-drag an output to move a cable's source. Wheel zooms at the cursor; Alt/middle-drag pans.\n\nAbsent voices and the untouched bypassed main Chorale are hidden without changing routing. Muted voices stay visible. Unconnected inputs receive silence; rejected edits retain accepted routing.";
+        juce::String info = "Select a machine to edit its controls.\n\nInputs accept multiple voices with automatic merge compensation. Each output (each Multiband band) has one outgoing cable. Dragging it to another input replaces its existing links; dropping on empty space disconnects them. Saved fanout remains until that output is edited. A click without dragging leaves wiring unchanged. Drop a disconnected node on a highlighted cable to splice it in.\n\nDrag an occupied input end to reconnect; drop it on empty space to disconnect that cable. Ctrl/Command-drag an output to move a cable's source. Wheel zooms at the cursor; Alt/middle-drag pans.\n\nWet Out and Wet Return patch the owner's wet signal before its Mix. Connect a disconnected FX chain to either pin to put it on that wet path. Main and wet routing may not be joined. Absent voices are hidden; muted voices stay visible. Unconnected inputs receive silence; rejected edits retain accepted routing.";
         if (n) {
             info = "Node ID " + juce::String(n->id);
 
@@ -2364,11 +2269,11 @@ private:
                             updateButtons();
                         };
                         creativePanel->onValueChanged = [this] {
-                            graph = owner.getRoutingGraph(); lastSignature = signature(graph);
+                            graph = readCanvasGraph(); lastSignature = signature(graph);
                         };
                         creativePanel->onEndEdit = [this] {
                             inspectorDragging = false;
-                            graph = owner.getRoutingGraph(); lastSignature = signature(graph);
+                            graph = readCanvasGraph(); lastSignature = signature(graph);
                             updateButtons();
                         };
                         inspector.addAndMakeVisible(*creativePanel);
@@ -2387,11 +2292,11 @@ private:
                             inspectorDragging = true; updateButtons();
                         };
                         utilityPanel->onValueChanged = [this] {
-                            graph = owner.getRoutingGraph(); lastSignature = signature(graph);
+                            graph = readCanvasGraph(); lastSignature = signature(graph);
                         };
                         utilityPanel->onEndEdit = [this] {
                             inspectorDragging = false;
-                            graph = owner.getRoutingGraph(); lastSignature = signature(graph); updateButtons();
+                            graph = readCanvasGraph(); lastSignature = signature(graph); updateButtons();
                         };
                         inspector.addAndMakeVisible(*utilityPanel);
                         info = "Slot " + juce::String(slot) + " | host automation / modulation";
@@ -2459,8 +2364,10 @@ private:
                 info += "\nUse the canvas knob to set the host-automatable blend: 0% Lead, 100% Sidechain. If the sidechain is unavailable or unwired, Lead passes through. Bus configuration does not indicate whether the host has connected a signal.";
             else if (n->type != NodeType::splitter && n->type != NodeType::sidechain)
                 info += "\nProcessed lead source. Connecting this output elsewhere moves its cable; inputs accept multiple sources.";
-            if (n->type == NodeType::wetInput) info = "Wet signal from " + wetOwnerLabel(n->wetOwner) + ". Connect it to a node or directly to Wet Out.";
-            else if (n->type == NodeType::wetOutput) info = "Returns this pocket's signal to " + wetOwnerLabel(n->wetOwner) + " before its Mix. An unconnected Wet Out is silent.";
+            if (canOwnWetPocket(*n))
+                info += "\n\nWet Out sends this machine's wet signal. Wet Return feeds the result into its Mix. Once patched, an unwired Wet Return is silent.";
+            else if (n->wetOwner)
+                if (const auto* parent = node(n->wetOwner)) info += "\n\nWet path of " + nodeLabel(*parent) + ".";
         } else if (selectedLink >= 0 && selectedLink < int(graph.links.size())) {
             DisplayLink item;
             if (!displayLink(selectedLink, item)) return;
@@ -2468,13 +2375,18 @@ private:
             const auto& l = item.link;
             const auto* source = node(l.source);
             const auto* destination = node(l.destination);
-            info = (source ? nodeLabel(*source) : juce::String(l.source)) + " / "
-                + (source ? outputName(*source, l.sourcePin) : juce::String(l.sourcePin))
-                + " -> " + (destination ? nodeLabel(*destination) : juce::String(l.destination))
+            const auto endpointLabel = [&](const RoutingNode* n, uint32_t id, int pin, bool output) -> juce::String {
+                if (!n) return juce::String(id);
+                if (isWetBoundary(n->type)) {
+                    if (const auto* parent = node(n->wetOwner)) return nodeLabel(*parent) + " / " + nodeLabel(*n);
+                    return nodeLabel(*n);
+                }
+                return nodeLabel(*n) + " / " + (output ? outputName(*n, pin) : juce::String(routingInput(n->type, pin).name));
+            };
+            info = endpointLabel(source, l.source, l.sourcePin, true) + " -> "
+                + endpointLabel(destination, l.destination, l.inputPin, false)
                 + "\nOutput #" + juce::String(l.sourcePin) + " -> Input #" + juce::String(l.inputPin)
                 + "\n\nDrag the input end to reconnect or disconnect this cable. Drag the output to move its destination or drop on empty space to disconnect all its links. Ctrl/Command-drag the output to move this cable's source. Clicks leave wiring unchanged.";
-            if (item.foldedEnd >= 0)
-                info += "\n\nTransparent bypass: this cable represents stored Mix 11 -> main Chorale 12 -> Output 13. Chorale is Off via its host parameter. Disconnect removes BOTH chain links; rewiring replaces both with one real direct cable. Enabling Chorale reveals the stored chain if unchanged.";
             if (source && source->type == NodeType::sidechain)
                 info += "\n\nThis cable remains stored when the host sidechain is disabled. No external signal is supplied in that state.";
             else if (inactiveSource(l))
@@ -2537,17 +2449,21 @@ private:
         for (const auto& n : graph.nodes)
             result += juce::String(n.id) + ":" + juce::String(outputPins(n)) + ":"
                 + juce::String(int(nodeVisible(n))) + ":" + juce::String(int(isEffect(n.type) && effectEnabled(n))) + ";";
-        result += "fold:" + juce::String(foldedChain().first);
         return result;
     }
-    void refreshGraphFromOwner() {
+    Graph readCanvasGraph() const {
         auto latest = owner.getRoutingGraph();
+        expandLegacyWetPockets(latest);
+        return latest;
+    }
+    void refreshGraphFromOwner() {
+        auto latest = readCanvasGraph();
         const auto next = signature(latest);
         const auto savedLayout = owner.getRoutingLayout();
         const auto layoutSignature = savedLayout.toXmlString();
         const auto revision = stateRevision();
         if (next == lastSignature && layoutSignature == lastLayoutSignature && revision == lastStateRevision) return;
-        if (revision != lastStateRevision) setRoutingScope(0);
+        cancelCanvasGesture();
         lastStateRevision = revision;
         graph = std::move(latest); lastSignature = next;
         undoStates.clear(); redoStates.clear(); selectedLink = -1;
@@ -2601,7 +2517,7 @@ private:
         const auto ports = portSignature();
         if (ports != lastPortSignature) {
             lastPortSignature = ports;
-            connecting = 0; rewiringLink = -1; rewiringSource = false; spliceHighlight = -1;
+            connecting = {}; rewiringLink = -1; rewiringSource = false; spliceHighlight = -1;
             const auto previousNode = selectedNode;
             const int previousLink = selectedLink;
             validateSelection();
@@ -2631,6 +2547,12 @@ public:
         uint64_t nodesDrawn = 0, nodesCulled = 0, cablesDrawn = 0, cablesCulled = 0;
         double canvasPaintMs = 0;
     };
+    // Canvas-local coordinates for the painted pin centres (output = Wet Out).
+    std::optional<juce::Point<float>> wetPinCanvasPosition(uint32_t ownerId, bool output) const {
+        if (const auto* n = node(ownerId); n && canOwnWetPocket(*n) && nodeVisible(*n))
+            return toScreen(pinPoint(*n, wetPin, output));
+        return std::nullopt;
+    }
     WorkCounters routingWorkCounters() const { return workCounters; }
     void resetRoutingWorkCounters() { workCounters = {}; }
 private:
@@ -2648,14 +2570,11 @@ private:
     bool inspectorVisible = true, modulationVisible = true;
     int lastCardTheme = -1;
     std::map<std::uint32_t, juce::String> names;
-    uint32_t wetScope = 0;
-    float outerZoom = .72f;
-    juce::Point<float> outerPan;
-    juce::TextButton backToRouting;
     float zoom = 0.72f;
     juce::Point<float> pan{20, 18}, pointer, dragStart, startPan, startNode;
-    std::uint32_t selectedNode = 0, draggingNode = 0, connecting = 0;
-    int selectedLink = -1, rewiringLink = -1, connectingPin = 0;
+    std::uint32_t selectedNode = 0, draggingNode = 0;
+    VisualPin connecting;
+    int selectedLink = -1, rewiringLink = -1;
     int spliceHighlight = -1;
     bool nodeDragMoved = false;
     bool rewiringSource = false;
