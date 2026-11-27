@@ -2,7 +2,7 @@
 
 Status: design notes only; no DSP or UI implemented by this document.
 
-Reference: [RFA Spatial EQ transcript notes](Spatial-EQ-RFA-Transcript-Notes.md) distinguish the speaker’s claims from open questions and proposed measurements. The targets below are our design choices, not claims about RFA’s implementation.
+Reference: [RFA Spatial EQ transcript notes](Spatial-EQ-RFA-Transcript-Notes.md) distinguish the speaker’s claims from open questions and proposed measurements. The [installed reference measurements](Spatial-EQ-Reference-Measurements.md) establish where a strict mono null and a fixed reflection response differ from the target sound. The design targets below are not claims about RFA’s implementation.
 
 ## Shared direction
 
