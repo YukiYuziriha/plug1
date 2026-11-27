@@ -1,6 +1,6 @@
 # Spatial audio DSP and product notes
 
-**Status:** The offline model matches the tested static Stereo Bell boost and cut, positive low and high shelves, and one-Bell-boost/one-Bell-cut interaction without captured impulse responses or fitted coefficients. The first Depth step confirms the control update grid; automation is not yet modeled. No HEAVEN DSP or UI integration yet.
+**Status:** The offline model matches the tested static Stereo Bell boost and cut, positive low and high shelves, and one-Bell-boost/one-Bell-cut interaction without captured impulse responses or fitted coefficients. Single positive Stereo Bell automation and tail lifecycle also match the tested host-call-boundary renders. Multiple boosts, multiband automation, and VST3 in-block parameter delivery remain unverified. No HEAVEN DSP or UI integration yet.
 
 Reference: [RFA Spatial EQ transcript notes](Spatial-EQ-RFA-Transcript-Notes.md) separate the speaker’s claims from open questions. The [reference measurements and offline tests](Spatial-EQ-Reference-Measurements.md) document the measured behavior and match limits.
 
@@ -45,7 +45,7 @@ Design cautions:
 1. **Verified offline — static Stereo Bell boost.** The no-calibration model includes the delay and feedback paths, both Side injections, and the filtered reflection-return gain. Validate with dual-mono and asymmetric input and retained overlap fixtures, not just isolated clicks.
 2. **Verified offline — positive low and high shelves.** Both reuse the reflection engine with their own post-EQ extraction filter. Impulses and sweeps cover 0%, 50%, and 100% Depth with separate direct EQ and Depth-added Mid/Side scores.
 3. **Verified offline — Stereo Bell cut and one boost/cut pair.** The cut changes direct Mid and separately filters accumulated wet. Both band orders and a separated-band control are covered. Multiple spatial boosts and their overlap normalization still need verification before expanding to eight bands.
-4. **Next — automation and tail lifecycle.** The first Depth boundary probe confirms a persistent 32-sample control tick. Implement and verify the traced smoothing, then cover frequency, Q, and gain steps and ramps. Move or disable a band while its tail is ringing, then re-enable it. Test resets and distinguish host-call boundaries from VST3 in-block automation.
+4. **Verified offline — single positive Stereo Bell automation and tails.** The model reproduces the tested Depth/frequency/Q/gain steps and a combined ramp, per-sample enable transitions, Depth-zero re-entry, and explicit resets. Host-call boundaries do not establish VST3 in-block parameter delivery. Next, implement and verify the traced multiple-boost overlap weighting, then extend the automation tests to those band combinations.
 5. **Integration gate.** Validate held-out multiband presets and level-matched A/B on real vocals and stereo material. Then integrate basic per-band controls and benchmark the realtime engine before visual polish. Validate remaining shapes/channel modes and spatial controls as separate cases; dynamic EQ and linear phase remain later scope.
 6. Reuse the engine in the separate mono-in/stereo-out Signal Placer. Build advanced visuals afterward, including an optional top-down EQ view.
 

@@ -191,16 +191,30 @@ A cut uses the reciprocal of a positive matched-pole Bell at the absolute gain. 
 
 [`Test-Spatial-EQ-Cuts.py`](../tools/Test-Spatial-EQ-Cuts.py) compares full outputs and Depth contrasts at 48 kHz for an isolated −6 dB Bell, a coincident +6/−6 dB pair in both slot orders, and a separated-frequency control. It checks an asymmetric impulse and a dual-mono multisine independently. The coincident cut changed generated Side at 2.4 kHz by **−6.00 / −4.98 / −6.00 dB** at 0/50/100% cut Depth, but the equal endpoint tone levels did not imply equal waveforms. Tests report both relative error and absolute residuals, including near-null interaction contrasts.
 
-### Automation: first Depth target change
+### Automation: single positive Stereo Bell
 
-The trace indicates a persistent **32-sample** control tick with an **18 ms** one-pole step. Frequency and Q interpolate in log space; gain interpolates in dB and Depth in percent. The resulting boost/cut amount has a separate **12 ms** per-sample slew. Some return coefficients follow the tick-level target rather than the slewed amount. Band enable has its own 12 ms slew; its wet-tail behavior is not yet verified.
+The trace indicates a persistent **32-sample** control tick with an **18 ms** one-pole step. Frequency and Q interpolate in log space; gain interpolates in dB and Depth in percent. The resulting boost/cut amount has a separate **12 ms** per-sample slew. Some return coefficients follow the tick-level target rather than the slewed amount. Band enable has its own 12 ms slew toward `active && enabled`; unlike Depth, flag changes can affect the wet return on the first sample.
 
-[`Probe-Spatial-EQ-Automation.py`](../tools/Probe-Spatial-EQ-Automation.py) measured a 33→71% Depth step with no instance reset at 48 and 96 kHz. Boundaries at phases 13, 27, and 3 modulo 32 first changed the output 19, 5, and 29 samples later, respectively. No-op splits matched unsplit runs exactly; host buffers of 257 and 512 samples gave the same result. Explicit reset changed even the no-op waveform. This verifies the tick at host-call boundaries, not VST3 in-block queue timing or the exact automated waveform of a candidate.
+[`Probe-Spatial-EQ-Automation.py`](../tools/Probe-Spatial-EQ-Automation.py) measured a 33→71% Depth step with no instance reset at 48 and 96 kHz. Boundaries at phases 13, 27, and 3 modulo 32 first changed the output 19, 5, and 29 samples later, respectively. No-op splits matched unsplit runs exactly; host buffers of 257 and 512 samples gave the same result. Explicit reset changed even the no-op waveform. This verifies the tick at host-call boundaries, not VST3 in-block queue timing.
+
+[`Spatial-EQ-AutomationModel.py`](../tools/Spatial-EQ-AutomationModel.py) updates filters and feedback at the tick and uses the per-sample amount for tap blending and output scaling; it does not crossfade static renders. It preserves histories across ordinary control updates. [`Test-Spatial-EQ-Automation.py`](../tools/Test-Spatial-EQ-Automation.py) checks individual Depth, frequency, Q, and gain steps and a 20-point interleaved ramp at 48 and 96 kHz. It scores direct EQ, Depth delta, and full output separately. The 96 kHz ramp scored **−101.68 dBr** or better on full output, with `4.62e-7` FS maximum Mid/Side peak error. Off-anchor comparisons match frequency and Q at controller display precision, not at separately measured internal values.
+
+### Tail lifecycle and reset
+
+[`Probe-Spatial-EQ-Tails.py`](../tools/Probe-Spatial-EQ-Tails.py) observed retained wet history after 4 and 60 ms holds for `active`, `enabled`, and Depth; direct ringing did not explain it. Restoring `active` or `enabled` after 60 ms changed the first sample, while restoring Depth waited 25 samples for the next tick in that fixture. A 3-second Depth-zero hold suppressed a late marker to at most `6.44e-15` FS peak after restoration; the 1%-Depth positive control retained a marker at `0.0360–0.0366` FS. The trace shows the band stops wet processing when current and target amount are zero and clears its per-band wet history on re-entry. The marker test bounds observable carry-over; it cannot independently distinguish clearing from not writing during dormancy.
+
+Explicit reset clears direct and wet history and restarts the tick. The reference and modeled silent suffixes were sample-exact zeros after reset. The model does not emulate Pedalboard-specific reprepare behavior or VST3 in-block automation.
+
+### Next: simultaneous boosts
+
+The local trace indicates that each band sums eligible extraction-filter magnitudes at its own center frequency, including its own filter if eligible. The reciprocal of that sum, floored at unity before inversion, scales both Side injections and the filtered return, not the delay writes or the energy detector. This coefficient rule has not yet been verified against multi-boost renders.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Shelves.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Cuts.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Probe-Spatial-EQ-Automation.py
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Automation.py
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Probe-Spatial-EQ-Tails.py
 ```
 
-**Remaining scope:** multiple simultaneous spatial boosts, negative shelves and other shapes/modes, an automated model and tail lifecycle checks, and real-audio listening. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.
+**Remaining scope:** multiple simultaneous spatial boosts, negative shelves and other shapes/modes, multiband automation and VST3 in-block parameter delivery, and real-audio listening. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.
