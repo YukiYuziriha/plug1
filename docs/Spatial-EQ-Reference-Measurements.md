@@ -139,4 +139,23 @@ All three tools below completed through the half-CPU wrapper; no render or fitte
 - [`Probe-Spatial-EQ-MidWeakLaw.py`](../tools/Probe-Spatial-EQ-MidWeakLaw.py) (414 renders) isolates the early polarity-even term. At a fixed 3.5 ms conditioning gap and five withheld probe levels with the same 0.25 ms/6 kHz hit shape, the even-response norm had a log-log slope of 2.008. The quadratic norm fit missed by 0.07 dB RMS, versus 8.55/8.42 dB for linear/cubic; the weakest holdout was 62.6 dB above the numerical-floor proxy. This did not imply a quadratic waveform model: the frozen template left 9–43% relative L2 error, and energy-matched unseen hit shapes missed the predicted norm by about −5 to +7 dB. Co-scaling history/hit by ±6 dB preserved the old-tail-normalized trace within the measured floor. The later 1.25–12 ms window was 24–37 dB stronger in the polarity-odd term than the even term for the checked cases; this window is distinct from the early fit window, not a claim about an exact regime boundary.
 - [`Fit-Spatial-EQ-MidOverlap.py`](../tools/Fit-Spatial-EQ-MidOverlap.py) compares pre- and post-reflection corrections against the existing offline baseline. The pre-reflection candidate improved development by 1.43 dB, but the held-out burst-total error only moved from −4.45 to −4.47 dBr and hit-increment error worsened from −1.87 to −1.83 dBr. It regressed in 12/24 held-out burst cases, with an 18.24 dB worst regression on a releasing-tone overlap. The post-reflection candidate was effectively tied. Neither correction was promoted. These error figures are for this harder holdout suite, not directly comparable to the earlier burst tables.
 
-**Next Mid gate:** identify a waveform model for the early polarity-even response and a separate model for the later polarity-odd interaction. Vary paired weak-hit shapes and timing at matched short-time spectral energy; score the predicted waveform, not just its norm. For the late path, use centered probe responses under different conditioning histories and require improvement over the unchanged baseline on unseen gated/decaying beds. No HEAVEN product DSP or UI changed.
+### Mid reconstruction: gain on the reflection return
+
+[`Fit-Spatial-EQ-ReflectionEnvelope.py`](../tools/Fit-Spatial-EQ-ReflectionEnvelope.py) tests the architecture identified by local binary analysis: a band-filtered 2 ms / 40 ms energy ratio controls the **output** of the reflection path. The traced steady-state detector uses a unity-at-center matched-pole band-pass after the normal EQ; an earlier approximation used a Q=2 band-pass on raw input. The script derives the fixed direct-EQ response and an ungated reflection kernel from isolated calibration captures, retains them only in memory, then predicts from input alone. This isolates the detector and placement hypothesis; it is **not** a calibration-free reconstruction of the delay network. Decompiler output and any raw reference data are not included.
+
+| Held-out Mid error (dBr, lower is better) | Fixed baseline | Q=2 approximation | Traced detector |
+| --- | ---: | ---: | ---: |
+| Burst total (24 cases) | −4.45 | −38.42 | −48.37 |
+| Hit increment over bed | −1.87 | −31.77 | −45.46 |
+| Early hit increment (first 5.958 ms) | +0.08 | −1.56 | −1.56 |
+| Late hit increment | −18.69 | −44.86 | −50.95 |
+| Isolated packets | −16.46 | −47.76 | −52.60 |
+| Isolated clicks and pairs | −33.72 | −45.75 | −45.42 |
+
+The traced detector gave −48.87/−49.10/−47.01 dBr across sustained, gated, and decaying burst totals. The separately calibrated pre-return placement instead scored +12.40 dBr overall. The original per-case relative guard was retained and **failed** for six early increments with near-zero reference energy. None of those regressions exceeded the absolute final-output rounding margin estimated from the float32 renders. Pooled early absolute error dropped from `9.50e-4` to `4.89e-6` full-scale RMS. The absolute check is not a waiver of the relative guard or a claim of an exact null.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Fit-Spatial-EQ-ReflectionEnvelope.py
+```
+
+**Next gate:** replace the measured reflection kernel with an independent delay-network implementation and measure it on unchanged holdouts. Then check Side, other frequencies/Q/gains, overlapping bands and sample rates; no listening test or HEAVEN product DSP/UI change has been made.
