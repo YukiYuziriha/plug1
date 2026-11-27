@@ -2,6 +2,8 @@
 
 Status: design notes only; no DSP or UI implemented by this document.
 
+Reference: [RFA Spatial EQ transcript notes](Spatial-EQ-RFA-Transcript-Notes.md) distinguish the speaker’s claims from open questions and proposed measurements. The targets below are our design choices, not claims about RFA’s implementation.
+
 ## Shared direction
 
 Build an efficient, clean-room spatial DSP engine based on the described behavior, not a claim to reproduce a proprietary implementation exactly. Keep the engine independent of EQ bands and UI so multiple tools can compose it.
