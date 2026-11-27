@@ -6,45 +6,33 @@
 
 HEAVEN is an open-source audio effect for **Windows x64 · CLAP and VST3**. Turn one take into **up to eight generated voices plus an independent Lead**, shape each branch, and bring it all back together in a modular effects graph. Stack and Routing are two views of the same patch.
 
-[Download the latest release](https://github.com/YukiYuziriha/plug1/releases/latest) · [Install](#download--install) · [Getting Started](docs/Getting-Started.md) · [Showcase](#showcase)
+[Download the latest release](https://github.com/YukiYuziriha/plug1/releases/latest) · [Install](#download--install) · [First patch](#first-patch) · [Routing](#routing-in-neon) · [Grass Block](#grass-block-theme)
 
-## v1.15.1 — Patch the wet signal
+## Routing in Neon
 
-Connect an FX node’s **Wet Out** through other nodes and back to its **Wet Return**, right on the Routing canvas. Echo only the grains, add reverb to repeats, or split the wet signal into parallel FX. Drop a disconnected node on a cable to insert it. [How wet routing works](docs/Getting-Started.md#shape-only-the-wet-signal).
+![Neon Routing at 100% Motion: Lead through Granular to Output, with a separate Delay and Reverb wet path](docs/showcase/neon-routing.gif)
 
-### Bring your own double
+*Neon Routing in v1.15.1, with visual motion set to 100%.*
 
-Send a recorded double to HEAVEN’s host sidechain and blend it with your Lead right from Stack. **Sidechain Blend** comes wired in the standard patch, and the independent **Sidechain card** lets you tune, pan and shape the double without touching the Lead. Leave **Process** off to blend the raw take instead. The card follows the host-enabled bus, not whether a track is routed to it or making sound.
+**Echo the grains, not the vocal.** A wet pocket lets you build an effects chain inside an effect without sending its dry signal through that chain. In v1.15.1, the pocket is visible right on the Routing canvas: patch **Granular Wet Out → Delay → Reverb → Granular Wet Return**. Granular’s ordinary output stays connected, and its **Mix** blends the entire wet chain with its untouched dry path.
 
-The Lead card now houses **Gain Rider**, with a live dB readout so you can see what it adds or cuts. **Neon** is the default for fresh instances, and **Grass Block** adds a pixel-style skin. v1.14.1 also fixes latency-change requests and shows the actually loaded plugin version. [Set up a sidechain double](docs/Getting-Started.md#blend-a-recorded-double-with-sidechain).
+Wet paths can branch into parallel effects, too. Drop a disconnected node onto a highlighted cable to splice it in; one Undo restores the original cable and node position. [Patch your first wet path](docs/Getting-Started.md#shape-only-the-wet-signal).
+
+## Grass Block theme
+
+![Grass Block Stack at 100% Motion, with pixel-style controls, voice cards and moving meters](docs/showcase/grass-block-stack.gif)
+
+Grass Block gives Stack pixel lettering and blocky textures without changing how the patch sounds. Use **Skin** to cycle between Device, Neon, Spectral and Grass Block. New instances start in Neon; saved patches retain their skin.
+
+[Browse earlier effect demos and capture notes](docs/showcase/README.md).
 
 ## What you can make
 
 - **Doubles and layered harmonies.** Shape pitch, fine detune, formant, gain, pan, delay and motion per generated voice, with independent Lead edits. Start clean or pick from [30 factory presets](docs/Factory-Presets.md).
 - **Parallel and multiband effects.** Give voices their own FX, split signals into two or three bands, and recombine branches with Dry/Wet mixers. Main Bus FX tabs edit the same nodes as Routing.
 - **Spectral crossbreeds.** Blend a donor’s spectrum into your vocal with Spectral Morph’s **MAIN** and **DONOR** inputs, Magnitude and Envelope modes, and donor Freeze. Feed it an internal branch or the raw mono/stereo host sidechain, independent of the Sidechain card.
-- **Glitch fills and grain echoes.** Grab a phrase and fire reverses or ratchets with Vocal Glitch, including MIDI triggering. Give Granular its own Delay on the wet path so the echoes follow Granular’s Mix.
-- **Tone, space and movement.** EQ8, Waveshaper, Chorale, Delay, Reverb, synthetic-IR Convolution, Saturator, Compressor, Bitcrusher, Granular, Gain, Stereo, Gate/Expander, XP Filter and Synth Filter. Animate patches with LFO or Random modulation, save full-patch presets, and switch between Device, Neon, Spectral and Grass Block themes. Routing has Undo/Redo, and input/output meters show RMS and sample peaks.
-
-## Showcase
-
-*Earlier Neon captures showing effect controls and signal displays.*
-
-### Spectral Morph — borrow and freeze a spectrum
-
-![Spectral Morph showing MAIN, DONOR and result spectra with donor Freeze](docs/showcase/spectral-morph.gif)
-
-### Reverb — see the wet tail
-
-![Reverb showing measured input and wet history alongside space controls](docs/showcase/reverb.gif)
-
-### Compressor — see the gain reduction actually applied
-
-![Compressor showing transfer curve and gain-reduction history](docs/showcase/compressor.gif)
-
-### Stereo — check width and mono compatibility
-
-![Stereo showing left and right activity, correlation and Mono Audition](docs/showcase/stereo.gif)
+- **Recorded doubles.** [Blend a host sidechain into the Lead](docs/Getting-Started.md#blend-a-recorded-double-with-sidechain), raw or shaped independently with the Sidechain card.
+- **Glitch fills and evolving patches.** Grab a phrase and fire reverses or ratchets with MIDI-triggerable Vocal Glitch. Modulate supported controls with LFO or Random and save the whole patch as a preset.
 
 ## Download & install
 

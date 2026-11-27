@@ -1,6 +1,15 @@
-# Vocal Stack v1.11 showcase
+# HEAVEN showcase
 
 [Product overview](../../README.md) · [Getting Started](../Getting-Started.md)
+
+## v1.15.1 — Routing and Grass Block
+
+- [Neon Routing](neon-routing.gif): Lead passes through Granular to Output. The cyan wet path adds Delay and Reverb between Granular’s **Wet Out** and **Wet Return**.
+- [Grass Block Stack](grass-block-stack.gif): Doubler, voice cards and live input/output meters in the pixel-style skin.
+
+Both loops are six-second offscreen captures of the production editor at **Motion 100%**, rendered at 20 frames per second with generated PCM. They show the interface, not native frame rate or DAW audio performance. The machine-local preset-path footer is cropped out.
+
+## Earlier effect demos (v1.11)
 
 These are existing production-component captures from the v1.11 work included in
 the delivered release. The GIFs are copied without resizing, re-encoding or
