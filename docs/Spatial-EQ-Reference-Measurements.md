@@ -116,4 +116,19 @@ Run both scripts with the same half-CPU wrapper. They reset and reuse the host f
 
 A predictor proportional to `A1*A2` had +6.7/+6.7 dBr Mid/Side error when both tones shifted by ±6 dB; `A1*A2/(A1²+A2²)` gave −53.6/−76.8 dBr. This supports near-invariance to common gain in that fixture, not that the reference implements the tested formula. Across all holdouts the normalized prediction scored −3.2/−8.0 dBr versus 0 dBr for the additive and zero baselines, but it still lost to zero at the equal-level 900 Hz holdout. Neither hypothesis was promoted.
 
-**Next gate:** distinguish absolute tone-frequency dependence from spacing dependence by moving both tones together at fixed spacing, then change spacing around a fixed center frequency. Test a predictor on withheld pairs and saws, then on gated overlap. No HEAVEN DSP or UI changed.
+### Larger factorial and three-tone holdouts
+
+- [`Probe-Spatial-EQ-DiverseBatch.py`](../tools/Probe-Spatial-EQ-DiverseBatch.py): 1,504 renders in 56.99 s in one wrapped invocation. Crossed four centers × four spacings, two probes (1,732/3,972 Hz), and both Mid and Side routes. Per route and probe, fit six equal-gain cells and hold out ten, including three unseen combinations of seen center and spacing values. Excluded the ratio, phase, co-scale and joint challenges from fitting. All 352 held-out lines exceeded 2× the measured controls and mixed residuals exceeded 8×; eight checked fresh/reused captures agreed at scored bins and controls. At Depth 100, joint target peaks were −49.7 to −32.2 dB relative to the probe, versus −138.2 to −133.9 dB at Depth 0.
+
+  | Route / probe | Prior fixed | Probe-matched anchor | Grid constant | Spacing only | Center only | Both |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+  | Mid / 1,732 Hz | +0.7 | +0.7 | +0.5 | +0.2 | +0.6 | +0.4 |
+  | Mid / 3,972 Hz | +11.0 | +1.5 | +4.8 | +4.7 | +5.8 | +6.1 |
+  | Side / 1,732 Hz | +0.2 | +0.2 | −2.5 | −5.0 | −2.5 | −4.6 |
+  | Side / 3,972 Hz | +4.4 | −0.1 | −2.8 | −5.2 | −2.9 | −4.9 |
+
+  Errors are relative complex RMS in dBr on the ten factorial holdouts; zero and measured additive rounded to 0.0 dBr. Spacing alone helped Side difference lines in unseen combinations (−10.5/−10.0 dBr across the two probes), but lost to zero on sum lines in the same group. No model transferred reliably across the full grid.
+
+- [`Probe-Spatial-EQ-ThreeTone.py`](../tools/Probe-Spatial-EQ-ThreeTone.py): 296 renders in 13.94 s in one wrapped invocation. Added a controlled third tone C to an existing A/B bed and scored the same A/B mixed lines. At 680 Hz, the louder C changed line magnitudes by at most 0.6 dB on either route. At 3,560 Hz and the same −18 dBFS level, individual lines dropped by 1.3–4.7 dB, and phases shifted up to about 15°. A total-bed-power adjustment improved that strong 3,560 Hz case but did worse overall than leaving the A/B prediction unchanged (pooled −8.2/−8.4 vs −12.8/−12.3 dBr Mid/Side). The frequency of the added tone matters; broadband power alone does not explain it. A gated-C case was scored only after settling, not during the transition. All conditional lines cleared controls.
+
+**Next gate:** test frequency-weighted rather than broadband conditioning, and train and score sum and difference lines separately. Hold out entire multi-tone configurations before testing gated overlaps. Neither batch promoted a model or changed HEAVEN DSP or UI.
