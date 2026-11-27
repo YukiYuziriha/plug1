@@ -158,4 +158,25 @@ The traced detector gave −48.87/−49.10/−47.01 dBr across sustained, gated,
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Fit-Spatial-EQ-ReflectionEnvelope.py
 ```
 
-**Next gate:** replace the measured reflection kernel with an independent delay-network implementation and measure it on unchanged holdouts. Then check Side, other frequencies/Q/gains, overlapping bands and sample rates; no listening test or HEAVEN product DSP/UI change has been made.
+### Calibration-free one-band delay network
+
+[`Spatial-EQ-DelayModel.py`](../tools/Spatial-EQ-DelayModel.py) implements the two fixed tap banks, four-line feedback, both Side injections, and the band-conditioned gain on the filtered return. It uses no captured impulse response, reference binary, or fitted coefficients when processing. The matched-pole filter designs include their analog Nyquist targets; the previous detector experiment used the same band-pass poles and center gain but forced a Nyquist zero. The model is limited to a settled, static, positive-gain Stereo Bell. It returns the Depth delta rather than reimplementing all host and EQ modes.
+
+[`Test-Spatial-EQ-DelayModel.py`](../tools/Test-Spatial-EQ-DelayModel.py) retains the preceding 24 held-out overlaps at 33/71/96% Depth and compares against the installed reference without gain fitting, time alignment, or calibration. Dual-mono alone hid a left/right routing error on one late tap; checking the asymmetric impulse localized the first divergence, and correcting the tap routing resolved it at both 44.1 and 48 kHz.
+
+| Held-out error (dBr, lower is better) | Mid | Side |
+| --- | ---: | ---: |
+| Full bed + hit, entire fixture | −121.71 | −129.94 |
+| Burst total | −107.93 | −129.49 |
+| Early total | −101.69 | −128.84 |
+| Late total | −124.25 | −129.75 |
+
+Full-window absolute errors were `2.31e-9`/`1.28e-8` FS RMS and `1.95e-8`/`6.56e-8` FS peak, Mid/Side. Early increment and interaction ratios can still look much worse because six windows have near-zero reference; the cited early absolute errors are below `4e-9` FS RMS. At 44.1/48 kHz, isolated dual-mono and asymmetric anchor clicks at 50/100% Depth scored −130.11 to −124.57 dBr. Depth 0 was exactly zero.
+
+Off-anchor checks set and read back the controller display values. At 800 Hz/+3 dB/Q 0.70 and 6.4 kHz/+12 dB/Q 2.00, dual-mono and asymmetric clicks across 48/96 kHz and 33/100% Depth came within −96.58 and −114.23 dBr, respectively, in both outputs. A 1.25 s asymmetric tone fixture plus tail at the latter setting, 96 kHz and 71% Depth, scored −117.06/−121.92 dBr. Display value rounding may play a role off-anchor; several residuals exceed final output rounding and the test does not isolate the cause.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-DelayModel.py
+```
+
+**Remaining scope:** cuts, overlapping bands, other shapes and modes, automation, and real-audio listening. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.
