@@ -154,7 +154,7 @@ Editor::Editor(Processor& processor)
     motion.setRange(0, 100, .01);
     motion.setValue(owner.getMotionPercent(), dontSendNotification);
     motion.setTextBoxStyle(Slider::TextBoxAbove, false, 100, 25);
-    motion.setDoubleClickReturnValue(true, 3);
+    motion.setDoubleClickReturnValue(true, Processor::defaultMotionPercent);
     motion.setScrollWheelEnabled(false);
     motion.textFromValueFunction = [](double v) { return String(v, 2).trimCharactersAtEnd("0").trimCharactersAtEnd(".") + "%"; };
     motion.valueFromTextFunction = [](const String& s) { return s.getDoubleValue(); };

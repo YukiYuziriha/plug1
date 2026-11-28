@@ -1046,8 +1046,8 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
         || static_cast<bool>(restored.getProperty("advancedInitialized", hasAdvancedState));
     skin.store(std::clamp(int(restored.getProperty("skin",
         static_cast<bool>(restored.getProperty(themeProperty, false)) ? 1 : 0)), 0, 3), std::memory_order_relaxed);
-    const double motion = double(restored.getProperty("motionPercent", 3.0));
-    motionPercent.store(std::isfinite(motion) ? std::clamp(motion, 0.0, 100.0) : 3.0, std::memory_order_relaxed);
+    const double motion = double(restored.getProperty("motionPercent", defaultMotionPercent));
+    motionPercent.store(std::isfinite(motion) ? std::clamp(motion, 0.0, 100.0) : defaultMotionPercent, std::memory_order_relaxed);
     advancedVisible.store(static_cast<bool>(restored.getProperty("advancedVisible", false)), std::memory_order_relaxed);
     parameters.replaceState(restored);
     advancedInitialized.store(initialized, std::memory_order_relaxed);
@@ -1109,7 +1109,7 @@ void Processor::setSkin(int requested) {
 }
 
 void Processor::setMotionPercent(double requested) {
-    const double next = std::isfinite(requested) ? std::clamp(requested, 0.0, 100.0) : 3.0;
+    const double next = std::isfinite(requested) ? std::clamp(requested, 0.0, 100.0) : defaultMotionPercent;
     if (motionPercent.exchange(next, std::memory_order_relaxed) != next)
         updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true));
 }

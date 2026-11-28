@@ -50,7 +50,7 @@ inline void motionState() {
     clock.advance(18, false, 100); clock.advance(1000, true, 100);
     ui::near(float(clock.seconds()), 103, "Hidden time must pause");
     auto owner = std::make_unique<Processor>();
-    ui::near(float(owner->getMotionPercent()), 3, "Motion default");
+    ui::near(float(owner->getMotionPercent()), 100, "Motion default");
     owner->setMotionPercent(17.25);
     juce::MemoryBlock state; owner->getStateInformation(state);
     auto copy = std::make_unique<Processor>(); copy->setStateInformation(state.getData(), int(state.getSize()));
@@ -58,7 +58,7 @@ inline void motionState() {
     ui::require(copy->getParameters().size() == 3897, "Motion must not append a host parameter");
     auto legacy = juce::parseXML(owner->settingsText()); legacy->removeAttribute("motionPercent");
     ui::require(copy->pasteSettings(legacy->toString()), "Legacy state restore");
-    ui::near(float(copy->getMotionPercent()), 3, "Missing Motion legacy default");
+    ui::near(float(copy->getMotionPercent()), 100, "Missing Motion legacy default");
     std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor());
     auto& slider = ui::slider(*editor, "decorativeMotion");
     ui::require(slider.getSliderStyle() == juce::Slider::LinearHorizontal && bool(slider.getProperties()["vocalstackTexturedBar"]), "Header Motion must be fat square slider");

@@ -463,6 +463,7 @@ public:
 
     int getSkin() const noexcept { return skin.load(std::memory_order_relaxed); }
     void setSkin(int);
+    static constexpr double defaultMotionPercent = 100.0;
     double getMotionPercent() const noexcept { return motionPercent.load(std::memory_order_relaxed); }
     void setMotionPercent(double);
     bool isFlash() const noexcept { return getSkin() == 1; }
@@ -549,7 +550,7 @@ private:
     juce::String routingError;
     // FxMonitor's large windows live on its heap, not the Processor/test stack.
     // Declared before engine so the non-owning executor pointer outlives it.
-    std::atomic<double> motionPercent{3.0}; // Presentation state, never a host parameter.
+    std::atomic<double> motionPercent{defaultMotionPercent}; // Presentation state, never a host parameter.
     FxMonitor fxMonitor;
     GrainSnapshotBridge grainBridge;
     SpectralMorphBridge spectralBridge;
