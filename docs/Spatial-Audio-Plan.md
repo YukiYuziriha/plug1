@@ -12,7 +12,9 @@ Core building blocks: decorrelation/width, short early reflections, damping of g
 
 ## Product A: Spatial EQ
 
-- Conventional EQ with a Depth knob per band; target eight bands after the static and automated multiband paths are validated.
+- One eight-band minimum-phase EQ node with per-band Depth, not a separate spatial node or enable switch. Depth at zero behaves like conventional EQ; skip spatial processing once all bands are at zero and any tails have faded. The direct path does not wait for reflections. Verify zero added host-reported latency in the HEAVEN build, including while moving Depth live.
+- Add a per-band **Strength** knob alongside Depth for supported boosts. Depth controls the character of the space; Strength is a linear amplitude trim on that band's generated space, after its reflection and Side processing, before summing with other bands and applying wet cuts. **0%** mutes that contribution, **50%** is unity and the default reference-match point, and **100%** is 2× amplitude (+6.02 dB on generated space only), not a promise of twice the perceived effect.
+- Strength must not change the direct EQ, Depth-dependent cuts, decay, detector, or overlap weighting. Smooth Strength changes without resetting histories. Verify that 50% preserves the port's reference match, 0% and 100% scale only the intended contribution, and overlapping boosted bands retain usable headroom. A shallower Depth with more Strength may share a similar width level, but it must not change into the higher-Depth reflection pattern.
 - Generate frequency-local stereo space, including from mono sources. Keep the direct EQ and the filter feeding the spatial engine distinct; a shelf does not necessarily spatialize the entire raised range equally.
 - Preserve the distinction between boost-generated space and Depth-dependent cuts. Measure what happens to existing input Side and space from other bands.
 - Compare the mono fold-down and the stereo difference against the reference. Do not force an exact mono null: the verified boost adds some Mid and a full-Depth cut can change the conventional Mid cut.
