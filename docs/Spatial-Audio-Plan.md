@@ -1,6 +1,6 @@
 # Spatial audio DSP and product notes
 
-**Status:** The research branch has an unreleased HEAVEN Spatial EQ node in CLAP and VST3 test builds. The independent C++ engine matches the tested Bell, Low Shelf, and High Shelf boosts, cuts, and live gain-sign crossings without captured impulse responses or fitted coefficients. The legacy EQ8 is unchanged. Strength is fixed at unity, with no control or parameter. VST3 in-block delivery and human listening remain unverified.
+**Status:** The research branch has an unreleased HEAVEN Spatial EQ node in CLAP and VST3 test builds. The independent C++ engine matches the tested Bell, Low Shelf, and High Shelf boosts, cuts, and live gain-sign crossings without captured impulse responses or fitted coefficients. The legacy EQ8 is unchanged. Strength is fixed at unity, with no control or parameter. Native VST3 testing found that the current wrapper applies only the final queue point at the start of the block. Sample-accurate VST3 delivery and human listening remain open.
 
 Reference: [RFA Spatial EQ transcript notes](Spatial-EQ-RFA-Transcript-Notes.md) separate the speaker’s claims from open questions. The [reference measurements and offline tests](Spatial-EQ-Reference-Measurements.md) document the measured behavior and match limits.
 
@@ -48,11 +48,21 @@ Design cautions:
 2. **Verified offline — positive low and high shelves.** Both reuse the reflection engine with their own post-EQ extraction filter. Impulses and sweeps cover 0%, 50%, and 100% Depth with separate direct EQ and Depth-added Mid/Side scores.
 3. **Verified offline — Stereo Bell cut and one boost/cut pair.** The cut changes direct Mid and separately filters accumulated wet. Both band orders and a separated-band control are covered. Static overlap weights are verified on overlapping bells, mixed shelves and bells, and eight-band holdouts with cuts.
 4. **Verified offline — automation and tails.** The model reproduces tested Depth/frequency/Q/gain changes, slot-ordered overlap updates, switch and eligibility changes, Depth-zero re-entry, and explicit resets. Tests include four/eight-band holdouts with positive bells and shelves and a moving negative Bell fixture. Shape and gain sign stay fixed; host-call boundaries do not establish VST3 in-block delivery.
-5. **Integrated in a test build.** The C++ engine is wired into Routing and the Stack rack with eight Depth controls. Verify playback and VST3 in-block automation before release. Static and gain-crossing comparisons on real narration and stereo choir passed, and RMS-matched A/B files were exported but not auditioned. Shape swaps, remaining channel modes, and other spatial controls are outside the verified scope; dynamic EQ and linear phase remain later work.
+5. **Integrated in a test build.** The C++ engine is wired into Routing and the Stack rack with eight Depth controls. Verify playback and address the measured VST3 wrapper limitation before claiming in-block automation. Static and gain-crossing comparisons on real narration and stereo choir passed, and RMS-matched A/B files were exported but not auditioned. Shape swaps, remaining channel modes, and other spatial controls are outside the verified scope; dynamic EQ and linear phase remain later work.
 6. Reuse the engine in the separate mono-in/stereo-out Signal Placer. Build advanced visuals afterward, including an optional top-down EQ view.
+
+## Native VST3 automation finding
+
+The native `vocalstack_vst3_sidechain_smoke` runner loads the built HEAVEN VST3 module and sends `ProcessData::inputParameterChanges` for Spatial EQ Gain and Depth. The focused `--spatial-eq-offsets` mode places jumps at samples 73 and 297 of a 512-sample block (48 kHz stereo), with adjacent old/new queue points for each jump. The reference is the same module with explicit `process()` splits at those offsets. A no-op queue matches an unqueued baseline.
+
+For both controls, the pinned JUCE wrapper read only the final point and rendered exactly as if that value was sent at sample 0. Explicit splits produced different audio. The native host supplied the offsets; this loss occurs in JUCE's `processParameterChanges()`, not in the Spatial EQ engine. This test does not establish behavior in any DAW; host-call splits or Pedalboard renders are not evidence of VST3 in-block delivery.
+
+The native CLAP smoke test also offers `--spatial-eq-offsets`. At 48 kHz stereo, timestamped Gain and Depth events at 73, 297, and 511 of a 512-sample block matched explicit host splits exactly, including the one-sample final span. A no-op event list matched the unqueued baseline. Moving the final event to the next block changed the audio, confirming that the comparison detects a one-sample boundary error. This is native CLAP step-event coverage, not VST3 interpolation coverage.
+
+For the VST3 fix, keep one outer processor call and hand timed Gain/Depth points to a bounded, preallocated path. A split-at-points patch would not by itself reproduce VST3 ramps and risks changing MIDI offsets and transport context. Verify ramps across blocks, jumps, simultaneous queues, parameter flushing, MIDI and transport timing, and unchanged latency before shipping.
 
 ## Performance and validation
 
 Start with minimum-phase biquads and short preallocated delay/all-pass networks. No allocations or locks in the audio callback; smooth automated controls and bypass inactive processing. Benchmark rather than assuming the reference plugin's slowdown is DSP-related.
 
-Validate impulse responses, mono fold-down, bass leakage, mono vocals, percussion, automation, and CPU at multiple sample rates. Report both full-output and Depth-delta error; use absolute errors alongside relative scores near a null. Offline DSP match results are documented; no realtime CPU benchmark or listening result is claimed yet.
+Validate impulse responses, mono fold-down, bass leakage, mono vocals, percussion, automation, and CPU at multiple sample rates. Report both full-output and Depth-delta error; use absolute errors alongside relative scores near a null. Offline DSP match and standalone processing cost are documented. No end-to-end DAW CPU benchmark or human listening result is claimed.

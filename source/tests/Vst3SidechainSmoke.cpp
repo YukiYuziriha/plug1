@@ -19,6 +19,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -41,7 +42,10 @@ struct Host final : IHostApplication {
     tresult PLUGIN_API createInstance(TUID, TUID, void** out) override { *out=nullptr; return kNoInterface; }
 };
 struct ParameterQueue final : IParamValueQueue {
-    ParamID id = 0; ParamValue value = 0; int32 offset = 17; uint32 refs = 1;
+    struct Point { int32 offset; ParamValue value; };
+    ParamID id = 0;
+    std::vector<Point> points;
+    uint32 refs = 1, readMask = 0;
     tresult PLUGIN_API queryInterface(const TUID iid, void** out) override {
         *out = nullptr;
         if (equal(iid, IParamValueQueue_iid) || equal(iid, FUnknown_iid)) { *out = static_cast<IParamValueQueue*>(this); addRef(); return kResultOk; }
@@ -50,13 +54,15 @@ struct ParameterQueue final : IParamValueQueue {
     uint32 PLUGIN_API addRef() override { return ++refs; }
     uint32 PLUGIN_API release() override { return --refs; }
     ParamID PLUGIN_API getParameterId() override { return id; }
-    int32 PLUGIN_API getPointCount() override { return 1; }
+    int32 PLUGIN_API getPointCount() override { return int32(points.size()); }
     tresult PLUGIN_API getPoint(int32 index, int32& sampleOffset, ParamValue& parameterValue) override {
-        if (index != 0) return kInvalidArgument;
-        sampleOffset = offset; parameterValue = value; return kResultOk;
+        if (index < 0 || index >= getPointCount()) return kInvalidArgument;
+        if (index < 32) readMask |= uint32(1) << index;
+        const auto& point = points[size_t(index)];
+        sampleOffset = point.offset; parameterValue = point.value; return kResultOk;
     }
     tresult PLUGIN_API addPoint(int32 sampleOffset, ParamValue parameterValue, int32& index) override {
-        offset = sampleOffset; value = parameterValue; index = 0; return kResultOk;
+        index = getPointCount(); points.push_back({sampleOffset, parameterValue}); return kResultOk;
     }
 };
 struct ParameterChanges final : IParameterChanges {
@@ -128,6 +134,12 @@ struct Stream final : IBStream {
     }
     tresult PLUGIN_API tell(int64* position) override { if(!position) return kInvalidArgument; *position=cursor; return kResultOk; }
 };
+Stream xmlState(std::string_view xml) {
+    Stream result; result.bytes.resize(xml.size()+9);
+    const uint32 magic=0x21324356, length=uint32(xml.size());
+    std::memcpy(result.bytes.data(),&magic,4); std::memcpy(result.bytes.data()+4,&length,4);
+    std::memcpy(result.bytes.data()+8,xml.data(),xml.size()); return result;
+}
 Stream state(int variant) {
     std::string xml = "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/><PARAM id=\"doubleOn\" value=\"0\"/><PARAM id=\"formantOn\" value=\"0\"/>"
         "<PARAM id=\"bypass\" value=\"" + std::string(variant==1 ? "1" : "0") + "\"/>"
@@ -139,10 +151,7 @@ Stream state(int variant) {
         "<Link source=\"1\" destination=\"100\" inputPin=\"0\"/><Link source=\"14\" destination=\"100\" inputPin=\"1\"/>"
         "<Link source=\"100\" destination=\"13\" inputPin=\"0\"/></RoutingGraph></VocalStack>";
     if (variant == 3) xml = "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/><PARAM id=\"doubleOn\" value=\"0\"/><PARAM id=\"formantOn\" value=\"0\"/></VocalStack>";
-    Stream result; result.bytes.resize(xml.size()+9);
-    const uint32 magic=0x21324356, length=uint32(xml.size());
-    std::memcpy(result.bytes.data(),&magic,4); std::memcpy(result.bytes.data()+4,&length,4);
-    std::memcpy(result.bytes.data()+8,xml.data(),xml.size()); return result;
+    return xmlState(xml);
 }
 // This host keeps the two VST3 objects connected for their entire lifetime.
 // A restart callback only queues work: the host stops audio after returning to
@@ -192,11 +201,13 @@ struct LatencyHost final : IComponentHandler {
         return kResultOk;
     }
 
-    LatencyHost(IPluginFactory& factory, const TUID cid, double rate, int channels, bool morph) {
-        try { initialize(factory, cid, rate, channels, morph); }
+    LatencyHost(IPluginFactory& factory, const TUID cid, double rate, int channels, bool morph,
+                const Stream* preset = nullptr) {
+        try { initialize(factory, cid, rate, channels, morph, preset); }
         catch (...) { shutdown(); throw; }
     }
-    void initialize(IPluginFactory& factory, const TUID cid, double rate, int channels, bool morph) {
+    void initialize(IPluginFactory& factory, const TUID cid, double rate, int channels, bool morph,
+                    const Stream* preset) {
         check(factory.createInstance(cid, IComponent_iid, reinterpret_cast<void**>(&component)) == kResultOk && component,
               "callback host component creation failed");
         check(component->initialize(&application) == kResultOk, "callback host component initialization failed");
@@ -223,24 +234,21 @@ struct LatencyHost final : IComponentHandler {
             && component->activateBus(kAudio, kOutput, 0, true) == kResultOk, "callback host bus activation failed");
         // Disabled Morph with zero Mix gives an exact dry oracle even when on.
         // The canonical graph contains the real Sidechain Blend node.
-        auto initial = state(morph ? 0 : 3);
+        auto initial = preset != nullptr ? *preset : state(morph ? 0 : 3);
         std::string xml(initial.bytes.begin() + 8, initial.bytes.end() - 1);
-        if (morph) {
+        if (preset == nullptr && morph) {
             const auto on = xml.find("id=\"fx1On\" value=\"1\"");
             check(on != std::string::npos, "callback Morph state fixture missing");
             xml.replace(on, std::strlen("id=\"fx1On\" value=\"1\""), "id=\"fx1On\" value=\"0\"");
             const auto mix = xml.find("id=\"fx1Mix\" value=\"100\"");
             check(mix != std::string::npos, "callback Morph Mix fixture missing");
             xml.replace(mix, std::strlen("id=\"fx1Mix\" value=\"100\""), "id=\"fx1Mix\" value=\"0\"");
-        } else {
+        } else if (preset == nullptr) {
             // Start bypassed, rather than testing the unrelated asymptotic
             // bypass gain ramp with a sample-exact latency oracle.
             xml.insert(xml.find("</VocalStack>"), "<PARAM id=\"bypass\" value=\"1\"/>");
         }
-        initial.bytes.assign(xml.size() + 9, 0);
-        const uint32 magic = 0x21324356, length = uint32(xml.size());
-        std::memcpy(initial.bytes.data(), &magic, 4); std::memcpy(initial.bytes.data() + 4, &length, 4);
-        std::memcpy(initial.bytes.data() + 8, xml.data(), xml.size());
+        initial = xmlState(xml);
         check(component->setState(&initial) == kResultOk, "callback host initial state failed");
         Stream synchronized;
         check(component->getState(&synchronized) == kResultOk, "callback host state synchronization read failed");
@@ -260,7 +268,7 @@ struct LatencyHost final : IComponentHandler {
         outputs.channelBuffers32 = outputPointers.data();
         data.processMode = kOffline; data.symbolicSampleSize = kSample32;
         data.numInputs = 2; data.numOutputs = 1; data.inputs = inputs; data.outputs = &outputs;
-        stable(0);
+        if (preset == nullptr) stable(0);
     }
     ~LatencyHost() { shutdown(); }
     void shutdown() {
@@ -297,8 +305,7 @@ struct LatencyHost final : IComponentHandler {
         for (int c = 0; c < outputs.numChannels; ++c) for (int i = 0; i < samples; ++i)
             check(std::isfinite(output[size_t(c)][size_t(i)]), "callback host nonfinite output");
     }
-    void automate(const char* title, double plain) {
-        const auto id = parameter(title);
+    ParamValue normalizedValue(ParamID id, double plain) {
         // JUCE's continuous VST3 plain range is normalized, not the displayed
         // engineering units. Ask the released controller to parse its own text.
         const auto text = std::to_string(plain);
@@ -307,9 +314,14 @@ struct LatencyHost final : IComponentHandler {
         ParamValue normalized = 0;
         check(controller->getParamValueByString(id, display, normalized) == kResultOk,
               "callback host controller value conversion failed");
+        return normalized;
+    }
+    void automate(const char* title, double plain) {
+        const auto id = parameter(title);
+        const auto normalized = normalizedValue(id, plain);
         check(controller->setParamNormalized(id, normalized) == kResultOk, "callback host controller edit failed");
         ParameterChanges changes;
-        changes.queue.id = id; changes.queue.value = normalized; changes.queue.offset = 0;
+        changes.queue.id = id; changes.queue.points = {{0, normalized}};
         for (auto& c : main) c.fill(0);
         process(137, &changes); // Host edits reach DSP through the actual VST3 queue.
         check(std::abs(controller->getParamNormalized(id) - normalized) < 1.e-6, "callback controller edit not retained");
@@ -389,6 +401,101 @@ struct LatencyHost final : IComponentHandler {
               "latency transition did not have exactly one callback-driven activation");
     }
 };
+
+void spatialEqOffsets(IPluginFactory& factory, const TUID cid) {
+    constexpr int blockSize = 512, first = 73, second = 297, preroll = 4096, followup = 1024;
+    constexpr double rate = 48000.;
+    constexpr float match = 2.e-6f, distinguish = 1.e-5f;
+    using Audio = std::array<std::array<float, blockSize + followup>, 2>;
+    enum class Delivery { queued, split, atBlockStart, noChanges, queuedNoOp };
+    for (bool gain : {true, false}) {
+        const char* field = gain ? "Gain" : "Depth";
+        const auto preset = xmlState(std::string(
+            "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/><PARAM id=\"doubleOn\" value=\"0\"/>"
+            "<PARAM id=\"formantOn\" value=\"0\"/><PARAM id=\"globalMix\" value=\"100\"/>"
+            "<PARAM id=\"fx1On\" value=\"1\"/><PARAM id=\"fx1SpatialEqBand1On\" value=\"1\"/>"
+            "<PARAM id=\"fx1SpatialEqBand1Frequency\" value=\"900\"/>")
+            + (gain ? "<PARAM id=\"fx1SpatialEqBand1Gain\" value=\"-9\"/><PARAM id=\"fx1SpatialEqBand1Depth\" value=\"60\"/>"
+                    : "<PARAM id=\"fx1SpatialEqBand1Gain\" value=\"12\"/><PARAM id=\"fx1SpatialEqBand1Depth\" value=\"0\"/>")
+            + "<RoutingGraph><Node id=\"1\" type=\"0\"/><Node id=\"100\" type=\"28\"/><Node id=\"13\" type=\"5\"/>"
+              "<Link source=\"1\" destination=\"100\"/><Link source=\"100\" destination=\"13\"/>"
+              "</RoutingGraph></VocalStack>");
+        uint32 reads = 0;
+        const auto render = [&](Delivery delivery) {
+            LatencyHost host(factory, cid, rate, 2, false, &preset);
+            const auto id = host.parameter((std::string("FX 1 Spatial EQ Band 1 ") + field).c_str());
+            const auto initial = host.normalizedValue(id, gain ? -9 : 0);
+            const auto middle = host.normalizedValue(id, gain ? 12 : 100);
+            const auto final = host.normalizedValue(id, gain ? 5 : 35);
+            check(std::abs(host.controller->getParamNormalized(id) - initial) < 1.e-6,
+                  "VST3 Spatial EQ initial normalized value differs from fixture");
+            ParameterChanges changes;
+            changes.queue.id = id;
+            Audio result{};
+            const auto processSpan = [&](int start, int count, IParameterChanges* queue = nullptr) {
+                for (int i = 0; i < count; ++i) {
+                    const double phase = 6.283185307179586 * 900 * (preroll + start + i) / rate;
+                    host.main[0][size_t(i)] = float(.06 * std::sin(phase) + .02 * std::cos(1.31 * phase));
+                    host.main[1][size_t(i)] = float(.05 * std::cos(.83 * phase) - .02 * std::sin(1.17 * phase));
+                }
+                host.process(count, queue);
+                if (start >= 0) for (size_t c = 0; c < result.size(); ++c)
+                    std::copy_n(host.output[c].begin(), count, result[c].begin() + start);
+                check(host.processor->getLatencySamples() == 0, "VST3 Spatial EQ automation changed latency");
+            };
+            for (int start = -preroll; start < 0; start += blockSize) processSpan(start, blockSize);
+            if (delivery == Delivery::split) {
+                processSpan(0, first);
+                changes.queue.points = {{0, middle}};
+                processSpan(first, second - first, &changes);
+                changes.queue.points = {{0, final}};
+                processSpan(second, blockSize - second, &changes);
+            } else if (delivery == Delivery::queued || delivery == Delivery::queuedNoOp) {
+                const bool moving = delivery == Delivery::queued;
+                const auto atFirst = moving ? middle : initial, atSecond = moving ? final : initial;
+                // VST3 queues describe linear segments. Adjacent old/new points
+                // encode exact jumps, making explicit process splits an oracle.
+                changes.queue.points = {{0, initial}, {first - 1, initial}, {first, atFirst},
+                    {second - 1, atFirst}, {second, atSecond}, {blockSize - 1, atSecond}};
+                processSpan(0, blockSize, &changes);
+                if (moving) reads = changes.queue.readMask;
+            } else if (delivery == Delivery::atBlockStart) {
+                changes.queue.points = {{0, final}};
+                processSpan(0, blockSize, &changes);
+            } else processSpan(0, blockSize);
+            for (int start = blockSize; start < blockSize + followup; start += blockSize)
+                processSpan(start, blockSize);
+            return result;
+        };
+        const auto distance = [](const Audio& a, const Audio& b, int end = -1) {
+            if (end < 0) end = int(a[0].size());
+            float peak = 0;
+            for (size_t c = 0; c < a.size(); ++c) for (int i = 0; i < end; ++i)
+                peak = std::max(peak, std::abs(a[c][size_t(i)] - b[c][size_t(i)]));
+            return peak;
+        };
+        const auto noChanges = render(Delivery::noChanges), noOp = render(Delivery::queuedNoOp);
+        const auto split = render(Delivery::split), atStart = render(Delivery::atBlockStart);
+        const auto queued = render(Delivery::queued);
+        const float noOpError = distance(noOp, noChanges), splitError = distance(queued, split);
+        const float atStartError = distance(queued, atStart), queuedEffect = distance(queued, noChanges);
+        const float splitEffect = distance(split, noChanges), earlyEffect = distance(queued, noChanges, first);
+        std::cout << "VST3 Spatial EQ " << field << " jumps @" << first << '/' << second
+                  << " read mask=" << reads << " queued/no-change=" << queuedEffect
+                  << " queued/split=" << splitError << " queued/final-at-start=" << atStartError
+                  << " no-op/no-change=" << noOpError << " queued pre-jump/no-change=" << earlyEffect << '\n';
+        check(noOpError <= match && distance(split, noChanges, first) <= match,
+              "VST3 Spatial EQ no-op or explicit pre-jump baseline differs");
+        check(splitEffect > distinguish && queuedEffect > distinguish && distance(split, atStart) > distinguish,
+              "VST3 Spatial EQ fixture does not distinguish the automation schedules");
+        if (splitError <= match) {
+            std::cout << "VST3 Spatial EQ " << field << ": queued jumps match explicit sample splits\n";
+        } else {
+            check(atStartError <= match && reads == (1u << 5), "Unrecognized VST3 Spatial EQ queue timing");
+            std::cout << "VST3 Spatial EQ " << field << ": wrapper limitation: only final point read and applied at block start\n";
+        }
+    }
+}
 
 void automaticLatencyTransitions(IPluginFactory& factory, const TUID cid) {
     int failures = 0, cases = 0;
@@ -497,7 +604,7 @@ void render(IPluginFactory& factory, const TUID cid, double rate, int mainChanne
     ParameterChanges changes; changes.queue.id = fftParameterId(factory, *component, host);
     data.inputParameterChanges = &changes; data.numSamples = 137;
     for (int fft = 0; fft < 3; ++fft) {
-        changes.queue.value = fft * .5;
+        changes.queue.points = {{17, fft * .5}};
         check(processor->process(data) == kResultOk, "VST3 FFT parameter-queue processing failed");
         check(processor->getLatencySamples() == latency, "VST3 FFT automation changed fixed compensation");
         for (int c = 0; c < outputChannels; ++c) for (int i = 0; i < data.numSamples; ++i) {
@@ -564,7 +671,11 @@ void render(IPluginFactory& factory, const TUID cid, double rate, int mainChanne
 }
 }
 int main(int argc,char** argv) {
-    if(argc!=2) return 2;
+    const bool offsetsOnly = argc == 3 && std::string_view(argv[2]) == "--spatial-eq-offsets";
+    if (argc != 2 && !offsetsOnly) {
+        std::cerr << "usage: vocalstack_vst3_sidechain_smoke <module> [--spatial-eq-offsets]\n";
+        return 2;
+    }
     try {
         const auto path=std::filesystem::absolute(argv[1]);
         auto module=LoadLibraryW(path.c_str()); check(module!=nullptr,"VST3 module load failed");
@@ -580,16 +691,20 @@ int main(int argc,char** argv) {
             if(factory->getClassInfo(i,&info)==kResultOk && std::strcmp(info.category,kVstAudioEffectClass)==0) { found=true; break; }
         }
         check(found,"VST3 audio component missing");
-        automaticLatencyTransitions(*factory, info.cid);
+        spatialEqOffsets(*factory, info.cid);
         int cases=0;
-        for(double rate : {44100.,48000.,96000.}) for(int layout=0;layout<4;++layout)
-            for(int aux=0;aux<3;++aux) for(int variant=0;variant<3;++variant) {
-                render(*factory,info.cid,rate,layout==0 || layout==3 ? 2 : 1,layout>=2 ? 1 : 2,aux,variant); ++cases;
-            }
+        if (!offsetsOnly) {
+            automaticLatencyTransitions(*factory, info.cid);
+            for(double rate : {44100.,48000.,96000.}) for(int layout=0;layout<4;++layout)
+                for(int aux=0;aux<3;++aux) for(int variant=0;variant<3;++variant) {
+                    render(*factory,info.cid,rate,layout==0 || layout==3 ? 2 : 1,layout>=2 ? 1 : 2,aux,variant); ++cases;
+                }
+        }
         factory->release();
         const auto exit=reinterpret_cast<Entry>(GetProcAddress(module,"ExitDll")); if(exit) exit();
         FreeLibrary(module);
-        std::cout << "VST3 native component host: " << cases << " bus/rate/Morph/dry/bypass cases passed\n";
+        if (!offsetsOnly)
+            std::cout << "VST3 native component host: " << cases << " bus/rate/Morph/dry/bypass cases passed\n";
         return 0;
     } catch(const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -526,7 +526,134 @@ void loadXml(Instance& instance, const std::string& xml) {
     std::memcpy(state.bytes.data() + 4, &length, 4);
     std::memcpy(state.bytes.data() + 8, xml.data(), xml.size());
     expect(instance.get<clap_plugin_state_t>(CLAP_EXT_STATE).load(instance.plugin, &state.input),
-           "CLAP restart fixture state load failed");
+           "CLAP fixture state load failed");
+}
+
+void checkSpatialEqOffsets(const clap_plugin_factory_t& factory) {
+    constexpr uint32_t block = 512, followup = 1024;
+    constexpr uint32_t preroll = 4097; // Put the final sample's event on a DSP control tick.
+    constexpr std::array<uint32_t, 3> offsets{73, 297, block - 1};
+    constexpr double rate = 48000.;
+    constexpr float match = 2.e-6f;
+    using Audio = std::array<std::array<float, block + followup>, 2>;
+    enum class Delivery { inBlock, split, lastOneSampleLate, finalAtStart, queuedNoOp, noChanges };
+    for (const bool gain : {true, false}) {
+        const std::string field = gain ? "Gain" : "Depth";
+        const auto preset = std::string(
+            "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/><PARAM id=\"doubleOn\" value=\"0\"/>"
+            "<PARAM id=\"formantOn\" value=\"0\"/><PARAM id=\"globalMix\" value=\"100\"/>"
+            "<PARAM id=\"fx1On\" value=\"1\"/><PARAM id=\"fx1SpatialEqBand1On\" value=\"1\"/>"
+            "<PARAM id=\"fx1SpatialEqBand1Frequency\" value=\"900\"/>")
+            + (gain ? "<PARAM id=\"fx1SpatialEqBand1Gain\" value=\"-9\"/><PARAM id=\"fx1SpatialEqBand1Depth\" value=\"60\"/>"
+                    : "<PARAM id=\"fx1SpatialEqBand1Gain\" value=\"12\"/><PARAM id=\"fx1SpatialEqBand1Depth\" value=\"0\"/>")
+            + "<RoutingGraph><Node id=\"1\" type=\"0\"/><Node id=\"100\" type=\"28\"/><Node id=\"13\" type=\"5\"/>"
+              "<Link source=\"1\" destination=\"100\"/><Link source=\"100\" destination=\"13\"/>"
+              "</RoutingGraph></VocalStack>";
+        const auto render = [&](Delivery delivery) {
+            Instance instance(factory);
+            const auto* plug = instance.plugin;
+            expect(instance.get<clap_plugin_audio_ports_config_t>(CLAP_EXT_AUDIO_PORTS_CONFIG).select(plug, 0),
+                   "CLAP Spatial EQ stereo/no-sidechain layout rejected");
+            loadXml(instance, preset);
+            const auto param = getParameter(instance, "FX 1 Spatial EQ Band 1 " + field);
+            const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
+            const auto parse = [&](const char* text) {
+                double value = 0;
+                expect(params.text_to_value(plug, param.id, text, &value)
+                    && value >= param.min_value && value <= param.max_value,
+                    "CLAP Spatial EQ fixture value conversion failed");
+                return value;
+            };
+            const auto initial = parse(gain ? "-9" : "0");
+            expect(std::abs(currentValue(instance, param.id) - initial) < 1.e-6,
+                   "CLAP Spatial EQ state did not seed the initial parameter");
+            const std::array values{parse(gain ? "12" : "100"), parse(gain ? "5" : "35"), parse(gain ? "-5" : "80")};
+            expect(instance.get<clap_plugin_render_t>(CLAP_EXT_RENDER).set(plug, CLAP_RENDER_OFFLINE),
+                   "CLAP Spatial EQ offline mode rejected");
+            Audio result{};
+            std::array<std::array<float, block>, 2> input{}, output{};
+            std::array<float*, 2> ip{input[0].data(), input[1].data()}, op{output[0].data(), output[1].data()};
+            clap_audio_buffer_t in{ip.data(), nullptr, 2, 0, 0}, out{op.data(), nullptr, 2, 0, 0};
+            Events events;
+            clap_process_t process{};
+            process.audio_inputs = &in; process.audio_outputs = &out;
+            process.audio_inputs_count = process.audio_outputs_count = 1;
+            process.in_events = &events.input; process.out_events = &events.output;
+            const auto& latency = instance.get<clap_plugin_latency_t>(CLAP_EXT_LATENCY);
+            const auto processSpan = [&](uint32_t start, uint32_t count) {
+                process.frames_count = count;
+                process.steady_time = start;
+                for (uint32_t i = 0; i < count; ++i) {
+                    const double phase = 6.283185307179586 * 900 * (start + i) / rate;
+                    input[0][i] = float(.06 * std::sin(phase) + .02 * std::cos(1.31 * phase));
+                    input[1][i] = float(.05 * std::cos(.83 * phase) - .02 * std::sin(1.17 * phase));
+                }
+                expect(plug->process(plug, &process) != CLAP_PROCESS_ERROR, "CLAP Spatial EQ process failed");
+                events.items.clear();
+                if (start >= preroll) for (size_t c = 0; c < result.size(); ++c)
+                    for (uint32_t i = 0; i < count; ++i) {
+                        expect(std::isfinite(output[c][i]), "CLAP Spatial EQ output is not finite");
+                        result[c][start - preroll + i] = output[c][i];
+                    }
+            };
+            AudioThread audio(instance);
+            expect(plug->activate(plug, rate, 1, block), "CLAP Spatial EQ activation failed");
+            const auto requestsBefore = instance.restartRequests.load();
+            try {
+                audio.run([&] {
+                    expect(plug->start_processing(plug), "CLAP Spatial EQ processing start failed");
+                    try {
+                        for (uint32_t start = 0; start < preroll; start += block)
+                            processSpan(start, std::min(block, preroll - start));
+                        if (delivery == Delivery::split || delivery == Delivery::lastOneSampleLate) {
+                            uint32_t previous = 0;
+                            for (size_t p = 0; p < offsets.size(); ++p) {
+                                const auto next = offsets[p] + (delivery == Delivery::lastOneSampleLate && p == offsets.size() - 1 ? 1 : 0);
+                                processSpan(preroll + previous, next - previous);
+                                events.set(param.id, values[p]);
+                                previous = next;
+                            }
+                            if (previous < block) processSpan(preroll + previous, block - previous);
+                        } else {
+                            if (delivery == Delivery::inBlock || delivery == Delivery::queuedNoOp)
+                                for (size_t p = 0; p < offsets.size(); ++p)
+                                    events.set(param.id, delivery == Delivery::inBlock ? values[p] : initial, offsets[p]);
+                            if (delivery == Delivery::finalAtStart) events.set(param.id, values.back());
+                            processSpan(preroll, block);
+                        }
+                        for (uint32_t start = block; start < block + followup; start += block)
+                            processSpan(preroll + start, block);
+                    } catch (...) { plug->stop_processing(plug); throw; }
+                    plug->stop_processing(plug);
+                });
+                pumpHost(instance);
+                expect(latency.get(plug) == 0 && instance.restartRequests.load() == requestsBefore,
+                       "CLAP Spatial EQ automation changed latency or requested restart");
+            } catch (...) { plug->deactivate(plug); throw; }
+            plug->deactivate(plug);
+            return result;
+        };
+        const auto distance = [](const Audio& a, const Audio& b, uint32_t count = 0) {
+            if (count == 0) count = uint32_t(a[0].size());
+            float peak = 0;
+            for (size_t c = 0; c < a.size(); ++c) for (uint32_t i = 0; i < count; ++i)
+                peak = std::max(peak, std::abs(a[c][i] - b[c][i]));
+            return peak;
+        };
+        const auto baseline = render(Delivery::noChanges), noOp = render(Delivery::queuedNoOp);
+        const auto queued = render(Delivery::inBlock), split = render(Delivery::split);
+        const float splitError = distance(queued, split), noOpError = distance(noOp, baseline);
+        const float earlyError = distance(queued, baseline, offsets.front());
+        const float finalAtStart = distance(queued, render(Delivery::finalAtStart));
+        const float lateLast = distance(queued, render(Delivery::lastOneSampleLate));
+        std::cout << "CLAP Spatial EQ " << field << " @73/297/511 queued/split=" << splitError
+                  << " no-op/no-change=" << noOpError << " pre-event/no-change=" << earlyError
+                  << " queued/final-at-start=" << finalAtStart << " queued/last-one-sample-late=" << lateLast << '\n';
+        expect(splitError <= match && noOpError <= match && earlyError <= match,
+               "CLAP Spatial EQ timestamps differ from explicit splits or the no-op control");
+        expect(finalAtStart > match && lateLast > match && distance(queued, baseline) > match,
+               "CLAP Spatial EQ fixture does not distinguish the tested timing errors");
+    }
 }
 
 void checkRestartExchange(const clap_plugin_factory_t& factory, clap_id configuration, double rate) {
@@ -729,8 +856,9 @@ void checkRestartExchange(const clap_plugin_factory_t& factory, clap_id configur
 
 int main(int argc, char** argv) {
     const bool restartOnly = argc == 3 && std::string_view(argv[2]) == "--restart-only";
-    if (argc != 2 && !restartOnly) {
-        std::cerr << "Usage: vocalstack_clap_smoke <plugin.clap> [--restart-only]\n";
+    const bool offsetsOnly = argc == 3 && std::string_view(argv[2]) == "--spatial-eq-offsets";
+    if (argc != 2 && !restartOnly && !offsetsOnly) {
+        std::cerr << "Usage: vocalstack_clap_smoke <plugin.clap> [--restart-only | --spatial-eq-offsets]\n";
         return 2;
     }
     try {
@@ -743,6 +871,8 @@ int main(int argc, char** argv) {
                    && std::string_view(descriptor->version) == VOCALSTACK_EXPECTED_VERSION,
                "CLAP descriptor version does not match the source release");
         std::cout << "CLAP version " << descriptor->version << " verified\n";
+        if (!restartOnly) checkSpatialEqOffsets(*factory);
+        if (offsetsOnly) return 0;
         if (!restartOnly) {
             checkHostControls(*factory);
             checkState(*factory);
