@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "ProcessorRoutingState.h"
+#include "Vst3SpatialEqAutomation.h"
 
 namespace vocalstack {
 namespace {
@@ -502,6 +503,34 @@ void Processor::processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& 
 
 void Processor::processBlockBypassed(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi) { render(audio, midi, true); }
 
+void captureVst3SpatialEqAutomation(Vst3SpatialEqAutomation& automation, juce::AudioProcessorParameter& param,
+    void* queue, Vst3SpatialEqAutomation::ReadPoint read, int count, int samples,
+    Vst3SpatialEqAutomation::Point last) noexcept {
+    const auto index = size_t(param.getParameterIndex());
+    if (index < spatialEqParameterStart || index >= parameterIds.size()) return;
+    const auto relative = index - spatialEqParameterStart;
+    const auto field = relative % spatialEqFieldsPerBand;
+    if (field != processorRouting::spatialGain && field != processorRouting::spatialDepth) return;
+    const auto& range = processorRouting::spatialEqFields[field];
+    automation.add({1 + relative / spatialEqParametersPerSlot,
+        (relative % spatialEqParametersPerSlot) / spatialEqFieldsPerBand,
+        field == processorRouting::spatialDepth, range.min, range.max},
+        queue, read, count, samples, param.getValue(), last);
+}
+
+ScopedVst3SpatialEqAutomation::ScopedVst3SpatialEqAutomation(juce::AudioProcessor& instance,
+                                                              Vst3SpatialEqAutomation& automation) noexcept {
+    if (!automation.empty()) {
+        // The patched wrapper is compiled only for VocalStack_VST3.
+        processor = &static_cast<Processor&>(instance);
+        processor->vst3SpatialAutomation = &automation;
+    }
+}
+
+ScopedVst3SpatialEqAutomation::~ScopedVst3SpatialEqAutomation() {
+    if (processor != nullptr) processor->vst3SpatialAutomation = nullptr;
+}
+
 void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, bool hostBypass) {
     juce::ScopedNoDenormals noDenormals;
     if (!prepared)
@@ -569,7 +598,8 @@ void Processor::render(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi, 
         float* output[2] = {mainOutput.getWritePointer(0, offset), mainOutput.getWritePointer(std::min(1, mainOutput.getNumChannels() - 1), offset)};
         engine.setGlitchSpan(ppq + offset * beatPerSample, bpm, playing, offset == 0 && discontinuity, triggers);
         engine.process(input, output, count, modulationIdle || modulation.targets().empty()
-            ? blockBaseSettings : settingsFromValues(effectiveValues), hostBypass, donor, auxiliaryChannels);
+            ? blockBaseSettings : settingsFromValues(effectiveValues), hostBypass, donor, auxiliaryChannels,
+            vst3SpatialAutomation, offset);
         if (!modulationIdle) modulation.advance(count);
         processedSamples += uint64_t(count);
         offset += count;

@@ -62,6 +62,7 @@ if(VOCALSTACK_BUILD_PLUGIN)
     target_link_libraries(VocalStack PRIVATE
         vocalstack_dsp juce::juce_audio_processors juce::juce_recommended_config_flags)
     include(cmake/PatchVst3Activation.cmake)
+    include(cmake/PatchVst3SpatialEq.cmake)
     clap_juce_extensions_plugin(TARGET VocalStack
         CLAP_ID "audio.vocalstack.effect"
         CLAP_FEATURES audio-effect pitch-shifter utility stereo mono

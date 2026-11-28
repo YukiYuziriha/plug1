@@ -66,7 +66,9 @@ struct ParameterQueue final : IParamValueQueue {
     }
 };
 struct ParameterChanges final : IParameterChanges {
-    ParameterQueue queue; uint32 refs = 1;
+    std::array<ParameterQueue, 2> queues;
+    int32 count = 0;
+    uint32 refs = 1;
     tresult PLUGIN_API queryInterface(const TUID iid, void** out) override {
         *out = nullptr;
         if (equal(iid, IParameterChanges_iid) || equal(iid, FUnknown_iid)) { *out = static_cast<IParameterChanges*>(this); addRef(); return kResultOk; }
@@ -74,9 +76,23 @@ struct ParameterChanges final : IParameterChanges {
     }
     uint32 PLUGIN_API addRef() override { return ++refs; }
     uint32 PLUGIN_API release() override { return --refs; }
-    int32 PLUGIN_API getParameterCount() override { return 1; }
-    IParamValueQueue* PLUGIN_API getParameterData(int32 index) override { return index == 0 ? &queue : nullptr; }
-    IParamValueQueue* PLUGIN_API addParameterData(const ParamID& id, int32& index) override { queue.id = id; index = 0; return &queue; }
+    int32 PLUGIN_API getParameterCount() override { return count; }
+    IParamValueQueue* PLUGIN_API getParameterData(int32 index) override {
+        return index >= 0 && index < count ? &queues[size_t(index)] : nullptr;
+    }
+    IParamValueQueue* PLUGIN_API addParameterData(const ParamID& id, int32& index) override {
+        for (index = 0; index < count; ++index)
+            if (queues[size_t(index)].id == id) return &queues[size_t(index)];
+        if (size_t(count) == queues.size()) return nullptr;
+        queues[size_t(count)].id = id;
+        return &queues[size_t(count++)];
+    }
+    ParameterQueue& addQueue(ParamID id) {
+        int32 index = 0;
+        auto* queue = addParameterData(id, index);
+        check(queue != nullptr, "callback host parameter queue capacity exceeded");
+        return static_cast<ParameterQueue&>(*queue);
+    }
 };
 ParamID fftParameterId(IPluginFactory& factory, IComponent& component, Host& host) {
     TUID controllerClass{};
@@ -321,7 +337,7 @@ struct LatencyHost final : IComponentHandler {
         const auto normalized = normalizedValue(id, plain);
         check(controller->setParamNormalized(id, normalized) == kResultOk, "callback host controller edit failed");
         ParameterChanges changes;
-        changes.queue.id = id; changes.queue.points = {{0, normalized}};
+        changes.addQueue(id).points = {{0, normalized}};
         for (auto& c : main) c.fill(0);
         process(137, &changes); // Host edits reach DSP through the actual VST3 queue.
         check(std::abs(controller->getParamNormalized(id) - normalized) < 1.e-6, "callback controller edit not retained");
@@ -403,98 +419,170 @@ struct LatencyHost final : IComponentHandler {
 };
 
 void spatialEqOffsets(IPluginFactory& factory, const TUID cid) {
-    constexpr int blockSize = 512, first = 73, second = 297, preroll = 4096, followup = 1024;
+    constexpr int blockSize = 512, continuation = 389, first = 73, second = 297;
+    constexpr int preroll = 4096, automated = blockSize + continuation, total = automated + 1024;
     constexpr double rate = 48000.;
     constexpr float match = 2.e-6f, distinguish = 1.e-5f;
-    using Audio = std::array<std::array<float, blockSize + followup>, 2>;
-    enum class Delivery { queued, split, atBlockStart, noChanges, queuedNoOp };
-    for (bool gain : {true, false}) {
-        const char* field = gain ? "Gain" : "Depth";
-        const auto preset = xmlState(std::string(
-            "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/><PARAM id=\"doubleOn\" value=\"0\"/>"
-            "<PARAM id=\"formantOn\" value=\"0\"/><PARAM id=\"globalMix\" value=\"100\"/>"
-            "<PARAM id=\"fx1On\" value=\"1\"/><PARAM id=\"fx1SpatialEqBand1On\" value=\"1\"/>"
-            "<PARAM id=\"fx1SpatialEqBand1Frequency\" value=\"900\"/>")
-            + (gain ? "<PARAM id=\"fx1SpatialEqBand1Gain\" value=\"-9\"/><PARAM id=\"fx1SpatialEqBand1Depth\" value=\"60\"/>"
-                    : "<PARAM id=\"fx1SpatialEqBand1Gain\" value=\"12\"/><PARAM id=\"fx1SpatialEqBand1Depth\" value=\"0\"/>")
-            + "<RoutingGraph><Node id=\"1\" type=\"0\"/><Node id=\"100\" type=\"28\"/><Node id=\"13\" type=\"5\"/>"
-              "<Link source=\"1\" destination=\"100\"/><Link source=\"100\" destination=\"13\"/>"
-              "</RoutingGraph></VocalStack>");
-        uint32 reads = 0;
-        const auto render = [&](Delivery delivery) {
-            LatencyHost host(factory, cid, rate, 2, false, &preset);
-            const auto id = host.parameter((std::string("FX 1 Spatial EQ Band 1 ") + field).c_str());
-            const auto initial = host.normalizedValue(id, gain ? -9 : 0);
-            const auto middle = host.normalizedValue(id, gain ? 12 : 100);
-            const auto final = host.normalizedValue(id, gain ? 5 : 35);
-            check(std::abs(host.controller->getParamNormalized(id) - initial) < 1.e-6,
-                  "VST3 Spatial EQ initial normalized value differs from fixture");
-            ParameterChanges changes;
-            changes.queue.id = id;
-            Audio result{};
-            const auto processSpan = [&](int start, int count, IParameterChanges* queue = nullptr) {
-                for (int i = 0; i < count; ++i) {
-                    const double phase = 6.283185307179586 * 900 * (preroll + start + i) / rate;
-                    host.main[0][size_t(i)] = float(.06 * std::sin(phase) + .02 * std::cos(1.31 * phase));
-                    host.main[1][size_t(i)] = float(.05 * std::cos(.83 * phase) - .02 * std::sin(1.17 * phase));
+    using Audio = std::array<std::array<float, total>, 2>;
+    using Points = std::vector<ParameterQueue::Point>;
+    struct Render {
+        Audio audio{};
+        std::array<std::array<uint32, 2>, 2> reads{}; // [block][Gain/Depth]
+    };
+    enum class Delivery { queued, explicitSamples, finalAtStart, unchanged, partitionedUnchanged, queuedNoOp };
+    struct Fixture { const char* name; bool gain, depth, ramp, flush; };
+    constexpr Fixture fixtures[]{
+        {"Gain jumps", true, false, false, false}, {"Depth jumps", false, true, false, false},
+        {"Gain ramp", true, false, true, false}, {"Depth ramp", false, true, true, false},
+        {"simultaneous Gain/Depth ramps", true, true, true, false},
+        {"simultaneous Gain/Depth flush", true, true, false, true},
+    };
+    const auto distance = [](const Audio& a, const Audio& b, int begin, int end) {
+        float peak = 0;
+        for (size_t c = 0; c < a.size(); ++c) for (int i = begin; i < end; ++i)
+            peak = std::max(peak, std::abs(a[c][size_t(i)] - b[c][size_t(i)]));
+        return peak;
+    };
+    int failures = 0;
+    for (const auto& fixture : fixtures) {
+        try {
+            const auto preset = xmlState(std::string(
+                "<VocalStack><PARAM id=\"levelOn\" value=\"0\"/><PARAM id=\"doubleOn\" value=\"0\"/>"
+                "<PARAM id=\"formantOn\" value=\"0\"/><PARAM id=\"globalMix\" value=\"100\"/>"
+                "<PARAM id=\"fx1On\" value=\"1\"/><PARAM id=\"fx1SpatialEqBand1On\" value=\"1\"/>"
+                "<PARAM id=\"fx1SpatialEqBand1Frequency\" value=\"900\"/>")
+                + (fixture.gain ? "<PARAM id=\"fx1SpatialEqBand1Gain\" value=\"-9\"/><PARAM id=\"fx1SpatialEqBand1Depth\" value=\"60\"/>"
+                                : "<PARAM id=\"fx1SpatialEqBand1Gain\" value=\"12\"/><PARAM id=\"fx1SpatialEqBand1Depth\" value=\"0\"/>")
+                + "<RoutingGraph><Node id=\"1\" type=\"0\"/><Node id=\"100\" type=\"28\"/><Node id=\"13\" type=\"5\"/>"
+                  "<Link source=\"1\" destination=\"100\"/><Link source=\"100\" destination=\"13\"/>"
+                  "</RoutingGraph></VocalStack>");
+            const auto render = [&](Delivery delivery) {
+                LatencyHost host(factory, cid, rate, 2, false, &preset);
+                const std::array ids{host.parameter("FX 1 Spatial EQ Band 1 Gain"), host.parameter("FX 1 Spatial EQ Band 1 Depth")};
+                std::array<ParamValue, 2> held{};
+                std::array<std::array<Points, 2>, 2> schedule;
+                for (size_t p = 0; p < ids.size(); ++p) {
+                    const bool gain = p == 0;
+                    const auto norm = [&](double value) { return host.normalizedValue(ids[p], value); };
+                    held[p] = norm(gain ? (fixture.gain ? -9 : 12) : (fixture.gain ? 60 : 0));
+                    check(std::abs(host.controller->getParamNormalized(ids[p]) - held[p]) < 1.e-6,
+                          "initial normalized value differs from fixture");
+                    if (!(gain ? fixture.gain : fixture.depth)) continue;
+                    const auto middle = norm(gain ? 12 : 100), end = norm(gain ? 5 : 35);
+                    if (fixture.flush) {
+                        schedule[0][p] = {{0, middle}};
+                    } else if (fixture.ramp) {
+                        schedule[0][p] = {{0, norm(gain ? 6 : 25)}, {gain ? first : second, middle}, {blockSize - 1, end}};
+                        // No point at offset zero: the previous block's last sample is the -1 anchor.
+                        schedule[1][p] = {{gain ? second : continuation - 1, norm(gain ? -12 : 95)}};
+                    } else {
+                        // Adjacent old/new points encode exact VST3 jumps.
+                        schedule[0][p] = {{0, held[p]}, {first - 1, held[p]}, {first, middle},
+                            {second - 1, middle}, {second, end}, {blockSize - 1, end}};
+                    }
                 }
-                host.process(count, queue);
-                if (start >= 0) for (size_t c = 0; c < result.size(); ++c)
-                    std::copy_n(host.output[c].begin(), count, result[c].begin() + start);
-                check(host.processor->getLatencySamples() == 0, "VST3 Spatial EQ automation changed latency");
+                Render result;
+                const auto processSpan = [&](int start, int count, ParameterChanges* changes = nullptr) {
+                    for (int i = 0; i < count; ++i) {
+                        const double phase = 6.283185307179586 * 900 * (preroll + start + i) / rate;
+                        host.main[0][size_t(i)] = float(.06 * std::sin(phase) + .02 * std::cos(1.31 * phase));
+                        host.main[1][size_t(i)] = float(.05 * std::cos(.83 * phase) - .02 * std::sin(1.17 * phase));
+                    }
+                    host.process(count, changes != nullptr && changes->count != 0 ? changes : nullptr);
+                    if (start >= 0) for (size_t c = 0; c < result.audio.size(); ++c)
+                        std::copy_n(host.output[c].begin(), count, result.audio[c].begin() + start);
+                    check(host.processor->getLatencySamples() == 0, "automation changed latency");
+                };
+                for (int start = -preroll; start < 0; start += blockSize) processSpan(start, blockSize);
+                for (size_t block = 0; block < schedule.size(); ++block) {
+                    const int start = block == 0 ? 0 : blockSize;
+                    const int count = block == 0 ? blockSize : continuation;
+                    const auto& points = schedule[block];
+                    if (delivery == Delivery::explicitSamples || delivery == Delivery::partitionedUnchanged) {
+                        for (int i = 0; i < count; ++i) {
+                            ParameterChanges changes;
+                            if (delivery == Delivery::explicitSamples) for (size_t p = 0; p < ids.size(); ++p) {
+                                if (points[p].empty()) continue;
+                                // Evaluate the host curve, then deliver only a single offset-zero value.
+                                // The oracle never relies on the plug-in interpreting a nonzero offset.
+                                ParameterQueue::Point left{-1, held[p]};
+                                auto value = points[p].back().value;
+                                for (const auto& right : points[p]) {
+                                    if (i <= right.offset) {
+                                        value = std::lerp(left.value, right.value, double(i - left.offset) / (right.offset - left.offset));
+                                        break;
+                                    }
+                                    left = right;
+                                }
+                                changes.addQueue(ids[p]).points = {{0, value}};
+                            }
+                            processSpan(start + i, 1, &changes);
+                        }
+                    } else {
+                        ParameterChanges changes;
+                        for (size_t p = 0; p < ids.size(); ++p) {
+                            if (points[p].empty()) continue;
+                            if (delivery == Delivery::queued) changes.addQueue(ids[p]).points = points[p];
+                            if (delivery == Delivery::queuedNoOp) {
+                                auto& queue = changes.addQueue(ids[p]);
+                                for (const auto& point : points[p]) queue.points.push_back({point.offset, held[p]});
+                            }
+                            if (delivery == Delivery::finalAtStart) changes.addQueue(ids[p]).points = {{0, points[p].back().value}};
+                        }
+                        if (fixture.flush && delivery == Delivery::queued && block == 0) {
+                            ProcessData flush{};
+                            flush.processMode = kOffline; flush.symbolicSampleSize = kSample32;
+                            flush.inputParameterChanges = &changes;
+                            check(host.processor->process(flush) == kResultOk, "parameter-only flush failed");
+                            processSpan(start, count);
+                        } else processSpan(start, count, &changes);
+                        if (delivery == Delivery::queued) for (int32 q = 0; q < changes.count; ++q) {
+                            const auto& queue = changes.queues[size_t(q)];
+                            result.reads[block][queue.id == ids[0] ? 0 : 1] = queue.readMask;
+                        }
+                    }
+                    for (size_t p = 0; p < ids.size(); ++p)
+                        if (!points[p].empty()) held[p] = points[p].back().value;
+                }
+                for (int start = automated; start < total; start += blockSize) processSpan(start, blockSize);
+                return result;
             };
-            for (int start = -preroll; start < 0; start += blockSize) processSpan(start, blockSize);
-            if (delivery == Delivery::split) {
-                processSpan(0, first);
-                changes.queue.points = {{0, middle}};
-                processSpan(first, second - first, &changes);
-                changes.queue.points = {{0, final}};
-                processSpan(second, blockSize - second, &changes);
-            } else if (delivery == Delivery::queued || delivery == Delivery::queuedNoOp) {
-                const bool moving = delivery == Delivery::queued;
-                const auto atFirst = moving ? middle : initial, atSecond = moving ? final : initial;
-                // VST3 queues describe linear segments. Adjacent old/new points
-                // encode exact jumps, making explicit process splits an oracle.
-                changes.queue.points = {{0, initial}, {first - 1, initial}, {first, atFirst},
-                    {second - 1, atFirst}, {second, atSecond}, {blockSize - 1, atSecond}};
-                processSpan(0, blockSize, &changes);
-                if (moving) reads = changes.queue.readMask;
-            } else if (delivery == Delivery::atBlockStart) {
-                changes.queue.points = {{0, final}};
-                processSpan(0, blockSize, &changes);
-            } else processSpan(0, blockSize);
-            for (int start = blockSize; start < blockSize + followup; start += blockSize)
-                processSpan(start, blockSize);
-            return result;
-        };
-        const auto distance = [](const Audio& a, const Audio& b, int end = -1) {
-            if (end < 0) end = int(a[0].size());
-            float peak = 0;
-            for (size_t c = 0; c < a.size(); ++c) for (int i = 0; i < end; ++i)
-                peak = std::max(peak, std::abs(a[c][size_t(i)] - b[c][size_t(i)]));
-            return peak;
-        };
-        const auto noChanges = render(Delivery::noChanges), noOp = render(Delivery::queuedNoOp);
-        const auto split = render(Delivery::split), atStart = render(Delivery::atBlockStart);
-        const auto queued = render(Delivery::queued);
-        const float noOpError = distance(noOp, noChanges), splitError = distance(queued, split);
-        const float atStartError = distance(queued, atStart), queuedEffect = distance(queued, noChanges);
-        const float splitEffect = distance(split, noChanges), earlyEffect = distance(queued, noChanges, first);
-        std::cout << "VST3 Spatial EQ " << field << " jumps @" << first << '/' << second
-                  << " read mask=" << reads << " queued/no-change=" << queuedEffect
-                  << " queued/split=" << splitError << " queued/final-at-start=" << atStartError
-                  << " no-op/no-change=" << noOpError << " queued pre-jump/no-change=" << earlyEffect << '\n';
-        check(noOpError <= match && distance(split, noChanges, first) <= match,
-              "VST3 Spatial EQ no-op or explicit pre-jump baseline differs");
-        check(splitEffect > distinguish && queuedEffect > distinguish && distance(split, atStart) > distinguish,
-              "VST3 Spatial EQ fixture does not distinguish the automation schedules");
-        if (splitError <= match) {
-            std::cout << "VST3 Spatial EQ " << field << ": queued jumps match explicit sample splits\n";
-        } else {
-            check(atStartError <= match && reads == (1u << 5), "Unrecognized VST3 Spatial EQ queue timing");
-            std::cout << "VST3 Spatial EQ " << field << ": wrapper limitation: only final point read and applied at block start\n";
+            const auto unchanged = render(Delivery::unchanged);
+            const auto partitioned = render(Delivery::partitionedUnchanged);
+            const auto atStart = render(Delivery::finalAtStart);
+            // A flush must behave like an offset-zero edit, without advancing the audio timeline.
+            const auto expected = fixture.flush ? atStart : render(Delivery::explicitSamples);
+            const auto queued = render(Delivery::queued);
+            const float partitionError = distance(partitioned.audio, unchanged.audio, 0, total);
+            const float effect = distance(expected.audio, unchanged.audio, 0, total);
+            const float earlyControl = distance(expected.audio, atStart.audio, 0, automated);
+            const float firstError = distance(queued.audio, expected.audio, 0, blockSize);
+            const float nextError = distance(queued.audio, expected.audio, blockSize, automated);
+            const float holdError = distance(queued.audio, expected.audio, automated, total);
+            const bool jumps = !fixture.ramp && !fixture.flush;
+            const float preJumpError = jumps ? distance(queued.audio, unchanged.audio, 0, first) : 0;
+            const float noOpError = jumps ? distance(render(Delivery::queuedNoOp).audio, unchanged.audio, 0, total) : 0;
+            std::cout << "VST3 Spatial EQ " << fixture.name << " read masks (Gain/Depth)="
+                      << queued.reads[0][0] << '/' << queued.reads[0][1] << ',' << queued.reads[1][0] << '/' << queued.reads[1][1]
+                      << " first/next/hold error=" << firstError << '/' << nextError << '/' << holdError
+                      << " partition=" << partitionError << " reference/unchanged=" << effect
+                      << " reference/final-at-start=" << earlyControl
+                      << " queued/final-at-start=" << distance(queued.audio, atStart.audio, 0, total);
+            if (jumps) std::cout << " pre-jump error=" << preJumpError << " no-op error=" << noOpError;
+            std::cout << std::endl;
+            check(partitionError <= match && noOpError <= match, "partitioned or no-op audio differs from unchanged audio");
+            check(effect > distinguish && (fixture.flush || earlyControl > distinguish),
+                  "fixture does not distinguish the automation schedules");
+            check(std::max({preJumpError, firstError, nextError, holdError}) <= match,
+                  "queued audio did not match the explicit reference");
+        } catch (const std::exception& error) {
+            std::cerr << "VST3 Spatial EQ " << fixture.name << ": " << error.what() << '\n';
+            ++failures;
         }
     }
+    if (failures != 0)
+        throw std::runtime_error("VST3 Spatial EQ offsets: " + std::to_string(failures) + " fixture(s) failed");
+    std::cout << "VST3 Spatial EQ offsets: all fixtures passed\n";
 }
 
 void automaticLatencyTransitions(IPluginFactory& factory, const TUID cid) {
@@ -601,10 +689,11 @@ void render(IPluginFactory& factory, const TUID cid, double rate, int mainChanne
     // Real VST3 input queues, not a preset-only or direct Processor simulation.
     // State inspection proves the wrapper consumed each event; no sample-accurate
     // FFT-switch timing claim is made beyond latency stability and finite audio.
-    ParameterChanges changes; changes.queue.id = fftParameterId(factory, *component, host);
+    ParameterChanges changes;
+    auto& fftQueue = changes.addQueue(fftParameterId(factory, *component, host));
     data.inputParameterChanges = &changes; data.numSamples = 137;
     for (int fft = 0; fft < 3; ++fft) {
-        changes.queue.points = {{17, fft * .5}};
+        fftQueue.points = {{17, fft * .5}};
         check(processor->process(data) == kResultOk, "VST3 FFT parameter-queue processing failed");
         check(processor->getLatencySamples() == latency, "VST3 FFT automation changed fixed compensation");
         for (int c = 0; c < outputChannels; ++c) for (int i = 0; i < data.numSamples; ++i) {

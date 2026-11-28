@@ -12,6 +12,8 @@
 
 namespace vocalstack {
 
+class Vst3SpatialEqAutomation;
+
 struct Settings {
     float level = 0.50f;
     float doubles = 0.35f; // True Mix: 0 = processed lead, 1 = doubles only.
@@ -68,7 +70,8 @@ public:
     void reset(const Settings&);
     void process(const float* const* input, float* const* output, int count,
                  const Settings&, bool hostBypass = false,
-                                  const float* const* auxiliary = nullptr, int auxiliaryChannels = 0);
+                 const float* const* auxiliary = nullptr, int auxiliaryChannels = 0,
+                 Vst3SpatialEqAutomation* spatialAutomation = nullptr, int hostOffset = 0);
     int vocalLatency() const noexcept { return latencySamples; }
     int latency() const noexcept { return vocalLatency() + routingReserve; }
     // Active routing plan's longest connected tail, plus source delay/latency.
@@ -167,7 +170,8 @@ private:
                                      int rightChannel, float& blend);
     StereoSample applyLocalVoice(Voice&, std::array<DelayLine, 2>&, StereoSample, float timeStep);
     void processChunk(const float* const* input, float* const* output, int offset, int count,
-                          const float* const* auxiliary, int auxiliaryChannels);
+                      const float* const* auxiliary, int auxiliaryChannels,
+                      Vst3SpatialEqAutomation*, int hostOffset);
     float coefficient(double seconds) const;
 
     double rate = 48000.0;

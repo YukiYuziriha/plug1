@@ -1,4 +1,5 @@
 #include "VocalEngine.h"
+#include "Vst3SpatialEqAutomation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,6 +7,67 @@
 #include <stdexcept>
 
 namespace vocalstack {
+
+void Vst3SpatialEqAutomation::add(Target target, void* queue, ReadPoint read, int count,
+                                  int samples, double previous, Point last) noexcept {
+    const auto normalized = [](double v) { return std::isfinite(v) && v >= 0. && v <= 1.; };
+    if (count <= 0 || count > samples || last.sample < 0 || last.sample >= samples
+        || !normalized(last.value) || !normalized(previous)) return;
+
+    // One point per sample is the maximum valid ordered queue. Check it once
+    // before installing a lane so a malformed curve stays on the legacy path.
+    Point first = last;
+    int offset = -1;
+    for (int i = 0; i < count - 1; ++i) {
+        Point point{};
+        if (!read(queue, i, point) || point.sample <= offset || point.sample >= last.sample
+            || !normalized(point.value)) return;
+        if (i == 0) first = point;
+        offset = point.sample;
+    }
+    auto* const end = lanes.data() + size;
+    auto* lane = std::find_if(lanes.data(), end, [&](const Lane& active) {
+        return active.target.slot == target.slot && active.target.band == target.band
+            && active.target.depth == target.depth;
+    });
+    if (lane == end) {
+        if (size == lanes.size()) return;
+        ++size;
+    }
+    *lane = {target, queue, read, count, 0, {-1, previous}, first, last, 0.};
+    lane->updateSlope();
+}
+
+void Vst3SpatialEqAutomation::Lane::updateSlope() noexcept {
+    slope = (to.value - from.value) / double(to.sample - from.sample);
+}
+
+float Vst3SpatialEqAutomation::Lane::valueAt(int sample) noexcept {
+    while (sample >= to.sample && index + 1 < count) {
+        from = to;
+        ++index;
+        if (index == count - 1) to = last;
+        else if (!read(queue, index, to)) {
+            // A conforming host keeps the validated queue stable for process().
+            index = count - 1;
+            to = last;
+        }
+        updateSlope();
+    }
+    const float normalized = float(sample >= to.sample ? to.value : from.value + slope * (sample - from.sample));
+    return target.minimum + normalized * (target.maximum - target.minimum);
+}
+
+void Vst3SpatialEqAutomation::apply(int sample, std::array<FxSettings, 16>& fx) noexcept {
+    for (size_t i = 0; i < size; ++i) {
+        auto& lane = lanes[i];
+        const auto value = lane.valueAt(sample);
+        auto& band = fx[lane.target.slot].spatialEq.bands[lane.target.band];
+        if (lane.target.depth) band.depth = value * .01f;
+        else band.gainDb = value;
+    }
+}
+
 namespace {
 float mix(float a, float b, float amount) { return a + (b - a) * amount; }
 float powerToDb(float power) { return 10.0f * std::log10(std::max(power, 1.0e-12f)); }
@@ -457,7 +519,8 @@ StereoSample VocalEngine::applyLocalVoice(Voice& voice, std::array<DelayLine, 2>
 
 void VocalEngine::process(const float* const* input, float* const* output, int count,
                           const Settings& settings, bool hostBypass,
-                          const float* const* auxiliary, int auxiliaryChannels) {
+                          const float* const* auxiliary, int auxiliaryChannels,
+                          Vst3SpatialEqAutomation* spatialAutomation, int hostOffset) {
     updateControls(settings, hostBypass);
     if (!auxiliary || auxiliaryChannels <= 0 || !auxiliary[0] || (auxiliaryChannels > 1 && !auxiliary[1]))
         auxiliaryChannels = 0;
@@ -491,14 +554,15 @@ void VocalEngine::process(const float* const* input, float* const* output, int c
             untilUpdate = quantum;
         }
         const int chunk = std::min(untilUpdate, count - offset);
-        processChunk(input, output, offset, chunk, auxiliary, auxiliaryChannels);
+        processChunk(input, output, offset, chunk, auxiliary, auxiliaryChannels, spatialAutomation, hostOffset);
         untilUpdate -= chunk;
         offset += chunk;
     }
 }
 
 void VocalEngine::processChunk(const float* const* input, float* const* output, int offset, int count,
-                               const float* const* auxiliary, int auxiliaryChannels) {
+                               const float* const* auxiliary, int auxiliaryChannels,
+                               Vst3SpatialEqAutomation* spatialAutomation, int hostOffset) {
     routedVoices = routing.beginSpan(defaultRoutedVoices);
     const bool updateSpectral = untilUpdate == quantum;
     const auto& sidechainTarget = targets.sidechainSettings;
@@ -779,6 +843,8 @@ void VocalEngine::processChunk(const float* const* input, float* const* output, 
         }
 
         routingControls.mix = controls.doubles;
+        if (spatialAutomation != nullptr)
+            spatialAutomation->apply(hostOffset + offset + i, routingControls.fxSettings);
         const auto routed = routing.process(sources, routingControls, false);
         std::array<float, 2> finalDry{alignedDry[0][i], alignedDry[rightChannel][i]};
         if (routingReserve != 0) {

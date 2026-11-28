@@ -430,6 +430,8 @@ public:
     juce::AudioProcessorValueTreeState parameters;
 
 private:
+    friend class ScopedVst3SpatialEqAutomation;
+    Vst3SpatialEqAutomation* vst3SpatialAutomation = nullptr;
     static juce::AudioProcessorValueTreeState::ParameterLayout makeParameters();
     void parameterChanged(const juce::String&, float) override;
     void setParameterValue(const char* id, float value);
