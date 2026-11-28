@@ -254,4 +254,10 @@ The Release test build uses the new eight-band Spatial EQ node without changing 
 
 Native CLAP Gain and Depth timestamps matched explicit splits. After the targeted wrapper fix, native VST3 Gain and Depth jumps and ramps also matched the per-sample oracle exactly. See [native automation findings](Spatial-Audio-Plan.md#native-vst3-automation-finding). The singing comparison does not test VST3 parameter queues.
 
-**Remaining scope:** automated shape changes, additional shapes/channel modes and spatial controls, DAW validation, and human listening. The research build has not been installed or released. No reference audio or decompiler output is tracked.
+### Additional Stereo shapes and internal dynamics
+
+Low Cut, High Cut, Notch, and Band Pass were traced and compared against the installed reference. Like other cut paths, Depth restores removed direct Mid and can filter accumulated wet; these shapes do not create spatial reflections. Across 30 offline shape renders at 44.1/48/96 kHz, the worst absolute sample difference was `2.24e-8` FS. Live shape/slope reset behavior is not claimed to match the reference.
+
+[`Probe-Spatial-EQ-Dynamics.py`](../tools/Probe-Spatial-EQ-Dynamics.py) documents the internal stereo-linked detector. It reads the input to its band, after earlier bands. Both modes engage above threshold; Downward cuts and Upward boosts through a separate matched-pole Bell. Depth still uses static gain to set boost amount and uses the post-dynamics signal to feed the spatial path. C++ reference comparisons at 44.1/48 kHz scored **−143.86 dBr full output** and **−136.66 dBr isolated dynamics** or better on the settled fixtures. HEAVEN processor tests cover both modes on Bell and both shelves. The four added shapes have dynamics disabled.
+
+**Remaining scope:** reference parity for live shape changes, external dynamic detection, other spatial controls, DAW validation, and human listening. Additional channel modes and Linear Phase are not part of this build. The research build has not been installed or released. No reference audio or decompiler output is tracked.

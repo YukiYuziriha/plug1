@@ -86,7 +86,7 @@ void advancedParameterContract() {
     Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 3177, "Expected 2457 existing controls and 720 appended Spatial EQ controls");
+    expect(owner.getParameters().size() == 3897, "Expected 3297 existing controls and 600 appended Spatial EQ Dynamics controls");
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
             const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
@@ -1007,7 +1007,7 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 85> tests{{
+    const std::array<Test, 87> tests{{
                 {"Technical typography fits reserved lanes in all themes", vocalstack::typographyMotionTests::run},
             {"Control layout update, midpoint sliders, inward rings and wide Morph", vocalstack::controlLayoutUpdateTests::run},
             {"Compressor measured four-second gain reduction history", vocalstack::compressorHistoryTests::run},
@@ -1042,6 +1042,8 @@ int main(int argc, char** argv) {
         {"Spatial EQ parameters, recall and rendered automation", vocalstack::toneProcessorTests::spatialEq},
         {"Spatial EQ selected-band controls (offscreen)", vocalstack::toneUiTests::spatialEq},
         {"Spatial EQ signed audio through HEAVEN", vocalstack::toneProcessorTests::spatialEqSignedAudio},
+        {"Spatial EQ filter shapes and slopes", vocalstack::toneProcessorTests::spatialEqShapesAndSlopes},
+        {"Spatial EQ internal dynamics audio and recall", vocalstack::toneProcessorTests::spatialEqInternalDynamics},
         {"Tone FX parameters, recall and rendered automation", vocalstack::toneProcessorTests::run},
         {"Tone FX UI, EQ gestures and multiband cable endpoints", vocalstack::toneUiTests::run},
         {"Preset validation, full patch recall, files and toolbar", vocalstack::presetTests::run},

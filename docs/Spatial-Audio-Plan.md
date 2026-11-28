@@ -20,7 +20,8 @@ Core building blocks: decorrelation/width, short early reflections, damping of g
 - Compare the mono fold-down and the stereo difference against the reference. Do not force an exact mono null: the verified boost adds some Mid and a full-Depth cut can change the conventional Mid cut.
 - First deliverable: DSP and basic controls, not 3D graphics.
 - Later: a nicer primary EQ UI; top-down placement may be an optional secondary view, not the main EQ view.
-- Dynamic EQ, dedicated mid/side editing, and linear phase are later stages.
+- Stereo only. Low Cut and High Cut offer 6, 12, 18, 24, 36, 48, 72, and 96 dB/oct; Notch and Band Pass also support Depth. These four shapes ignore Gain and do not generate their own space. Depth restores removed direct Mid and can filter another band's spatial return.
+- Bell, Low Shelf, and High Shelf offer internal stereo-linked Downward and Upward dynamics. Both engage above threshold; Downward cuts and Upward boosts. Dynamics is inactive on the four other shapes. External detection, additional channel modes, and Linear Phase are outside the current build.
 
 ## Product B: Signal Placer (working name)
 
@@ -48,7 +49,7 @@ Design cautions:
 2. **Verified offline — positive low and high shelves.** Both reuse the reflection engine with their own post-EQ extraction filter. Impulses and sweeps cover 0%, 50%, and 100% Depth with separate direct EQ and Depth-added Mid/Side scores.
 3. **Verified offline — Stereo Bell cut and one boost/cut pair.** The cut changes direct Mid and separately filters accumulated wet. Both band orders and a separated-band control are covered. Static overlap weights are verified on overlapping bells, mixed shelves and bells, and eight-band holdouts with cuts.
 4. **Verified offline — automation and tails.** The model reproduces tested Depth/frequency/Q/gain changes, slot-ordered overlap updates, switch and eligibility changes, Depth-zero re-entry, and explicit resets. Tests include four/eight-band holdouts with positive bells and shelves and a moving negative Bell fixture. Shape and gain sign stay fixed; host-call boundaries do not establish VST3 in-block delivery.
-5. **Integrated in a test build.** The C++ engine is wired into Routing and the Stack rack with eight Depth controls. Native VST3 and CLAP timing tests passed for Gain and Depth; DAW playback and transport checks remain. Static and gain-crossing comparisons on real narration and stereo choir passed, and RMS-matched A/B files were exported but not auditioned. Shape swaps, remaining channel modes, and other spatial controls are outside the verified scope; dynamic EQ and linear phase remain later work.
+5. **Integrated in a test build.** The C++ engine is wired into Routing and the Stack rack with eight Depth controls. Native VST3 and CLAP timing tests passed for Gain and Depth; DAW playback and transport checks remain. Static and gain-crossing comparisons on real narration and stereo choir passed, and RMS-matched A/B files were exported but not auditioned. The build includes all seven filter shapes and internal dynamics for Bell and shelves. Live shape-swap parity, external detection, additional channel modes, other spatial controls, and Linear Phase remain outside scope.
 6. Reuse the engine in the separate mono-in/stereo-out Signal Placer. Build advanced visuals afterward, including an optional top-down EQ view.
 
 ## Native VST3 automation finding

@@ -186,7 +186,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
     const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
-    expect(params.count(instance.plugin) == 3177, "Expected 2457 existing controls and 720 appended Spatial EQ controls");
+    expect(params.count(instance.plugin) == 3897, "Expected 3297 existing controls and 600 appended Spatial EQ Dynamics controls");
     for (uint32_t i = 0; i < params.count(instance.plugin); ++i) {
         clap_param_info_t info{};
         expect(params.get_info(instance.plugin, i, &info), "Host parameter metadata missing");
@@ -195,7 +195,27 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         if (i == 10) expect(std::string_view(info.name) == "Advanced Doubler", "Legacy Advanced index changed");
         if (i == 2447) expect(std::string_view(info.name) == "Sidechain Blend" && info.default_value == info.min_value,
                               "Sidechain Blend must stay at index 2447 and default to 0%");
-        if (i >= 2457 && (i - 2457) % 6 == 5) {
+        if (i >= 3297) {
+            constexpr std::array<std::string_view, 5> fields{"", " Threshold", " Range", " Attack", " Release"};
+            const auto band = (i - 3297) / fields.size();
+            const auto field = (i - 3297) % fields.size();
+            const auto name = "FX " + std::to_string(1 + band / 8) + " Spatial EQ Band " + std::to_string(1 + band % 8)
+                + " Dynamics" + std::string(fields[field]);
+            expect(name == info.name, "Spatial EQ Dynamics parameter index or name changed");
+            if (field == 0) {
+                char text[32]{};
+                expect(params.value_to_text(instance.plugin, info.id, info.default_value, text, sizeof(text))
+                    && std::string_view(text) == "Off", "Spatial EQ Dynamics must default to Off");
+            }
+        }
+        if (i >= 3177 && i < 3297) {
+            const auto band = i - 3177;
+            const auto name = "FX " + std::to_string(1 + band / 8) + " Spatial EQ Band " + std::to_string(1 + band % 8) + " Slope";
+            char text[32]{};
+            expect(name == info.name && params.value_to_text(instance.plugin, info.id, info.default_value, text, sizeof(text))
+                && std::string_view(text) == "24 dB/oct", "Spatial EQ Slope index, name, or default changed");
+        }
+        if (i >= 2457 && i < 3177 && (i - 2457) % 6 == 5) {
             const auto band = (i - 2457) / 6;
             const auto name = "FX " + std::to_string(1 + band / 8) + " Spatial EQ Band " + std::to_string(1 + band % 8) + " Depth";
             expect(name == info.name && info.default_value == info.min_value && (info.flags & CLAP_PARAM_IS_STEPPED) == 0,
@@ -239,7 +259,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
            "Output remote controls are mapped incorrectly");
     for (size_t i = 2; i < CLAP_REMOTE_CONTROLS_COUNT; ++i)
         expect(page.param_ids[i] == CLAP_INVALID_ID, "An unused Output remote slot is not empty");
-    std::cout << "3177 automatable parameters and two remote pages verified; original indices unchanged\n";
+    std::cout << "3897 automatable parameters and two remote pages verified; original indices unchanged\n";
 }
 
 void checkState(const clap_plugin_factory_t& factory) {

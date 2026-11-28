@@ -91,14 +91,54 @@ struct SpatialEqParameterDescriptor {
 inline constexpr std::array spatialEqFields{
     // The host exposes Depth in percent; DSP uses [0, 1].
     SpatialEqParameterDescriptor{"On", "On", "", 0, 1, 0, true},
-    SpatialEqParameterDescriptor{"Shape", "Shape", "", 0, 2, 0, true},
+    SpatialEqParameterDescriptor{"Shape", "Shape", "", 0, 6, 0, true},
     SpatialEqParameterDescriptor{"Frequency", "Frequency", "Hz", 20, 20000, 1000, false},
     SpatialEqParameterDescriptor{"Gain", "Gain", "dB", -30, 30, 0, false},
     SpatialEqParameterDescriptor{"Q", "Q", "", .1f, 30, 1, false},
     SpatialEqParameterDescriptor{"Depth", "Depth", "%", 0, 100, 0, false},
 };
-inline constexpr std::array spatialEqShapes{SpatialEqShape::Bell, SpatialEqShape::LowShelf, SpatialEqShape::HighShelf};
-inline const juce::StringArray spatialEqShapeNames{"Bell", "Low Shelf", "High Shelf"};
+inline constexpr std::array spatialEqShapes{SpatialEqShape::Bell, SpatialEqShape::LowShelf, SpatialEqShape::HighShelf,
+    SpatialEqShape::LowCut, SpatialEqShape::HighCut, SpatialEqShape::Notch, SpatialEqShape::BandPass};
+inline const juce::StringArray spatialEqShapeNames{"Bell", "Low Shelf", "High Shelf", "Low Cut", "High Cut", "Notch", "Band Pass"};
+inline constexpr std::array spatialEqSlopes{6, 12, 18, 24, 36, 48, 72, 96};
+inline const juce::StringArray spatialEqSlopeNames{"6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct",
+    "36 dB/oct", "48 dB/oct", "72 dB/oct", "96 dB/oct"};
+inline constexpr size_t spatialEqDefaultSlopeIndex = 3;
+
+inline int spatialEqSlopeIndex(float dbPerOctave) noexcept {
+    const auto slope = std::find(spatialEqSlopes.begin(), spatialEqSlopes.end(), dbPerOctave);
+    return slope != spatialEqSlopes.end() ? int(slope - spatialEqSlopes.begin()) : int(spatialEqDefaultSlopeIndex);
+}
+inline int spatialEqSlopeFromIndex(float value) noexcept {
+    return spatialEqSlopes[size_t(std::round(bounded(value, 0, float(spatialEqSlopes.size() - 1), float(spatialEqDefaultSlopeIndex))))];
+}
+
+enum SpatialEqDynamicField : size_t { dynamicMode, dynamicThreshold, dynamicRange, dynamicAttack, dynamicRelease };
+inline constexpr std::array spatialEqDynamicFields{
+    SpatialEqParameterDescriptor{"DynamicMode", "Dynamics", "", 0, 2, 0, true},
+    SpatialEqParameterDescriptor{"DynamicThreshold", "Threshold", "dB", -72, 0, -24, false},
+    SpatialEqParameterDescriptor{"DynamicRange", "Range", "dB", 0, 18, 4, false},
+    SpatialEqParameterDescriptor{"DynamicAttack", "Attack", "ms", .1f, 200, 15, false},
+    SpatialEqParameterDescriptor{"DynamicRelease", "Release", "ms", 10, 2000, 150, false},
+};
+inline const juce::StringArray spatialEqDynamicModeNames{"Off", "Downward", "Upward"};
+using SpatialEqDynamicValues = std::array<float, spatialEqDynamicFields.size()>;
+
+inline SpatialEqDynamicValues spatialEqDynamicValues(const SpatialEqBandSettings& band) noexcept {
+    SpatialEqDynamicValues values{float(band.dynamicMode), band.thresholdDb, band.rangeDb, band.attackMs, band.releaseMs};
+    for (size_t p = 0; p < values.size(); ++p) {
+        const auto& d = spatialEqDynamicFields[p];
+        values[p] = bounded(values[p], d.min, d.max, d.initial);
+    }
+    return values;
+}
+inline void applySpatialEqDynamics(SpatialEqBandSettings& band, const SpatialEqDynamicValues& values) noexcept {
+    band.dynamicMode = static_cast<SpatialEqDynamicMode>(int(bounded(values[dynamicMode], 0.f, 2.f, 0.f)));
+    band.thresholdDb = values[dynamicThreshold];
+    band.rangeDb = values[dynamicRange];
+    band.attackMs = values[dynamicAttack];
+    band.releaseMs = values[dynamicRelease];
+}
 
 using SpatialEqValues = std::array<float, spatialEqFields.size()>;
 inline SpatialEqValues spatialEqBandValues(const SpatialEqBandSettings& band) noexcept {
@@ -177,6 +217,10 @@ inline juce::ValueTree encode(const Graph& graph, const char* type) {
                 const auto values = spatialEqBandValues(b);
                 for (size_t p = 0; p < values.size(); ++p)
                     band.setProperty(spatialEqFields[p].id, values[p], nullptr);
+                band.setProperty("Slope", spatialEqSlopes[size_t(spatialEqSlopeIndex(float(b.slopeDbPerOctave)))], nullptr);
+                const auto dynamics = spatialEqDynamicValues(b);
+                for (size_t p = 0; p < dynamics.size(); ++p)
+                    band.setProperty(spatialEqDynamicFields[p].id, dynamics[p], nullptr);
                 spatialEq.addChild(band, -1, nullptr);
             }
             node.addChild(spatialEq, -1, nullptr);
@@ -267,7 +311,16 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
                         const auto v = bounded(float(saved.getProperty(d.id, d.initial)), d.min, d.max, d.initial);
                         values[p] = d.discrete ? std::round(v) : v;
                     }
-                    n.spatialEq.bands[size_t(b)] = spatialEqBandFromValues(values);
+                    auto& band = n.spatialEq.bands[size_t(b)];
+                    band = spatialEqBandFromValues(values);
+                    band.slopeDbPerOctave = spatialEqSlopes[size_t(spatialEqSlopeIndex(float(saved.getProperty("Slope", 24))))];
+                    SpatialEqDynamicValues dynamics{};
+                    for (size_t p = 0; p < dynamics.size(); ++p) {
+                        const auto& d = spatialEqDynamicFields[p];
+                        const auto value = bounded(float(saved.getProperty(d.id, d.initial)), d.min, d.max, d.initial);
+                        dynamics[p] = d.discrete ? std::round(value) : value;
+                    }
+                    applySpatialEqDynamics(band, dynamics);
                 }
             }
             const auto creative = child.getChildWithName("Creative");

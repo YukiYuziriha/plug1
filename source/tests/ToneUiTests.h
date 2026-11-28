@@ -795,9 +795,55 @@ inline void spatialEq() {
         ToneEffectPanel panel(*owner, 1, NodeType::spatialEq);
         panel.setNeon(neon);
         auto* shape = find<juce::ComboBox>(panel, [](auto& c) { return c.getName() == "Spatial EQ band shape"; });
-        require(shape && shape->getNumItems() == 3 && shape->getItemText(0) == "Bell"
-            && shape->getItemText(1) == "Low Shelf" && shape->getItemText(2) == "High Shelf",
-            "Spatial EQ shape choices do not match the supported DSP shapes");
+        constexpr std::array<const char*, 7> names{"Bell", "Low Shelf", "High Shelf", "Low Cut", "High Cut", "Notch", "Band Pass"};
+        require(shape && shape->getNumItems() == int(names.size()), "Spatial EQ shape count");
+        for (size_t i = 0; i < names.size(); ++i)
+            require(shape->getItemText(int(i)) == names[i], "Spatial EQ shape order or label");
+        auto* slope = find<juce::ComboBox>(panel, [](auto& c) { return c.getName() == "Spatial EQ cut slope"; });
+        require(slope && slope->getNumItems() == 8, "Spatial EQ slope choices missing");
+        for (size_t i = 0; i < 8; ++i)
+            require(slope->getItemText(int(i)) == juce::String(processorRouting::spatialEqSlopes[i]) + " dB/oct", "Spatial EQ slope label");
+        panel.setSize(400, panel.preferredContentHeight(400));
+        const auto shapeId = spatialEqBandParameterId(1, 0, processorRouting::spatialShape);
+        const auto slopeId = spatialEqSlopeParameterId(1, 0);
+        for (int choice = 0; choice < 7; ++choice) {
+            shape->setSelectedId(choice + 1, juce::sendNotificationSync);
+            near(read(*owner, shapeId), float(choice), "Shape chooser did not write the raw ordinal");
+            const bool cut = choice == 3 || choice == 4;
+            require(slope->isEnabled() == cut, "Slope is enabled outside a cut shape or disabled for a cut");
+            require(slider(panel, spatialEqBandParameterId(1, 0, processorRouting::spatialGain)).isEnabled() == (choice < 3), "Wrong Gain enablement");
+            for (const auto index : {0, 3}) {
+                write(*owner, slopeId, float(index));
+                require(slope->getSelectedId() == index + 1, "Slope chooser did not follow parameter automation");
+                require(slider(panel, spatialEqBandParameterId(1, 0, processorRouting::spatialQ)).isEnabled() == (!cut || index != 0), "Wrong Q enablement");
+            }
+        }
+        auto* dynamics = find<juce::ComboBox>(panel, [](auto& c) { return c.getName() == "Spatial EQ internal dynamics"; });
+        require(dynamics && dynamics->getNumItems() == 3 && dynamics->getItemText(0) == "Off"
+            && dynamics->getItemText(1) == "Downward" && dynamics->getItemText(2) == "Upward", "Internal dynamics choices");
+        const auto dynamicId = [](size_t band, size_t field) { return spatialEqDynamicParameterId(1, band, field); };
+        auto& threshold = slider(panel, dynamicId(0, processorRouting::dynamicThreshold));
+        auto* thresholdControl = threshold.findParentComponentOfClass<toneui::Control>();
+        require(thresholdControl != nullptr, "Missing threshold control");
+        shape->setSelectedId(1, juce::sendNotificationSync);
+        dynamics->setSelectedId(1, juce::sendNotificationSync);
+        require(dynamics->isEnabled() && !thresholdControl->isVisible(), "Dynamics Off must hide the extra controls");
+        const auto foldedHeight = panel.preferredContentHeight(400);
+        for (int mode : {2, 3}) {
+            dynamics->setSelectedId(mode, juce::sendNotificationSync);
+            near(read(*owner, dynamicId(0, processorRouting::dynamicMode)), float(mode - 1), "Wrong dynamics mode binding");
+            require(thresholdControl->isVisible() && panel.preferredContentHeight(400) > foldedHeight, "Active dynamics controls not laid out");
+        }
+        threshold.setValue(-36, juce::sendNotificationSync);
+        near(read(*owner, dynamicId(0, processorRouting::dynamicThreshold)), -36, "Threshold edit not published");
+        for (int item : {2, 3, 4, 5, 6, 7}) {
+            shape->setSelectedId(item, juce::sendNotificationSync);
+            require(dynamics->isEnabled() == (item <= 3) && thresholdControl->isVisible() == (item <= 3),
+                "Dynamics available on an unsupported shape or missing on a shelf");
+        }
+        shape->setSelectedId(1, juce::sendNotificationSync);
+        require(dynamics->getSelectedId() == 3 && thresholdControl->isVisible(), "Returning to Bell lost dormant dynamics mode");
+        near(float(threshold.getValue()), -36, "Returning to Bell lost dormant threshold");
         for (int width : {260, 400, 720}) {
             panel.setSize(width, panel.preferredContentHeight(width));
             for (size_t band = 0; band < 8; ++band) {
@@ -822,11 +868,17 @@ inline void spatialEq() {
     require(routing->commitExternalGraphEdit(added, error), error);
     const auto depth = spatialEqBandParameterId(1, 7, processorRouting::spatialDepth);
     write(*owner, depth, 73);
+    const auto slope = spatialEqSlopeParameterId(1, 7);
+    write(*owner, slope, 7);
+    const auto threshold = spatialEqDynamicParameterId(1, 7, processorRouting::dynamicThreshold);
+    write(*owner, threshold, -38);
     require(routing->commitExternalGraphEdit(initial, error), error);
     auto* undo = find<juce::TextButton>(*routing, [](auto& b) { return b.getButtonText() == "Undo"; });
     require(undo && undo->onClick, "Missing Routing undo");
     undo->onClick();
     near(read(*owner, depth), 73, "Routing undo did not restore the deleted Spatial EQ's Depth");
+    near(read(*owner, slope), 7, "Routing undo did not restore the deleted Spatial EQ's slope");
+    near(read(*owner, threshold), -38, "Routing undo did not restore the deleted Spatial EQ's threshold");
     require(owner->getRoutingGraph().nodes.size() == added.nodes.size(), "Routing undo did not restore Spatial EQ");
 }
 } // namespace vocalstack::toneUiTests

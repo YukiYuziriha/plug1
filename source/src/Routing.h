@@ -970,7 +970,10 @@ private:
             const auto& target = fx.spatialEq;
             const auto sameBand = [](const auto& a, const auto& b) {
                 return a.active == b.active && a.enabled == b.enabled && a.shape == b.shape
-                    && a.frequency == b.frequency && a.gainDb == b.gainDb && a.q == b.q && a.depth == b.depth;
+                    && a.frequency == b.frequency && a.gainDb == b.gainDb && a.q == b.q && a.depth == b.depth
+                                        && a.slopeDbPerOctave == b.slopeDbPerOctave && a.dynamicMode == b.dynamicMode
+                                        && a.thresholdDb == b.thresholdDb && a.rangeDb == b.rangeDb
+                                        && a.attackMs == b.attackMs && a.releaseMs == b.releaseMs;
             };
             if (!std::equal(target.bands.begin(), target.bands.end(), machine.spatialEqTarget.bands.begin(), sameBand)) {
                 machine.spatialEqTarget = target;

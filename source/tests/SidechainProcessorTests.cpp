@@ -164,7 +164,7 @@ void busMatrix() {
 }
 
 void sidechainBlendContract() {
-    static_assert(sidechainBlendParameterIndex == 2447 && parameterIds.size() == 3177);
+    static_assert(sidechainBlendParameterIndex == 2447 && parameterIds.size() == 3897);
     static_assert(int(NodeType::sidechainBlend) == 25 && sidechainBlendNodeId == 15);
     const auto setPercent = [](Processor& owner, const char* id, float percent) {
         auto* p = owner.parameters.getParameter(id);
@@ -177,7 +177,7 @@ void sidechainBlendContract() {
     const auto canonical = defaultGraph(false);
     auto owner = std::make_unique<Processor>();
     auto* blend = owner->parameters.getParameter("sidechainBlend");
-    check(blend && owner->getParameters().size() == 3177 && owner->getParameters()[2447] == blend
+    check(blend && owner->getParameters().size() == 3897 && owner->getParameters()[2447] == blend
         && blend->isAutomatable() && blend->getDefaultValue() == 0.f, "Sidechain Blend host contract changed");
     juce::String error;
     check(topology(owner->getRoutingGraph()).isEquivalentTo(topology(defaultGraph(false, true))),
@@ -552,7 +552,7 @@ void legacyLatencyStateRecall() {
 
 void spectralContract() {
     auto owner=std::make_unique<Processor>();
-    check(spectralMorphParameterStart==2252 && owner->getParameters().size()==3177, "append-only Morph parameter count");
+    check(spectralMorphParameterStart==2252 && owner->getParameters().size()==3897, "append-only Morph parameter count");
     for(size_t i=0;i<parameterIds.size();++i) {
         auto* p=dynamic_cast<juce::RangedAudioParameter*>(owner->getParameters()[int(i)]);
         check(p && p->paramID==parameterIds[i], "host index differs from explicit parameter map");

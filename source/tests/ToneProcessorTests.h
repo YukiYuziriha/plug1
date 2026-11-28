@@ -43,7 +43,7 @@ inline Graph graph(NodeType type) {
 inline void parameterContract() {
     auto processor = std::make_unique<Processor>();
     auto& p = *processor;
-    require(p.getParameters().size() == 3177 && parameterIds.size() == 3177 && creativeParameterStart == 1007
+    require(p.getParameters().size() == 3897 && parameterIds.size() == 3897 && creativeParameterStart == 1007
         && legacyCreativeParameterCount == 48 && creativeParameterCount == 68
         && utilityParameterStart == 1772 && utilityParameterCount == 21,
             "Incorrect host count or appended parameter layout");
@@ -441,6 +441,211 @@ inline void spatialEqSignedAudio() {
         require(distance(cuts[0], cuts[1]) > 1.e-4f && distance(cuts[1], cuts[2]) > 1.e-4f,
             juce::String(shapeNames[shape]) + " cut fixture did not distinguish 0%, 50%, and 100% Depth");
         render(shape, 100, true);
+    }
+}
+
+inline void spatialEqShapesAndSlopes() {
+    using namespace processorRouting;
+    constexpr double rate = 48000.;
+    constexpr std::array shapes{SpatialEqShape::LowCut, SpatialEqShape::HighCut, SpatialEqShape::Notch, SpatialEqShape::BandPass};
+    auto owner = std::make_unique<Processor>();
+    auto& p = *owner;
+    const auto shapeId = spatialEqBandParameterId(1, 0, spatialShape);
+    const auto slopeId = spatialEqSlopeParameterId(1, 0);
+    auto* shapeParam = p.parameters.getParameter(shapeId);
+    auto* slopeParam = p.parameters.getParameter(slopeId);
+    require(shapeParam && slopeParam && slopeParam == p.getParameters()[3177], "Slope was not appended after the existing bank");
+    near(read(p, slopeId), 3, "Slope default is not 24 dB/oct");
+    for (int i = 0; i < 3; ++i)
+        near(shapeParam->convertFrom0to1(.5f * float(i)), float(i), "Released normalized shape mapping changed");
+    for (int i = 0; i < 7; ++i)
+        near(shapeParam->convertFrom0to1(shapeParam->convertTo0to1(float(i))), float(i), "Shape automation cannot reach the ordinal");
+
+    auto graphModel = graph(NodeType::spatialEq);
+    auto& band = graphModel.nodes[1].spatialEq.bands[0];
+    band = {true, true, SpatialEqShape::LowCut, 900, 15, .81f, .5f, 48};
+    juce::String error;
+    require(p.setRoutingGraph(graphModel, error), error);
+    near(read(p, slopeId), 5, "Graph did not seed the slope parameter");
+    auto tree = state(p);
+    tree.removeChild(tree.getChildWithProperty("id", slopeId), nullptr);
+    require(p.pasteSettings(tree.toXmlString()), "Graph slope fallback failed to load");
+    near(read(p, slopeId), 5, "Missing host slope did not fall back to graph-authored slope");
+    auto legacyTree = tree.createCopy();
+    for (const auto* graphKey : {"RoutingGraph", "ActiveRoutingGraph"}) {
+        auto graphTree = legacyTree.getChildWithName(graphKey);
+        for (const auto& node : graphTree)
+            if (auto spatial = node.getChildWithName("SpatialEq"); spatial.getNumChildren() > 0)
+                spatial.getChild(0).removeProperty("Slope", nullptr);
+    }
+    require(p.pasteSettings(legacyTree.toXmlString()), "Old Spatial EQ state without slope failed to load");
+    near(read(p, slopeId), 3, "Old Spatial EQ state did not default to 24 dB/oct");
+    for (size_t i = 0; i < spatialEqSlopes.size(); ++i) {
+        write(p, slopeId, float(i));
+        require(p.settings().fxSettings[1].spatialEq.bands[0].slopeDbPerOctave == spatialEqSlopes[i], "Slope choice did not map to dB/oct");
+    }
+    auto copy = std::make_unique<Processor>();
+    require(copy->pasteSettings(p.settingsText()), "Automated slope failed state recall");
+    near(read(*copy, slopeId), 7, "Saved host slope lost to graph default");
+    copy.reset();
+
+    for (const auto* id : {"levelOn", "doubleOn", "formantOn", "bypass", "outputGain"}) write(p, id, 0);
+    write(p, "globalMix", 100);
+    for (size_t shape = 0; shape < shapes.size(); ++shape) {
+        band.shape = shapes[shape];
+        write(p, shapeId, float(shape + 3));
+        write(p, slopeId, float(spatialEqSlopeIndex(float(band.slopeDbPerOctave))));
+        p.prepareToPlay(rate, 137);
+        SpatialEqSettings expected = graphModel.nodes[1].spatialEq;
+        expected.bands[0].gainDb = 0; // The four filter-only shapes must ignore the stored gain.
+        SpatialEq reference;
+        reference.setSettings(expected);
+        reference.prepare(rate);
+        auto routing = std::make_unique<RoutingExecutor>();
+        routing->prepare(rate);
+        require(bool(routing->requestGraph(graphModel)), "Standalone graph rejected the new shape");
+        juce::AudioBuffer<float> audio(2, 137);
+        juce::MidiBuffer midi;
+        float peakError = 0;
+        for (int block = 0; block < 24; ++block) {
+            if (block == 12 && shape < 2) {
+                band.slopeDbPerOctave = 6;
+                expected.bands[0].slopeDbPerOctave = 6;
+                reference.setSettings(expected);
+                write(p, slopeId, 0);
+            }
+            std::array<StereoSample, 137> oracle{};
+            for (int i = 0; i < audio.getNumSamples(); ++i) {
+                const auto sample = double(block * audio.getNumSamples() + i);
+                const StereoSample input{float(.05 * std::sin(sample * .07)), float(.04 * std::cos(sample * .18))};
+                audio.setSample(0, i, input.left);
+                audio.setSample(1, i, input.right);
+                oracle[size_t(i)] = input;
+                reference.process(oracle[size_t(i)].left, oracle[size_t(i)].right);
+                if (block < 12) {
+                    RoutingSources sources{};
+                    sources.lead = input;
+                    const auto actual = routing->process(sources, RoutingControls{});
+                    require(std::abs(actual.left - oracle[size_t(i)].left) < 2.e-6f
+                        && std::abs(actual.right - oracle[size_t(i)].right) < 2.e-6f, "Node-authored graph render differs from direct DSP");
+                }
+            }
+            p.processBlock(audio, midi);
+            for (int i = 0; i < audio.getNumSamples(); ++i) {
+                const float l = audio.getSample(0, i), r = audio.getSample(1, i);
+                require(std::isfinite(l) && std::isfinite(r), "Spatial EQ filter output is not finite");
+                peakError = std::max({peakError, std::abs(l - oracle[size_t(i)].left), std::abs(r - oracle[size_t(i)].right)});
+            }
+        }
+        require(peakError < 2.e-6f, "HEAVEN filter or live slope differs from direct SpatialEq: " + juce::String(peakError, 8));
+        require(p.getLatencySamples() == 0 && !p.routingRestartPending(), "Filter/slope added latency or requested reactivation");
+        p.releaseResources();
+        band.slopeDbPerOctave = 48;
+    }
+}
+
+inline void spatialEqInternalDynamics() {
+    using namespace processorRouting;
+    constexpr size_t slot = 1, bandIndex = 7;
+    const auto id = [](size_t field) { return spatialEqDynamicParameterId(slot, bandIndex, field); };
+    auto owner = std::make_unique<Processor>();
+    auto& p = *owner;
+    static_assert(spatialEqDynamicParameterStart == 3297 && spatialEqDynamicParameterCount == 600);
+    constexpr std::array defaults{0.f, -24.f, 4.f, 15.f, 150.f};
+    constexpr std::array lower{0.f, -72.f, 0.f, .1f, 10.f}, upper{2.f, 0.f, 18.f, 200.f, 2000.f};
+    for (size_t f = 0; f < defaults.size(); ++f) {
+        auto* parameter = p.parameters.getParameter(id(f));
+        require(parameter && parameter->isAutomatable() && parameter == p.getParameters()[int(3297 + bandIndex * 5 + f)],
+            "Dynamics bank index or automation changed");
+        near(read(p, id(f)), defaults[f], "Wrong dynamics default");
+        near(parameter->convertFrom0to1(0), lower[f], "Wrong dynamics minimum");
+        near(parameter->convertFrom0to1(1), upper[f], "Wrong dynamics maximum");
+    }
+
+    auto model = graph(NodeType::spatialEq);
+    auto& authored = model.nodes[1].spatialEq.bands[bandIndex];
+    authored = {true, true, SpatialEqShape::Bell, 900, 3, .9f, .35f, 24,
+        SpatialEqDynamicMode::Upward, -40, 10, 5, 80};
+    juce::String error;
+    require(p.setRoutingGraph(model, error), error);
+    near(read(p, id(dynamicThreshold)), -40, "New graph did not seed dynamics");
+    write(p, id(dynamicThreshold), -37);
+    auto copy = std::make_unique<Processor>();
+    require(copy->pasteSettings(p.settingsText()), "Dynamics failed state recall");
+    near(read(*copy, id(dynamicThreshold)), -37, "Host-authored dynamics lost at recall");
+    auto partial = state(p);
+    for (size_t f = 0; f < defaults.size(); ++f) partial.removeChild(partial.getChildWithProperty("id", id(f)), nullptr);
+    require(copy->pasteSettings(partial.toXmlString()), "Graph-authored dynamics failed state recall");
+    near(read(*copy, id(dynamicThreshold)), -40, "Graph-authored dynamics lost at recall");
+    for (const auto* key : {"RoutingGraph", "ActiveRoutingGraph"})
+        for (const auto& node : partial.getChildWithName(key))
+            if (auto bands = node.getChildWithName("SpatialEq"); bands.getNumChildren() > int(bandIndex))
+                for (const auto& d : spatialEqDynamicFields) bands.getChild(int(bandIndex)).removeProperty(d.id, nullptr);
+    require(copy->pasteSettings(partial.toXmlString()), "Old graph without dynamics failed state recall");
+    for (size_t f = 0; f < defaults.size(); ++f) near(read(*copy, id(f)), defaults[f], "Old graph inherited non-default dynamics");
+    copy.reset();
+
+    for (const auto* key : {"levelOn", "doubleOn", "formantOn", "bypass", "outputGain"}) write(p, key, 0);
+    write(p, "globalMix", 100);
+    constexpr double rate = 48000;
+    constexpr int frames = 137, blocks = 100;
+    const auto render = [&](SpatialEqShape shape, SpatialEqDynamicMode mode) {
+        write(p, spatialEqBandParameterId(slot, bandIndex, spatialShape), float(shape));
+        const std::array<float, 5> values{float(mode), -40, 10, 5, 80};
+        for (size_t f = 0; f < values.size(); ++f) write(p, id(f), values[f]);
+        p.prepareToPlay(rate, frames);
+        SpatialEqSettings expected = model.nodes[1].spatialEq;
+        expected.bands[bandIndex].shape = shape;
+        expected.bands[bandIndex].dynamicMode = mode;
+        SpatialEq direct;
+        direct.setSettings(expected);
+        direct.prepare(rate);
+        juce::AudioBuffer<float> audio(2, frames);
+        juce::MidiBuffer midi;
+        std::vector<float> rendered;
+        rendered.reserve(2 * frames * blocks);
+        float errorPeak = 0;
+        for (int block = 0; block < blocks; ++block) {
+            if (block == 53) {
+                const std::array<float, 4> next{-30, 7, 13, 42};
+                for (size_t f = 0; f < next.size(); ++f) write(p, id(f + 1), next[f]);
+                auto& b = expected.bands[bandIndex];
+                b.thresholdDb = -30; b.rangeDb = 7; b.attackMs = 13; b.releaseMs = 42;
+                direct.setSettings(expected);
+            }
+            std::array<float, frames> left{}, right{};
+            for (int i = 0; i < frames; ++i) {
+                const double sample = block * frames + i;
+                const double amplitude = block >= 12 && block < 76 ? .19 : .002;
+                left[size_t(i)] = float(amplitude * std::sin(sample * .118));
+                right[size_t(i)] = float(.75 * amplitude * std::cos(sample * .132));
+                audio.setSample(0, i, left[size_t(i)]);
+                audio.setSample(1, i, right[size_t(i)]);
+            }
+            direct.process(left.data(), right.data(), frames);
+            p.processBlock(audio, midi);
+            for (int i = 0; i < frames; ++i) {
+                const auto l = audio.getSample(0, i), r = audio.getSample(1, i);
+                require(std::isfinite(l) && std::isfinite(r), "Non-finite dynamics output");
+                errorPeak = std::max({errorPeak, std::abs(l - left[size_t(i)]), std::abs(r - right[size_t(i)])});
+                rendered.push_back(l);
+                rendered.push_back(r);
+            }
+        }
+        require(errorPeak < 2.e-6f, "HEAVEN internal dynamics differ from direct DSP: " + juce::String(errorPeak, 8));
+        require(p.getLatencySamples() == 0 && !p.routingRestartPending(), "Dynamics changed compensation");
+        p.releaseResources();
+        return rendered;
+    };
+    for (const auto shape : {SpatialEqShape::Bell, SpatialEqShape::LowShelf, SpatialEqShape::HighShelf, SpatialEqShape::Notch}) {
+        const auto off = render(shape, SpatialEqDynamicMode::Off);
+        for (const auto mode : {SpatialEqDynamicMode::Downward, SpatialEqDynamicMode::Upward}) {
+            const auto on = render(shape, mode);
+            float delta = 0;
+            for (size_t i = 0; i < on.size(); ++i) delta = std::max(delta, std::abs(on[i] - off[i]));
+            require(shape == SpatialEqShape::Notch ? delta < 2.e-6f : delta > 1.e-4f,
+                "Eligible dynamics did not engage or inactive Notch dynamics leaked");
+        }
     }
 }
 

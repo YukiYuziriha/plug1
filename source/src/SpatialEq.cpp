@@ -17,7 +17,7 @@ constexpr float overlapMinDepth = 0.001f; // percentage points
 constexpr float overlapMinGain = 1e-5f;
 using Stereo = std::array<double, 2>;
 
-enum class Response { bell, lowShelf, highShelf, bandpass, lowpass, highpass };
+enum class Response { bell, lowShelf, highShelf, bandpass, lowpass, highpass, notch };
 
 struct Coeffs {
     double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
@@ -73,6 +73,10 @@ Coeffs matchedPole(double rate, double frequency, double q, Response type, doubl
         } else if (type == Response::lowpass) {
             dc = 1;
             nyquist = 1 / den;
+        } else if (type == Response::notch) {
+            dc = 1;
+            center = 0;
+            nyquist = std::sqrt(detune) / den;
         } else {
             nyquist = square(x) / den;
         }
@@ -115,6 +119,96 @@ Stereo filter(Stereo x, StereoFilter& states, const Coeffs& c) noexcept {
 
 bool hasSignal(const StereoFilter& states) noexcept {
     return states[0].s1 != 0 || states[0].s2 != 0 || states[1].s1 != 0 || states[1].s2 != 0;
+}
+
+// 96 dB/oct is 16 poles, or eight second-order sections.
+constexpr std::size_t maxSections = 8;
+
+struct Cascade {
+    std::array<Coeffs, maxSections> sections{};
+    std::size_t count = 1;
+};
+
+using CascadeState = std::array<StereoFilter, maxSections>;
+
+Stereo filter(Stereo x, CascadeState& states, const Cascade& c) noexcept {
+    for (std::size_t i = 0; i < c.count; ++i) x = filter(x, states[i], c.sections[i]);
+    return x;
+}
+
+bool isSlopeShape(SpatialEqShape shape) noexcept {
+    return shape == SpatialEqShape::LowCut || shape == SpatialEqShape::HighCut;
+}
+
+bool hasGain(SpatialEqShape shape) noexcept {
+    return shape == SpatialEqShape::Bell || shape == SpatialEqShape::LowShelf || shape == SpatialEqShape::HighShelf;
+}
+
+int cutOrder(int slope) noexcept {
+    switch (slope) {
+        case 6: case 12: case 18: case 24: case 36: case 48: case 72: case 96:
+            return slope / 6;
+        default:
+            return 4;
+    }
+}
+
+Cascade designCut(double rate, double frequency, double q, int order, bool lowCut) noexcept {
+    Cascade result;
+    const double w = 2 * pi * std::clamp(frequency, 10.0, 0.475 * rate) / rate;
+    const int pairs = order / 2;
+    const bool odd = order % 2 != 0;
+    result.count = static_cast<std::size_t>(pairs + odd);
+    if (odd) {
+        // One real pole, with the numerator matched at DC and Nyquist.
+        const double a1 = -std::exp(-w);
+        const double x = pi / w;
+        const double scale = 0.5 * (1 - a1) / std::sqrt(1 + square(x));
+        const double dc = lowCut ? 0 : 0.5 * (1 + a1);
+        const double nyquist = lowCut ? x * scale : scale;
+        result.sections[0] = {dc + nyquist, dc - nyquist, 0, a1, 0};
+    }
+    if (pairs == 0) return result;
+
+    // Distribute the user's Q across the Butterworth pole pairs. The real
+    // pole (if present) does not participate in the Q adjustment.
+    std::array<double, maxSections> poleQ{};
+    const double resonance = std::pow(q, 1.0 / pairs);
+    for (int i = 0; i < pairs; ++i) {
+        poleQ[i] = resonance / (2 * std::sin((2 * i + 1) * pi / (2 * order)));
+        result.sections[i + odd] = matchedPole(rate, frequency, std::clamp(poleQ[i], 0.1, 30.0),
+                                               lowCut ? Response::highpass : Response::lowpass);
+    }
+    if (lowCut) return result;
+
+    // The matched High Cut can overshoot the analog passband. Compare their
+    // peaks over the native 24-point grid and use bilinear pole pairs only
+    // when the excess is greater than 0.02 dB.
+    double digitalPeak = 0, analogPeak = 0;
+    const double workingW = 2 * pi * frequency / rate;
+    for (int i = 0; i < 24; ++i) {
+        const double ratio = 0.98 * std::exp2(4.0 * i / 23 - 4);
+        const double angle = workingW * ratio;
+        const std::complex<double> z{std::cos(angle), -std::sin(angle)};
+        const auto z2 = z * z;
+        double digital = 1, analog = odd ? 1 / std::sqrt(1 + square(ratio)) : 1;
+        for (std::size_t j = 0; j < result.count; ++j) digital *= result.sections[j].magnitude(z, z2);
+        for (int j = 0; j < pairs; ++j)
+            analog /= std::sqrt(square(1 - square(ratio)) + square(ratio / poleQ[j]));
+        digitalPeak = std::max(digitalPeak, digital);
+        analogPeak = std::max(analogPeak, analog);
+    }
+    const double excessDb = 20 * std::log10(std::max(1e-12, digitalPeak) / std::max(1e-12, analogPeak));
+    if (excessDb > 0.02) {
+        const double cw = std::cos(w), sw = std::sin(w);
+        for (int i = 0; i < pairs; ++i) {
+            const double alpha = sw / (2 * std::clamp(poleQ[i], 0.1, 30.0));
+            const double a0 = 1 + alpha;
+            const double b = 0.5 * (1 - cw) / a0;
+            result.sections[i + odd] = {b, 2 * b, b, -2 * cw / a0, (1 - alpha) / a0};
+        }
+    }
+    return result;
 }
 
 bool hasSignal(Stereo x) noexcept { return x[0] != 0 || x[1] != 0; }
@@ -258,11 +352,17 @@ struct Space {
     }
 };
 
+struct DynamicControls {
+    SpatialEqDynamicMode mode;
+    float threshold, range, attackMs, releaseMs;
+};
+
 struct Controls {
     float frequency = 1000, gain = 0, q = 1, depth = 0; // Depth in percentage points
     SpatialEqShape shape = SpatialEqShape::Bell;
     bool active = false, enabled = true;
-
+    int order = 0;
+    DynamicControls dynamics{};
 
     bool on() const noexcept { return active && enabled; }
     bool eligible() const noexcept { return on() && gain > overlapMinGain && depth > overlapMinDepth; }
@@ -273,15 +373,27 @@ float bounded(float x, float fallback, float lo, float hi) noexcept {
 }
 
 Controls sanitize(SpatialEqBandSettings b, double rate) noexcept {
-    if (b.shape != SpatialEqShape::LowShelf && b.shape != SpatialEqShape::HighShelf)
-        b.shape = SpatialEqShape::Bell;
+    switch (b.shape) {
+        case SpatialEqShape::Bell: case SpatialEqShape::LowShelf: case SpatialEqShape::HighShelf:
+        case SpatialEqShape::LowCut: case SpatialEqShape::HighCut:
+        case SpatialEqShape::Notch: case SpatialEqShape::BandPass:
+            break;
+        default:
+            b.shape = SpatialEqShape::Bell;
+    }
     const float high = static_cast<float>(std::min(20000.0, 0.475 * rate));
-    const float gain = bounded(b.gainDb, 0, -30, 30);
+    const float gain = hasGain(b.shape) ? bounded(b.gainDb, 0, -30, 30) : 0.0f;
     const float minQ = b.shape == SpatialEqShape::Bell && gain > 0 ? 0.5f : 0.1f;
     const float depth = bounded(b.depth, 0, 0, 1);
+    if (!hasGain(b.shape) || (b.dynamicMode != SpatialEqDynamicMode::Downward
+                             && b.dynamicMode != SpatialEqDynamicMode::Upward))
+        b.dynamicMode = SpatialEqDynamicMode::Off;
     return {bounded(b.frequency, std::min(1000.0f, high), 20, high), gain,
             bounded(b.q, 1, minQ, 30), depth < std::numeric_limits<float>::min() ? 0.0f
-                 : static_cast<float>(100.0 * depth), b.shape, b.active, b.enabled};
+                 : static_cast<float>(100.0 * depth), b.shape, b.active, b.enabled,
+            isSlopeShape(b.shape) ? cutOrder(b.slopeDbPerOctave) : 0,
+            {b.dynamicMode, bounded(b.thresholdDb, -24, -72, 0), bounded(b.rangeDb, 4, 0, 18),
+             bounded(b.attackMs, 15, 0.1f, 200), bounded(b.releaseMs, 150, 10, 2000)}};
 }
 
 float flushDepth(float depth) noexcept {
@@ -301,6 +413,8 @@ float stepLog(float current, float target, double alpha) noexcept {
 Response directResponse(SpatialEqShape shape) noexcept {
     if (shape == SpatialEqShape::LowShelf) return Response::lowShelf;
     if (shape == SpatialEqShape::HighShelf) return Response::highShelf;
+    if (shape == SpatialEqShape::Notch) return Response::notch;
+    if (shape == SpatialEqShape::BandPass) return Response::bandpass;
     return Response::bell;
 }
 
@@ -323,10 +437,63 @@ struct Amount {
     }
 };
 
+struct Dynamics {
+    StereoFilter detector{}, direct{}, wet{};
+    Coeffs bandpass{}, bell{};
+    double envelope = 0, gain = 0;
+    double attack = 0, release = 0;
+    float frequency = 0, q = 0, attackMs = 0, releaseMs = 0;
+
+    void tick(double rate, double step, const Controls& c) noexcept {
+        const auto& d = c.dynamics;
+        const bool retune = frequency != c.frequency || q != c.q;
+        if (retune) {
+            frequency = c.frequency;
+            q = c.q;
+            bandpass = matchedPole(rate, frequency, q, Response::bandpass);
+        }
+        if (attackMs != d.attackMs) {
+            attackMs = d.attackMs;
+            attack = std::exp(-1000.0 / (attackMs * rate));
+        }
+        if (releaseMs != d.releaseMs) {
+            releaseMs = d.releaseMs;
+            release = std::exp(-1000.0 / (releaseMs * rate));
+        }
+        double target = 0;
+        if (d.mode != SpatialEqDynamicMode::Off) {
+            const double level = 10 * std::log10(std::max(envelope, 1e-12));
+            const double amount = std::clamp(0.5 * (level - d.threshold), 0.0, static_cast<double>(d.range));
+            target = d.mode == SpatialEqDynamicMode::Upward ? amount : -amount;
+        }
+        double next = gain + (target - gain) * step;
+        if (d.mode == SpatialEqDynamicMode::Off && std::abs(next) < 1e-7) next = 0;
+        if (next != gain || (retune && std::abs(next) > sleepThreshold)) {
+            gain = next;
+            bell = std::abs(gain) > sleepThreshold
+                ? matchedPole(rate, frequency, q, Response::bell, gain) : Coeffs{};
+        }
+    }
+
+    void detect(Stereo x) noexcept {
+        const auto y = filter(x, detector, bandpass);
+        const auto power = std::min(0.5 * (square(y[0]) + square(y[1])), 1e4);
+        envelope = quiet(power + (envelope - power) * (power > envelope ? attack : release));
+    }
+
+    bool directLive() const noexcept { return std::abs(gain) > sleepThreshold || hasSignal(direct); }
+    Stereo processWet(Stereo x, bool staticCut) noexcept {
+        if (staticCut && gain < -sleepThreshold) return filter(x, wet, bell);
+        return hasSignal(wet) ? filter(x, wet, Coeffs{}) : x;
+    }
+};
+
 struct Band {
     Controls target{}, current{};
-    Coeffs eq{}, feed{}, overlapFeed{};
-    StereoFilter direct{}, wetCut{};
+    Dynamics dynamics{};
+    Cascade eq{};
+    Coeffs feed{}, overlapFeed{};
+    CascadeState direct{}, wetCut{};
     Space space;
     float eqFrequency = 0, eqGain = 0, eqQ = 0, feedFrequency = 0, feedQ = 0;
     float overlapFrequency = 0, overlapQ = 0;
@@ -340,7 +507,7 @@ struct Band {
         // the working gain is still positive. Cut Depth follows working gain.
         boost.target = depth != 0 && current.gain > 0 && target.gain > wetMinGain
             ? depth * -std::expm1(-static_cast<double>(current.gain) / 3) : 0;
-        cut.target = current.gain < 0 ? depth : 0;
+        cut.target = !hasGain(current.shape) || current.gain < 0 ? depth : 0;
     }
 
     void settle() noexcept {
@@ -350,6 +517,7 @@ struct Band {
         cut = {cut.target, cut.target, false};
         eqFrequency = feedFrequency = overlapFrequency = 0;
         direct = wetCut = {};
+        dynamics = {};
         space.clear();
     }
 
@@ -358,10 +526,18 @@ struct Band {
         current.frequency = stepLog(current.frequency, target.frequency, alpha);
         current.q = stepLog(current.q, target.q, alpha);
         current.gain = stepLinear(current.gain, target.gain, alpha);
+        current.dynamics = target.dynamics;
         updateAmounts();
         if (eqFrequency != current.frequency || eqQ != current.q || eqGain != current.gain) {
-            eq = std::abs(current.gain) < 1e-9 ? Coeffs{} : matchedPole(
-                rate, current.frequency, current.q, directResponse(current.shape), current.gain);
+            if (current.order != 0) {
+                eq = designCut(rate, current.frequency, current.q, current.order,
+                               current.shape == SpatialEqShape::LowCut);
+            } else {
+                eq.count = 1;
+                eq.sections[0] = hasGain(current.shape) && std::abs(current.gain) < 1e-9
+                    ? Coeffs{} : matchedPole(rate, current.frequency, current.q,
+                                             directResponse(current.shape), current.gain);
+            }
             eqFrequency = current.frequency;
             eqQ = current.q;
             eqGain = current.gain;
@@ -399,9 +575,16 @@ struct Band {
         if (!running) return x;
 
         if (boost.advance(step)) space.clear();
-        if (cut.advance(step)) wetCut = {};
-        if (std::abs(eqGain) < 1e-9 && !hasSignal(direct)) return x;
+        if (cut.advance(step)) {
+            wetCut = {};
+            dynamics.wet = {};
+        }
+        // Track even in Off so a mode write can use the existing envelope.
+        if (hasGain(current.shape)) dynamics.detect(x);
+        const bool dynamicLive = dynamics.directLive();
+        if (hasGain(current.shape) && std::abs(eqGain) < 1e-9 && !hasSignal(direct[0]) && !dynamicLive) return x;
         auto y = filter(x, direct, eq);
+        if (dynamicLive) y = filter(y, dynamics.direct, dynamics.bell);
         if (enable != 1) {
             y[0] = x[0] + (y[0] - x[0]) * enable;
             y[1] = x[1] + (y[1] - x[1]) * enable;
@@ -461,13 +644,14 @@ struct SpatialEq::State {
         for (auto& b : bands) {
             // Receivers see all slots' new eligibility but later slots' previous
             // extraction designs. Don't move this scan to a separate second pass.
-            const bool topologyChanged = b.current.shape != b.target.shape;
+            const bool topologyChanged = b.current.shape != b.target.shape || b.current.order != b.target.order;
             if (topologyChanged) b.settle();
             if (!firstTick && !topologyChanged && !b.target.active && b.enable < sleepThreshold) {
                 b.current = b.target;
                 continue;
             }
             b.updateDesign(rate, tickStep);
+            if (hasGain(b.current.shape)) b.dynamics.tick(rate, tickStep, b.current);
             if (b.boost.live()) b.updateSpace(delays, rate);
             double total = 0;
             if (anyEligible) {
@@ -506,10 +690,16 @@ struct SpatialEq::State {
             wet[1] += y[1] * b.weight;
         }
         if (cutLive) for (auto& b : bands) {
-            if (!b.running || !b.cut.running || (!hasSignal(wet) && !hasSignal(b.wetCut))) continue;
-            // Design with min(working gain, 0). Even at identity, run the
-            // remaining cut history while its blend is slewing out.
-            const auto y = filter(wet, b.wetCut, b.eqGain < 0 ? b.eq : Coeffs{});
+            if (!b.running || !b.cut.running) continue;
+            if (!hasSignal(wet) && !hasSignal(b.dynamics.wet)
+                && std::none_of(b.wetCut.begin(), b.wetCut.begin() + b.eq.count,
+                                [](const auto& section) { return hasSignal(section); })) continue;
+            // The gain-based shapes use min(working gain, 0) on the return.
+            // Run the identity stage too while its cut history is slewing out.
+            const bool staticCut = b.eqGain < 0;
+            auto y = !hasGain(b.current.shape) || staticCut
+                ? filter(wet, b.wetCut, b.eq) : filter(wet, b.wetCut[0], Coeffs{});
+            y = b.dynamics.processWet(y, staticCut);
             wet[0] += (y[0] - wet[0]) * b.enable * b.cut.value;
             wet[1] += (y[1] - wet[1]) * b.enable * b.cut.value;
         }

@@ -18,6 +18,32 @@ public:
     bool isDiscrete() const override { return true; }
 };
 
+// Preserve the three released host-normalized shape positions (0, .5, 1).
+// APVTS still stores ordinal 0..6 in state, and the inspector orders by ordinal.
+class SpatialEqShapeParameter final : public juce::AudioParameterFloat {
+    static constexpr std::array<int, 7> ordinalAtHostStep{0, 3, 4, 1, 5, 6, 2};
+    static int ordinal(float value) noexcept { return std::clamp(int(std::lround(value)), 0, 6); }
+    static juce::NormalisableRange<float> range() {
+        return {0, 6,
+            [](float, float, float n) { return float(ordinalAtHostStep[size_t(ordinal(n * 6))]); },
+            [](float, float, float raw) {
+                const auto step = std::find(ordinalAtHostStep.begin(), ordinalAtHostStep.end(), ordinal(raw));
+                return float(step - ordinalAtHostStep.begin()) / 6.f;
+            }, [](float, float, float raw) { return float(ordinal(raw)); }};
+    }
+public:
+    SpatialEqShapeParameter(const juce::ParameterID& id, const juce::String& name)
+        : juce::AudioParameterFloat(id, name, range(), 0.f, juce::AudioParameterFloatAttributes{}
+            .withStringFromValueFunction([](float value, int) { return processorRouting::spatialEqShapeNames[ordinal(value)]; })
+            .withValueFromStringFunction([](const juce::String& text) {
+                const auto& names = processorRouting::spatialEqShapeNames;
+                const int match = names.indexOf(text.trim(), true);
+                return float(match >= 0 ? match : ordinal(text.getFloatValue()));
+            })) {}
+    bool isDiscrete() const override { return true; }
+    int getNumSteps() const override { return int(ordinalAtHostStep.size()); }
+};
+
 // Append-only wave parameters are bridged here rather than changing the legacy
 // 49-field tone layout (its indices are part of host/session compatibility).
 void boundProcessorTone(RoutingNode& node) {
@@ -347,9 +373,32 @@ State::ParameterLayout Processor::makeParameters() {
                 const auto id = spatialEqBandParameterId(slot, band, p);
                 const auto name = "FX " + juce::String(int(slot)) + " Spatial EQ Band " + juce::String(int(band + 1)) + " " + d.label;
                 if (p == processorRouting::spatialShape)
-                    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id, 1}, name,
-                        processorRouting::spatialEqShapeNames, int(d.initial)));
+                    layout.add(std::make_unique<SpatialEqShapeParameter>(juce::ParameterID{id, 1}, name));
                 else appendDescriptor(id, name, d);
+            }
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t band = 0; band < SpatialEqSettings::bandCount; ++band) {
+            const auto name = "FX " + juce::String(int(slot)) + " Spatial EQ Band " + juce::String(int(band + 1)) + " Slope";
+            layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{spatialEqSlopeParameterId(slot, band), 1},
+                name, processorRouting::spatialEqSlopeNames, int(processorRouting::spatialEqDefaultSlopeIndex)));
+        }
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t band = 0; band < SpatialEqSettings::bandCount; ++band)
+            for (size_t p = 0; p < spatialEqDynamicFieldsPerBand; ++p) {
+                const auto& d = processorRouting::spatialEqDynamicFields[p];
+                const auto id = spatialEqDynamicParameterId(slot, band, p);
+                const auto prefix = "FX " + juce::String(int(slot)) + " Spatial EQ Band " + juce::String(int(band + 1)) + " Dynamics";
+                if (p == processorRouting::dynamicMode)
+                    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id, 1}, prefix,
+                        processorRouting::spatialEqDynamicModeNames, int(d.initial)));
+                else if (p == processorRouting::dynamicAttack || p == processorRouting::dynamicRelease) {
+                    // Match the traced normalized default as well as the endpoints.
+                    const auto tracedDefault = p == processorRouting::dynamicAttack ? .403023839f : .394953758f;
+                    const auto skew = std::log(tracedDefault) / std::log((d.initial - d.min) / (d.max - d.min));
+                    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, prefix + " " + d.label,
+                        juce::NormalisableRange<float>(d.min, d.max, 0.f, skew), d.initial,
+                        juce::AudioParameterFloatAttributes{}.withLabel(d.unit)));
+                } else appendDescriptor(id, prefix + " " + d.label, d);
             }
     return layout;
 }
@@ -396,6 +445,10 @@ Settings Processor::settingsFromValues(const std::array<float, parameterIds.size
             processorRouting::SpatialEqValues v{};
             for (size_t p = 0; p < v.size(); ++p) v[p] = value(spatialEqParameterIndex(slot, band, p));
             spatialBands[band] = processorRouting::spatialEqBandFromValues(v);
+            spatialBands[band].slopeDbPerOctave = processorRouting::spatialEqSlopeFromIndex(value(spatialEqSlopeParameterIndex(slot, band)));
+            processorRouting::SpatialEqDynamicValues dynamics{};
+            for (size_t p = 0; p < dynamics.size(); ++p) dynamics[p] = value(spatialEqDynamicParameterIndex(slot, band, p));
+            processorRouting::applySpatialEqDynamics(spatialBands[band], dynamics);
         }
         std::array<float, spectralMorphParameterCount> spectralValues{};
         for (size_t p = 0; p < spectralValues.size(); ++p) spectralValues[p] = value(spectralMorphParameterIndex(slot, p));
@@ -507,7 +560,7 @@ void captureVst3SpatialEqAutomation(Vst3SpatialEqAutomation& automation, juce::A
     void* queue, Vst3SpatialEqAutomation::ReadPoint read, int count, int samples,
     Vst3SpatialEqAutomation::Point last) noexcept {
     const auto index = size_t(param.getParameterIndex());
-    if (index < spatialEqParameterStart || index >= parameterIds.size()) return;
+    if (index < spatialEqParameterStart || index >= spatialEqSlopeParameterStart) return;
     const auto relative = index - spatialEqParameterStart;
     const auto field = relative % spatialEqFieldsPerBand;
     if (field != processorRouting::spatialGain && field != processorRouting::spatialDepth) return;
@@ -958,7 +1011,7 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
             if (i == sidechainBlendParameterIndex)
                 for (const auto& node : active.nodes)
                     if (node.type == NodeType::sidechainBlend) initial = node.mix * 100;
-            if (i >= spatialEqParameterStart) {
+            if (i >= spatialEqParameterStart && i < spatialEqSlopeParameterStart) {
                 const auto offset = i - spatialEqParameterStart;
                 const auto slot = 1 + offset / spatialEqParametersPerSlot;
                 const auto band = (offset % spatialEqParametersPerSlot) / spatialEqFieldsPerBand;
@@ -966,6 +1019,23 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
                 for (const auto& node : active.nodes)
                     if (node.type == NodeType::spatialEq && routingFxSlot(node.id) == int(slot))
                         initial = processorRouting::spatialEqBandValues(node.spatialEq.bands[band])[field];
+            }
+            if (i >= spatialEqSlopeParameterStart && i < spatialEqDynamicParameterStart) {
+                const auto offset = i - spatialEqSlopeParameterStart;
+                const auto slot = 1 + offset / SpatialEqSettings::bandCount;
+                const auto band = offset % SpatialEqSettings::bandCount;
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::spatialEq && routingFxSlot(node.id) == int(slot))
+                        initial = float(processorRouting::spatialEqSlopeIndex(float(node.spatialEq.bands[band].slopeDbPerOctave)));
+            }
+            if (i >= spatialEqDynamicParameterStart) {
+                const auto offset = i - spatialEqDynamicParameterStart;
+                const auto slot = 1 + offset / spatialEqDynamicParametersPerSlot;
+                const auto band = (offset % spatialEqDynamicParametersPerSlot) / spatialEqDynamicFieldsPerBand;
+                const auto field = offset % spatialEqDynamicFieldsPerBand;
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::spatialEq && routingFxSlot(node.id) == int(slot))
+                        initial = processorRouting::spatialEqDynamicValues(node.spatialEq.bands[band])[field];
             }
             initial = parameter->convertFrom0to1(parameter->convertTo0to1(initial));
             missing.setProperty("value", initial, nullptr);
@@ -1476,6 +1546,16 @@ bool Processor::setRoutingGraphImpl(const Graph& graph, juce::String& error, con
                         for (size_t p = 0; p < next.size(); ++p)
                             if (old == previous.nodes.end() || next[p] != before[p])
                                 setParameterValue(parameterIds[spatialEqParameterIndex(slot, band, p)], next[p]);
+                        const auto slope = processorRouting::spatialEqSlopeIndex(float(node.spatialEq.bands[band].slopeDbPerOctave));
+                        if (old == previous.nodes.end()
+                            || slope != processorRouting::spatialEqSlopeIndex(float(old->spatialEq.bands[band].slopeDbPerOctave)))
+                            setParameterValue(parameterIds[spatialEqSlopeParameterIndex(slot, band)], float(slope));
+                        const auto dynamics = processorRouting::spatialEqDynamicValues(node.spatialEq.bands[band]);
+                        const auto beforeDynamics = old == previous.nodes.end() ? dynamics
+                            : processorRouting::spatialEqDynamicValues(old->spatialEq.bands[band]);
+                        for (size_t p = 0; p < dynamics.size(); ++p)
+                            if (old == previous.nodes.end() || dynamics[p] != beforeDynamics[p])
+                                setParameterValue(parameterIds[spatialEqDynamicParameterIndex(slot, band, p)], dynamics[p]);
                     }
                 }
                 if (slot > 0 && node.type != NodeType::chorale && node.type != NodeType::spectralMorph

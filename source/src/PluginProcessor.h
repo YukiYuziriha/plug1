@@ -253,8 +253,40 @@ inline const auto spatialEqParameterIdStorage = [] {
                     + "SpatialEqBand" + std::to_string(band + 1) + processorRouting::spatialEqFields[p].id;
     return ids;
 }();
+inline constexpr size_t spatialEqSlopeParameterStart = spatialEqParameterStart + spatialEqParameterCount;
+inline constexpr size_t spatialEqSlopeParameterCount = 15 * SpatialEqSettings::bandCount;
+static_assert(spatialEqSlopeParameterStart == 3177);
+inline constexpr size_t spatialEqSlopeParameterIndex(size_t slot, size_t band) noexcept {
+    return spatialEqSlopeParameterStart + (slot - 1) * SpatialEqSettings::bandCount + band;
+}
+inline const auto spatialEqSlopeParameterIdStorage = [] {
+    std::array<std::string, spatialEqSlopeParameterCount> ids;
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t band = 0; band < SpatialEqSettings::bandCount; ++band)
+            ids[spatialEqSlopeParameterIndex(slot, band) - spatialEqSlopeParameterStart] = "fx" + std::to_string(slot)
+                + "SpatialEqBand" + std::to_string(band + 1) + "Slope";
+    return ids;
+}();
+inline constexpr size_t spatialEqDynamicParameterStart = spatialEqSlopeParameterStart + spatialEqSlopeParameterCount;
+inline constexpr size_t spatialEqDynamicFieldsPerBand = processorRouting::spatialEqDynamicFields.size();
+inline constexpr size_t spatialEqDynamicParametersPerSlot = SpatialEqSettings::bandCount * spatialEqDynamicFieldsPerBand;
+inline constexpr size_t spatialEqDynamicParameterCount = 15 * spatialEqDynamicParametersPerSlot;
+static_assert(spatialEqDynamicParameterStart == 3297);
+inline constexpr size_t spatialEqDynamicParameterIndex(size_t slot, size_t band, size_t field) noexcept {
+    return spatialEqDynamicParameterStart + (slot - 1) * spatialEqDynamicParametersPerSlot
+        + band * spatialEqDynamicFieldsPerBand + field;
+}
+inline const auto spatialEqDynamicParameterIdStorage = [] {
+    std::array<std::string, spatialEqDynamicParameterCount> ids;
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t band = 0; band < SpatialEqSettings::bandCount; ++band)
+            for (size_t field = 0; field < spatialEqDynamicFieldsPerBand; ++field)
+                ids[spatialEqDynamicParameterIndex(slot, band, field) - spatialEqDynamicParameterStart] = "fx" + std::to_string(slot)
+                    + "SpatialEqBand" + std::to_string(band + 1) + processorRouting::spatialEqDynamicFields[field].id;
+    return ids;
+}();
 inline const auto parameterIds = [] {
-    std::array<const char*, spatialEqParameterStart + spatialEqParameterCount> ids{};
+    std::array<const char*, spatialEqDynamicParameterStart + spatialEqDynamicParameterCount> ids{};
         static_assert(utilityParameterStart + 15 * utilityParameterCount == newCreativeParameterStart);
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
@@ -281,11 +313,21 @@ inline const auto parameterIds = [] {
     ids[sidechainBlendParameterIndex] = "sidechainBlend";
     for (size_t i = 0; i < sidechainParameterIds.size(); ++i) ids[sidechainParameterStart + i] = sidechainParameterIds[i];
     for (size_t i = 0; i < spatialEqParameterCount; ++i) ids[spatialEqParameterStart + i] = spatialEqParameterIdStorage[i].c_str();
+    for (size_t i = 0; i < spatialEqSlopeParameterCount; ++i) ids[spatialEqSlopeParameterStart + i] = spatialEqSlopeParameterIdStorage[i].c_str();
+    for (size_t i = 0; i < spatialEqDynamicParameterCount; ++i) ids[spatialEqDynamicParameterStart + i] = spatialEqDynamicParameterIdStorage[i].c_str();
     return ids;
 }();
 static_assert(parameterIds.size() <= ModulationBackend::maxTargets);
 juce::String toneParameterId(size_t slot, const char* field);
 juce::String eqBandParameterId(size_t slot, size_t band, const char* field);
+inline juce::String spatialEqDynamicParameterId(size_t slot, size_t band, size_t field) {
+    return slot > 0 && slot < 16 && band < SpatialEqSettings::bandCount && field < spatialEqDynamicFieldsPerBand
+        ? juce::String(parameterIds[spatialEqDynamicParameterIndex(slot, band, field)]) : juce::String();
+}
+inline juce::String spatialEqSlopeParameterId(size_t slot, size_t band) {
+    return slot > 0 && slot < 16 && band < SpatialEqSettings::bandCount
+        ? juce::String(parameterIds[spatialEqSlopeParameterIndex(slot, band)]) : juce::String();
+}
 inline juce::String spatialEqBandParameterId(size_t slot, size_t band, size_t field) {
     return slot > 0 && slot < 16 && band < SpatialEqSettings::bandCount && field < spatialEqFieldsPerBand
         ? juce::String(parameterIds[spatialEqParameterIndex(slot, band, field)]) : juce::String();

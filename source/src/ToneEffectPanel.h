@@ -84,6 +84,9 @@ public:
         expanded.reset();
         // Attachments must be detached before their controls are destroyed.
         modeAttachment.reset();
+        spatialShapeAttachment.reset();
+        spatialSlopeAttachment.reset();
+        spatialDynamicModeAttachment.reset();
         qualityAttachment.reset();
         enabledAttachment.reset();
         adaptiveAttachment.reset();
@@ -97,7 +100,8 @@ public:
         if (isSpatialEq()) {
             const int inner = juce::jmax(1, width - 16);
             const int columns = juce::jmax(1, (inner + knobGap) / (knobWidth + knobGap));
-            return (width < compactWidth ? 204 : 180) + ((4 + columns - 1) / columns) * (knobHeight + knobGap);
+            const int rowHeight = ((4 + columns - 1) / columns) * (knobHeight + knobGap);
+            return (width < compactWidth ? 268 : 244) + rowHeight * (spatialDynamicsVisible ? 2 : 1);
         }
         if (width >= 620) {
             // Reserve the scrollbar before measuring so the breakpoint cannot oscillate.
@@ -132,13 +136,14 @@ public:
         hint.setColour(juce::Label::textColourId, device ? juce::Colour(0xffaebbc2) : p.muted);
         for (auto& c : controls) c->setNeon(neon);
         for (auto& c : bandControls) c->setNeon(neon);
+        for (auto& c : dynamicControls) c->setNeon(neon);
         for (auto* b : std::initializer_list<juce::TextButton*>{&expand, &bandOn, &remove, &adaptive, &raw, &levelMatch}) {
             b->setColour(juce::TextButton::buttonColourId, device ? juce::Colour(0xff303932) : p.inset);
             b->setColour(juce::TextButton::buttonOnColourId, device ? accent : p.accent);
             b->setColour(juce::TextButton::textColourOffId, device ? juce::Colour(0xffe4e9ee) : p.text);
             b->setColour(juce::TextButton::textColourOnId, juce::Colour(0xff151b20));
         }
-        for (auto* combo : {&mode, &quality}) {
+        for (auto* combo : {&mode, &quality, &slope, &dynamicsMode}) {
             modulationui::styleCombo(*combo, p);
             if (device) {
                 combo->setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff303932));
@@ -147,6 +152,7 @@ public:
             }
         }
         qualityLabel.setColour(juce::Label::textColourId, device ? juce::Colour(0xffb8c4ca) : p.muted);
+        dynamicsLabel.setColour(juce::Label::textColourId, device ? juce::Colour(0xffb8c4ca) : p.muted);
         modulationui::styleViewport(contentViewport, p);
         if (graph) graph->setNeon(neon);
         if (visual) visual->setNeon(neon);
@@ -191,7 +197,7 @@ private:
             plotArea = area.removeFromLeft(area.getWidth() * 44 / 100);
             area.removeFromLeft(6);
         }
-        const auto knobGrid = [&] {
+        const auto knobGrid = [&](bool dynamicsOnly = false) {
             const int columns = juce::jmax(1, (area.getWidth() + knobGap) / (knobWidth + knobGap));
             const int y = area.getY();
             int index = 0;
@@ -204,8 +210,11 @@ private:
                     ++index;
                 }
             };
-            place(bandControls);
-            place(controls);
+            if (dynamicsOnly) place(dynamicControls);
+            else {
+                place(bandControls);
+                place(controls);
+            }
             area.removeFromTop(((index + columns - 1) / columns) * (knobHeight + knobGap));
         };
         if (isSpatialEq()) {
@@ -214,7 +223,14 @@ private:
             area.removeFromTop(2);
             mode.setBounds(area.removeFromTop(29));
             area.removeFromTop(2);
+            slope.setBounds(area.removeFromTop(29));
+            area.removeFromTop(2);
             knobGrid();
+            auto dynamicsRow = area.removeFromTop(29);
+            dynamicsLabel.setBounds(dynamicsRow.removeFromLeft(juce::jmin(128, dynamicsRow.getWidth() / 2)));
+            dynamicsMode.setBounds(dynamicsRow);
+            area.removeFromTop(4);
+            if (spatialDynamicsVisible) knobGrid(true);
         } else if (graph) {
             const int columns = juce::jmax(1, (area.getWidth() + knobGap) / (knobWidth + knobGap));
             const int gridHeight = ((int(bandControls.size() + controls.size()) + columns - 1) / columns)
@@ -461,6 +477,16 @@ private:
         setupBandChips();
         mode.addItemList(processorRouting::spatialEqShapeNames, 1);
         mode.setName("Spatial EQ band shape");
+        slope.addItemList(processorRouting::spatialEqSlopeNames, 1);
+        slope.setName("Spatial EQ cut slope");
+        slope.setTooltip("Slope applies only to Low Cut and High Cut. A 6 dB/oct cut ignores Q.");
+        dynamicsLabel.setText("Internal dynamics", juce::dontSendNotification);
+        dynamicsLabel.setFont(hint.getFont());
+        dynamicsLabel.setInterceptsMouseClicks(false, false);
+        content.addAndMakeVisible(dynamicsLabel);
+        dynamicsMode.addItemList(processorRouting::spatialEqDynamicModeNames, 1);
+        dynamicsMode.setName("Spatial EQ internal dynamics");
+        dynamicsMode.setTooltip("Bell and shelves only. Downward cuts and Upward boosts above threshold using the internal detector.");
         hint.setText("Depth is per band. At 0%, only the direct EQ is heard.", juce::dontSendNotification);
         selectBand(0);
     }
@@ -478,6 +504,41 @@ private:
         controls[1]->slider.setTooltip("Mid / High boundary in 3-band mode. Keep above the low crossover.");
         updateBands();
     }
+    void bindSpatialChoice(toneui::PassiveComboBox& combo, const juce::String& id,
+                           std::unique_ptr<juce::ParameterAttachment>& attachment) {
+        combo.onChange = nullptr;
+        attachment.reset();
+        combo.setComponentID(id);
+        content.addAndMakeVisible(combo);
+        if (auto* parameter = owner.parameters.getParameter(id)) {
+            attachment = std::make_unique<juce::ParameterAttachment>(*parameter, [this, &combo](float raw) {
+                combo.setSelectedId(int(std::lround(raw)) + 1, juce::dontSendNotification);
+                updateSpatialBandControls();
+            });
+            combo.onChange = [&combo, &attachment] {
+                if (attachment && combo.getSelectedId() > 0)
+                    attachment->setValueAsCompleteGesture(float(combo.getSelectedId() - 1));
+            };
+            attachment->sendInitialUpdate();
+        }
+    }
+    void updateSpatialBandControls() {
+        const int shape = mode.getSelectedId() - 1;
+        const bool cut = shape == int(SpatialEqShape::LowCut) || shape == int(SpatialEqShape::HighCut);
+        const bool tonal = shape >= int(SpatialEqShape::Bell) && shape <= int(SpatialEqShape::HighShelf);
+        slope.setEnabled(cut);
+        dynamicsMode.setEnabled(tonal);
+        const bool showDynamics = tonal && dynamicsMode.getSelectedId() > 1;
+        for (auto& control : dynamicControls) control->setVisible(showDynamics);
+        if (bandControls.size() == 4) {
+            bandControls[1]->setEnabled(tonal);
+            bandControls[2]->setEnabled(!cut || processorRouting::spatialEqSlopeFromIndex(float(slope.getSelectedId() - 1)) != 6);
+        }
+        if (spatialDynamicsVisible != showDynamics) {
+            spatialDynamicsVisible = showDynamics;
+            if (!dynamicControls.empty()) resized();
+        }
+    }
     void selectBand(size_t band) {
         if (band > 7) return;
         // Re-selecting the current chip must not interrupt a live text/slider edit.
@@ -486,8 +547,12 @@ private:
         modeAttachment.reset();
         enabledAttachment.reset();
         bandControls.clear();
-        attachMode(isSpatialEq() ? spatialEqBandParameterId(slot, band, processorRouting::spatialShape)
-                                 : eqBandParameterId(slot, band, "Mode"));
+        dynamicControls.clear();
+        if (isSpatialEq()) {
+            bindSpatialChoice(mode, spatialEqBandParameterId(slot, band, processorRouting::spatialShape), spatialShapeAttachment);
+            bindSpatialChoice(slope, spatialEqSlopeParameterId(slot, band), spatialSlopeAttachment);
+            bindSpatialChoice(dynamicsMode, spatialEqDynamicParameterId(slot, band, processorRouting::dynamicMode), spatialDynamicModeAttachment);
+        } else attachMode(eqBandParameterId(slot, band, "Mode"));
         const auto onId = isSpatialEq() ? spatialEqBandParameterId(slot, band, processorRouting::spatialOn)
                                        : eqBandParameterId(slot, band, "On");
         bandOn.setComponentID(onId);
@@ -509,6 +574,17 @@ private:
                 const auto& d = processorRouting::spatialEqFields[p];
                 add(spatialEqBandParameterId(slot, band, p), d.label, d.unit);
             }
+            constexpr std::array<const char*, 4> tips{"Detector level above which the band engages.",
+                "Maximum dynamic cut or boost, in dB.", "How quickly the band engages.", "How quickly the band returns to its static gain."};
+            for (size_t field = processorRouting::dynamicThreshold; field < spatialEqDynamicFieldsPerBand; ++field) {
+                const auto& d = processorRouting::spatialEqDynamicFields[field];
+                auto c = std::make_unique<toneui::Control>(owner, spatialEqDynamicParameterId(slot, band, field), d.label, d.unit);
+                c->slider.setTooltip(tips[field - processorRouting::dynamicThreshold]);
+                content.addChildComponent(*c);
+                c->setNeon(neon);
+                dynamicControls.push_back(std::move(c));
+            }
+            updateSpatialBandControls();
         } else {
             for (size_t i = 0; i < fields.size(); ++i) add(eqBandParameterId(slot, band, fields[i]), titles[i], units[i]);
             graph->select(band);
@@ -579,19 +655,20 @@ private:
     Processor& owner;
     size_t slot, selectedBand = 0;
     NodeType type;
-    bool neon = false, expandedView = false;
+    bool neon = false, expandedView = false, spatialDynamicsVisible = false;
     FluidBackground background;
     juce::Component content;
     PassiveViewport contentViewport;
-    juce::Label heading, hint, qualityLabel;
-    toneui::PassiveComboBox mode, quality;
+    juce::Label heading, hint, qualityLabel, dynamicsLabel;
+    toneui::PassiveComboBox mode, quality, slope, dynamicsMode;
     juce::TextButton expand, remove;
         modulationui::Button bandOn, adaptive, raw, levelMatch;
     std::array<juce::TextButton, 8> bandButtons;
-    std::vector<std::unique_ptr<toneui::Control>> controls, bandControls;
+    std::vector<std::unique_ptr<toneui::Control>> controls, bandControls, dynamicControls;
     std::unique_ptr<toneui::EqGraph> graph;
     std::unique_ptr<toneui::FxMonitorView> visual;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment, qualityAttachment;
+    std::unique_ptr<juce::ParameterAttachment> spatialShapeAttachment, spatialSlopeAttachment, spatialDynamicModeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enabledAttachment, adaptiveAttachment, rawAttachment, levelMatchAttachment;
     std::unique_ptr<ExpandedWindow> expanded;
 };

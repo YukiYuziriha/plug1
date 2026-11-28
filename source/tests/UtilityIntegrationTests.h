@@ -78,8 +78,8 @@ inline constexpr std::array<NodeType, 5> types{NodeType::gain, NodeType::stereo,
 inline void parameterContract() {
     auto p = std::make_unique<Processor>();
     require(creativeParameterCount == 68 && utilityParameterCount == 21 && utilityParameterStart == 1772
-        && parameterIds.size() == 3177 && ModulationBackend::maxTargets == 4096, "Expanded host capacity contract");
-    require(p->getParameters().size() == 3177, "Wrong utility host layout count");
+        && parameterIds.size() == 3897 && ModulationBackend::maxTargets == 4096, "Expanded host capacity contract");
+    require(p->getParameters().size() == 3897, "Wrong utility host layout count");
     for (size_t i = 0; i < parameterIds.size(); ++i)
         require(p->getParameters()[int(i)] == p->parameters.getParameter(parameterIds[i]), "Host layout/index mismatch");
     for (size_t slot = 1; slot <= 15; ++slot) for (size_t i = 0; i < utilityParameterCount; ++i) {

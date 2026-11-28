@@ -35,6 +35,8 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         std::array<std::array<float, 3>, 16> fxValues{};
         std::array<std::array<float, toneParametersPerSlot>, 15> toneValues{};
         std::array<float, spatialEqParameterCount> spatialEqValues{};
+        std::array<float, spatialEqSlopeParameterCount> spatialEqSlopeValues{};
+        std::array<float, spatialEqDynamicParameterCount> spatialEqDynamicValues{};
                 std::array<std::array<float, 2>, 15> waveValues{};
                         std::array<float, 15> qualityValues{}, levelMatchValues{};
         std::array<std::array<float, creativeParameterCount>, 15> creativeValues{};
@@ -1758,9 +1760,18 @@ private:
                 if (const auto* p = owner.parameters.getRawParameterValue(utilityParameterId(slot, field)))
                     result.utilityValues[slot - 1][field] = p->load();
         for (const auto& node : result.graph.nodes) if (node.type == NodeType::spatialEq) {
-            const auto first = spatialEqParameterIndex(size_t(routingFxSlot(node.id)), 0, 0);
+            const auto slot = size_t(routingFxSlot(node.id));
+            const auto first = spatialEqParameterIndex(slot, 0, 0);
             for (size_t field = 0; field < spatialEqParametersPerSlot; ++field)
                 result.spatialEqValues[first - spatialEqParameterStart + field] = owner.values[first + field]->load();
+            for (size_t band = 0; band < SpatialEqSettings::bandCount; ++band) {
+                const auto index = spatialEqSlopeParameterIndex(slot, band);
+                result.spatialEqSlopeValues[index - spatialEqSlopeParameterStart] = owner.values[index]->load();
+                for (size_t field = 0; field < spatialEqDynamicFieldsPerBand; ++field) {
+                    const auto dynamicIndex = spatialEqDynamicParameterIndex(slot, band, field);
+                    result.spatialEqDynamicValues[dynamicIndex - spatialEqDynamicParameterStart] = owner.values[dynamicIndex]->load();
+                }
+            }
         }
         return result;
     }
@@ -1877,6 +1888,14 @@ private:
                     const auto first = spatialEqParameterIndex(slot, 0, 0);
                     for (size_t field = 0; field < spatialEqParametersPerSlot; ++field)
                         setParameter(parameterIds[first + field], s.spatialEqValues[first - spatialEqParameterStart + field]);
+                    for (size_t band = 0; band < SpatialEqSettings::bandCount; ++band) {
+                        const auto index = spatialEqSlopeParameterIndex(slot, band);
+                        setParameter(parameterIds[index], s.spatialEqSlopeValues[index - spatialEqSlopeParameterStart]);
+                        for (size_t field = 0; field < spatialEqDynamicFieldsPerBand; ++field) {
+                            const auto dynamicIndex = spatialEqDynamicParameterIndex(slot, band, field);
+                            setParameter(parameterIds[dynamicIndex], s.spatialEqDynamicValues[dynamicIndex - spatialEqDynamicParameterStart]);
+                        }
+                    }
                 }
                 for (size_t field = 0; field < toneParametersPerSlot; ++field)
                     setParameter(parameterIds[toneParameterIndex(slot, field)], s.toneValues[slot - 1][field]);
