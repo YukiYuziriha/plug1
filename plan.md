@@ -66,6 +66,13 @@ An unreleased Spatial EQ test build is available on the research branch; it has 
 - [ ] For dynamics, learn slowly from representative active material, exclude closed-gate intervals, and preserve the intended envelope and attenuation rather than normalizing each gain change.
 - [ ] Verify match-off transparency, no gain chasing, explicit relearn, silence and tail handling, headroom, recall and legacy compatibility. Measure overhead; use bounded real-time work with no audio-thread allocation. Validate the full UI pass in all four skins before installation.
 
+### Master Gain Match
+
+- [ ] Add a **Gain Match** button by the plugin's **In / Out meters**, near **Reset / Copy / Paste**. Keep it separate from per-FX Volume Match and from Gain Rider: Gain Match sets one fixed final output trim for whole-plugin A/B, while Gain Rider changes gain over time.
+- [ ] Default to **Off**. First enable learns from active main input and the final processed signal before the match trim. Show **Learning → Matched** and the held trim in dB. Hold through silence, tails, and chain edits; never chase the output. If the audio is insufficient, do not guess a new trim.
+- [ ] Turn off to hear the unmatched output; turn back on to reuse the held trim. Provide explicit **Relearn** after chain changes. Apply the trim smoothly and keep the **Out** meter after it so it reflects the signal sent to the host.
+- [ ] Verify full-chain A/B, trim reuse, relearn, silence and tails, and no change to reported latency. Keep master Gain Match independent of per-FX match controls and Gain Rider.
+
 ## Adaptive DSP and latency
 
 - Stack and Routing share the same processing plan. An explicitly disabled module keeps its settings and wiring, but stops its DSP once bypass settles. Disconnected paths do not render. A simple chain does not pay for the vocal stretcher when no routed vocal processing needs it.
