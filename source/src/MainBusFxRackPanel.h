@@ -148,6 +148,7 @@ private:
         if (isCreativeEffect(type)) return CreativeEffectPanel::effectName(creativeKind(type));
         if (isUtilityEffect(type)) return UtilityEffectPanel::effectName(utilityKind(type));
         if (type == NodeType::chorale) return "Chorale";
+        if (type == NodeType::spatialEq) return "Spatial EQ";
         return type == NodeType::equalizer ? "EQ8" : "Waveshaper";
     }
     class Card final : public juce::Component {
@@ -253,7 +254,7 @@ private:
                         addAndMakeVisible(bodyViewport);
                         bodyViewport.setViewedComponent(&controls, false);
                         bodyViewport.setScrollBarsShown(true, false);
-                        if (model.type != NodeType::waveshaper)
+                        if (model.type != NodeType::waveshaper && model.type != NodeType::spatialEq)
                             addKnob(fxParameterId(size_t(slot), "Mix"), "Mix", "%", true);
                     }
                     fullPanel->setComponentID("mainBusFxFullPanel");
@@ -469,9 +470,9 @@ private:
         sync();
     }
     void timerCallback() override { sync(); }
-    inline static constexpr std::array<NodeType, 17> types{NodeType::chorale, NodeType::waveshaper,
+    inline static constexpr std::array<NodeType, 18> types{NodeType::chorale, NodeType::waveshaper,
         NodeType::bitcrusher, NodeType::compressor, NodeType::delay, NodeType::reverb, NodeType::granular, NodeType::vocalGlitch,
-        NodeType::equalizer, NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter, NodeType::convolution, NodeType::saturator, NodeType::spectralMorph};
+        NodeType::equalizer, NodeType::spatialEq, NodeType::gain, NodeType::stereo, NodeType::gate, NodeType::xpFilter, NodeType::synthFilter, NodeType::convolution, NodeType::saturator, NodeType::spectralMorph};
 
     modulationui::PanelStyle panelStyle;
     FluidBackground background;

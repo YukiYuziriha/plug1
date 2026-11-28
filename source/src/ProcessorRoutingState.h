@@ -7,7 +7,7 @@ namespace vocalstack::processorRouting {
 
 inline bool isEffect(NodeType type) noexcept {
     return type == NodeType::chorale || type == NodeType::waveshaper
-        || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
+        || type == NodeType::equalizer || type == NodeType::spatialEq || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
 }
 
 inline float bounded(float value, float low, float high, float fallback) noexcept {
@@ -80,6 +80,52 @@ inline std::array<float, 49> toneValues(const RoutingNode& node) noexcept {
     return values;
 }
 
+enum SpatialEqField : size_t { spatialOn, spatialShape, spatialFrequency, spatialGain, spatialQ, spatialDepth };
+struct SpatialEqParameterDescriptor {
+    const char* id;
+    const char* label;
+    const char* unit;
+    float min, max, initial;
+    bool discrete;
+};
+inline constexpr std::array spatialEqFields{
+    // The host exposes Depth in percent; DSP uses [0, 1].
+    SpatialEqParameterDescriptor{"On", "On", "", 0, 1, 0, true},
+    SpatialEqParameterDescriptor{"Shape", "Shape", "", 0, 2, 0, true},
+    SpatialEqParameterDescriptor{"Frequency", "Frequency", "Hz", 20, 20000, 1000, false},
+    SpatialEqParameterDescriptor{"Gain", "Gain", "dB", -30, 30, 0, false},
+    SpatialEqParameterDescriptor{"Q", "Q", "", .1f, 30, 1, false},
+    SpatialEqParameterDescriptor{"Depth", "Depth", "%", 0, 100, 0, false},
+};
+inline constexpr std::array spatialEqShapes{SpatialEqShape::Bell, SpatialEqShape::LowShelf, SpatialEqShape::HighShelf};
+inline const juce::StringArray spatialEqShapeNames{"Bell", "Low Shelf", "High Shelf"};
+
+using SpatialEqValues = std::array<float, spatialEqFields.size()>;
+inline SpatialEqValues spatialEqBandValues(const SpatialEqBandSettings& band) noexcept {
+    const auto shape = std::find(spatialEqShapes.begin(), spatialEqShapes.end(), band.shape);
+    SpatialEqValues values{band.active && band.enabled ? 1.f : 0.f,
+        shape == spatialEqShapes.end() ? 0.f : float(shape - spatialEqShapes.begin()),
+        band.frequency, band.gainDb, band.q, band.depth * 100.f};
+    for (size_t p = 0; p < values.size(); ++p) {
+        const auto& d = spatialEqFields[p];
+        values[p] = bounded(values[p], d.min, d.max, d.initial);
+    }
+    return values;
+}
+
+inline SpatialEqBandSettings spatialEqBandFromValues(const SpatialEqValues& v) noexcept {
+    // All eight slots exist; On changes enablement without removing the slot.
+    SpatialEqBandSettings band;
+    band.active = true;
+    band.enabled = v[spatialOn] >= .5f;
+    band.shape = spatialEqShapes[size_t(bounded(v[spatialShape], 0, float(spatialEqShapes.size() - 1), 0))];
+    band.frequency = v[spatialFrequency];
+    band.gainDb = v[spatialGain];
+    band.q = v[spatialQ];
+    band.depth = v[spatialDepth] * .01f;
+    return band;
+}
+
 inline juce::ValueTree encode(const Graph& graph, const char* type) {
     juce::ValueTree tree(type);
     for (const auto& n : graph.nodes) {
@@ -124,6 +170,17 @@ inline juce::ValueTree encode(const Graph& graph, const char* type) {
             eq.addChild(band, -1, nullptr);
         }
         node.addChild(eq, -1, nullptr);
+        if (n.type == NodeType::spatialEq) {
+            juce::ValueTree spatialEq("SpatialEq");
+            for (const auto& b : n.spatialEq.bands) {
+                juce::ValueTree band("Band");
+                const auto values = spatialEqBandValues(b);
+                for (size_t p = 0; p < values.size(); ++p)
+                    band.setProperty(spatialEqFields[p].id, values[p], nullptr);
+                spatialEq.addChild(band, -1, nullptr);
+            }
+            node.addChild(spatialEq, -1, nullptr);
+        }
         juce::ValueTree creative("Creative");
         for (size_t p = 0; p < creativeParameterCount; ++p)
             creative.setProperty(creativeParameters[p].id, n.creative.values[p], nullptr);
@@ -159,7 +216,7 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
             RoutingNode n;
             n.id = static_cast<std::uint32_t>(static_cast<juce::int64>(child.getProperty("id", 0)));
             const int type = child.getProperty("type", -1);
-            if (type < 0 || type > int(NodeType::wetOutput)) return false;
+            if (type < 0 || type > int(NodeType::spatialEq)) return false;
             n.type = static_cast<NodeType>(type);
             n.voiceSlot = child.getProperty("voiceSlot", 0);
             n.enabled = child.getProperty("enabled", true);
@@ -197,6 +254,21 @@ inline bool decode(const juce::ValueTree& tree, Graph& graph) {
                 band.gainDb = saved.getProperty("gainDb", band.gainDb);
                 band.q = saved.getProperty("q", band.q);
                 band.mode = saved.getProperty("mode", band.mode);
+            }
+            if (n.type == NodeType::spatialEq) {
+                const auto spatialEq = child.getChildWithName("SpatialEq");
+                if (spatialEq.getNumChildren() > int(n.spatialEq.bands.size())) return false;
+                for (int b = 0; b < spatialEq.getNumChildren(); ++b) {
+                    const auto saved = spatialEq.getChild(b);
+                    if (!saved.hasType("Band")) return false;
+                    SpatialEqValues values{};
+                    for (size_t p = 0; p < values.size(); ++p) {
+                        const auto& d = spatialEqFields[p];
+                        const auto v = bounded(float(saved.getProperty(d.id, d.initial)), d.min, d.max, d.initial);
+                        values[p] = d.discrete ? std::round(v) : v;
+                    }
+                    n.spatialEq.bands[size_t(b)] = spatialEqBandFromValues(values);
+                }
             }
             const auto creative = child.getChildWithName("Creative");
             for (size_t p = 0; p < creativeParameterCount; ++p) {

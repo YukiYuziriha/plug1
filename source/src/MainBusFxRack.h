@@ -7,7 +7,7 @@ namespace vocalstack::mainBusFx {
 
 inline bool eligible(NodeType type) noexcept {
     return type == NodeType::chorale || type == NodeType::waveshaper
-        || type == NodeType::equalizer || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
+        || type == NodeType::equalizer || type == NodeType::spatialEq || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
 }
 inline const RoutingNode* find(const Graph& graph, uint32_t id) {
     for (const auto& node : graph.nodes) if (node.id == id) return &node;

@@ -51,10 +51,12 @@ class ToneEffectPanel final : public juce::Component, private juce::Timer {
 public:
     ToneEffectPanel(Processor& processor, size_t fxSlot, NodeType nodeType)
         : owner(processor), slot(fxSlot), type(nodeType) {
-        setName(isWave() ? "Waveshaper inspector" : isEq() ? "EQ8 inspector" : "Band routing inspector");
+        setName(isWave() ? "Waveshaper inspector" : isEq() ? "EQ8 inspector"
+                    : isSpatialEq() ? "Spatial EQ inspector" : "Band routing inspector");
                 mode.setModulationOwner(owner); quality.setModulationOwner(owner);
                 bandOn.setModulationOwner(owner); adaptive.setModulationOwner(owner); raw.setModulationOwner(owner); levelMatch.setModulationOwner(owner);
-        heading.setText(isWave() ? "WAVESHAPER" : isEq() ? "EQ8" : "BAND ROUTING", juce::dontSendNotification);
+        heading.setText(isWave() ? "WAVESHAPER" : isEq() ? "EQ8" : isSpatialEq() ? "SPATIAL EQ" : "BAND ROUTING",
+                    juce::dontSendNotification);
         heading.setFont(juce::Font(pixelFontOptions(14.0f, juce::Font::bold)));
         heading.setInterceptsMouseClicks(false, false);
         content.addAndMakeVisible(heading);
@@ -66,6 +68,7 @@ public:
             hint.setText("Select an effect in automation slots 1-15.", juce::dontSendNotification);
         } else if (isWave()) setupWave();
         else if (isEq()) setupEq();
+        else if (isSpatialEq()) setupSpatialEq();
         else setupBands();
         contentViewport.setViewedComponent(&content, false);
         contentViewport.setScrollBarsShown(true, false);
@@ -91,6 +94,11 @@ public:
     // Outer card viewports can size us to this height (including their Mix strip
     // separately) to keep a single vertical scroll owner. Width excludes their bar.
     int preferredContentHeight(int width) const {
+        if (isSpatialEq()) {
+            const int inner = juce::jmax(1, width - 16);
+            const int columns = juce::jmax(1, (inner + knobGap) / (knobWidth + knobGap));
+            return (width < compactWidth ? 204 : 180) + ((4 + columns - 1) / columns) * (knobHeight + knobGap);
+        }
         if (width >= 620) {
             // Reserve the scrollbar before measuring so the breakpoint cannot oscillate.
             const int inner = juce::jmax(1, width - contentViewport.getScrollBarThickness() - 16);
@@ -171,7 +179,7 @@ private:
     // The textured track contains its name and editable value.
     static constexpr int mixHeight = 44;
     void layoutContent() {
-        const bool wide = getWidth() >= 620;
+        const bool wide = !isSpatialEq() && getWidth() >= 620;
         const bool compact = !wide && content.getWidth() < compactWidth;
         auto area = content.getLocalBounds().reduced(8);
         auto top = area.removeFromTop(23);
@@ -200,7 +208,14 @@ private:
             place(controls);
             area.removeFromTop(((index + columns - 1) / columns) * (knobHeight + knobGap));
         };
-        if (graph) {
+        if (isSpatialEq()) {
+            layoutBandChips(area, compact);
+            bandOn.setBounds(area.removeFromTop(24).withWidth(56));
+            area.removeFromTop(2);
+            mode.setBounds(area.removeFromTop(29));
+            area.removeFromTop(2);
+            knobGrid();
+        } else if (graph) {
             const int columns = juce::jmax(1, (area.getWidth() + knobGap) / (knobWidth + knobGap));
             const int gridHeight = ((int(bandControls.size() + controls.size()) + columns - 1) / columns)
                                    * (knobHeight + knobGap);
@@ -213,14 +228,7 @@ private:
                 graph->setBounds(area.removeFromTop(graphHeight));
                 area.removeFromTop(5);
             }
-            const int chipColumns = compact ? 4 : 8;
-            for (int row = 0; row < 8 / chipColumns; ++row) {
-                auto chips = area.removeFromTop(24);
-                for (int col = 0; col < chipColumns; ++col)
-                    bandButtons[size_t(row * chipColumns + col)].setBounds(
-                        chips.removeFromLeft(chips.getWidth() / (chipColumns - col)).reduced(1));
-            }
-            area.removeFromTop(4);
+            layoutBandChips(area, compact);
             auto actions = area.removeFromTop(24);
             bandOn.setBounds(actions.removeFromLeft(56));
             actions.removeFromLeft(2);
@@ -306,10 +314,19 @@ private:
     private:
         ToneEffectPanel* panel = nullptr; // owned by DocumentWindow
     };
-    // These values are the appended Routing.h contract; keeping this header
-    // independent of enum spellings permits parallel routing/backend work.
-    bool isWave() const { return type == static_cast<NodeType>(6); }
-    bool isEq() const { return type == static_cast<NodeType>(7); }
+    bool isWave() const { return type == NodeType::waveshaper; }
+    bool isEq() const { return type == NodeType::equalizer; }
+    bool isSpatialEq() const { return type == NodeType::spatialEq; }
+    void layoutBandChips(juce::Rectangle<int>& area, bool compact) {
+        const int columns = compact ? 4 : 8;
+        for (int row = 0; row < 8 / columns; ++row) {
+            auto chips = area.removeFromTop(24);
+            for (int col = 0; col < columns; ++col)
+                bandButtons[size_t(row * columns + col)].setBounds(
+                    chips.removeFromLeft(chips.getWidth() / (columns - col)).reduced(1));
+        }
+        area.removeFromTop(4);
+    }
     void addControl(const char* field, const char* title, const char* unit) {
         auto c = std::make_unique<toneui::Control>(owner, toneParameterId(slot, field), title, unit);
         content.addAndMakeVisible(*c);
@@ -400,20 +417,9 @@ private:
             expanded->toFront(false);
         };
         content.addAndMakeVisible(expand);
-        for (size_t b = 0; b < bandButtons.size(); ++b) {
-            auto& button = bandButtons[b];
-            button.setButtonText(juce::String(int(b + 1)));
-            button.setName("Select EQ band " + juce::String(int(b + 1)));
-            button.setTooltip("Select band " + juce::String(int(b + 1)) + "; selection does not alter audio");
-            button.onClick = [this, b] { selectBand(b); };
-            content.addAndMakeVisible(button);
-        }
+        setupBandChips();
         for (size_t m = 0; m < toneui::modeLabels.size(); ++m) mode.addItem(toneui::modeLabels[m], int(m + 1));
         mode.setName("Band filter mode");
-        bandOn.setButtonText("On");
-        bandOn.setClickingTogglesState(true);
-        bandOn.setTooltip("Enable this band, retaining its frequency, gain, Q and mode");
-        content.addAndMakeVisible(bandOn);
         remove.setButtonText("Remove");
         remove.setTooltip("Disable the selected band; its stable automation slot and values are retained");
         remove.onClick = [this] {
@@ -435,6 +441,27 @@ private:
             adaptiveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner.parameters, id, adaptive);
         else adaptive.setEnabled(false);
         hint.setText("Click: bell | drag ends: shelf / sides: cut\nBottom: notch | Alt-wheel: Q | FFT: right dBFS scale", juce::dontSendNotification);
+        selectBand(0);
+    }
+    void setupBandChips() {
+        for (size_t b = 0; b < bandButtons.size(); ++b) {
+            auto& button = bandButtons[b];
+            button.setButtonText(juce::String(int(b + 1)));
+            button.setName("Select EQ band " + juce::String(int(b + 1)));
+            button.setTooltip("Select band " + juce::String(int(b + 1)) + "; selection does not alter audio");
+            button.onClick = [this, b] { selectBand(b); };
+            content.addAndMakeVisible(button);
+        }
+        bandOn.setButtonText("On");
+        bandOn.setClickingTogglesState(true);
+        bandOn.setTooltip("Enable this band without resetting its controls");
+        content.addAndMakeVisible(bandOn);
+    }
+    void setupSpatialEq() {
+        setupBandChips();
+        mode.addItemList(processorRouting::spatialEqShapeNames, 1);
+        mode.setName("Spatial EQ band shape");
+        hint.setText("Depth is per band. At 0%, only the direct EQ is heard.", juce::dontSendNotification);
         selectBand(0);
     }
     void setupBands() {
@@ -459,8 +486,10 @@ private:
         modeAttachment.reset();
         enabledAttachment.reset();
         bandControls.clear();
-        attachMode(eqBandParameterId(slot, band, "Mode"));
-        const auto onId = eqBandParameterId(slot, band, "On");
+        attachMode(isSpatialEq() ? spatialEqBandParameterId(slot, band, processorRouting::spatialShape)
+                                 : eqBandParameterId(slot, band, "Mode"));
+        const auto onId = isSpatialEq() ? spatialEqBandParameterId(slot, band, processorRouting::spatialOn)
+                                       : eqBandParameterId(slot, band, "On");
         bandOn.setComponentID(onId);
         if (owner.parameters.getParameter(onId)) {
             bandOn.setEnabled(true);
@@ -469,22 +498,32 @@ private:
         const std::array<const char*, 3> fields{"Frequency", "Gain", "Q"};
         const std::array<const char*, 3> titles{"Frequency", "Gain", "Q"};
         const std::array<const char*, 3> units{"Hz", "dB", "Q"};
-        for (size_t i = 0; i < fields.size(); ++i) {
-            auto c = std::make_unique<toneui::Control>(owner, eqBandParameterId(slot, band, fields[i]), titles[i], units[i]);
+        const auto add = [&](const juce::String& id, const char* title, const char* unit) {
+            auto c = std::make_unique<toneui::Control>(owner, id, title, unit);
             content.addAndMakeVisible(*c);
             c->setNeon(neon);
             bandControls.push_back(std::move(c));
+        };
+        if (isSpatialEq()) {
+            for (size_t p = processorRouting::spatialFrequency; p <= processorRouting::spatialDepth; ++p) {
+                const auto& d = processorRouting::spatialEqFields[p];
+                add(spatialEqBandParameterId(slot, band, p), d.label, d.unit);
+            }
+        } else {
+            for (size_t i = 0; i < fields.size(); ++i) add(eqBandParameterId(slot, band, fields[i]), titles[i], units[i]);
+            graph->select(band);
         }
-        graph->select(band);
         updateBandButtons();
         detail::passiveControl(*this);
         resized();
     }
     void updateBandButtons() {
-        if (!isEq()) return;
+        if (!isEq() && !isSpatialEq()) return;
         for (size_t b = 0; b < bandButtons.size(); ++b) {
             auto& button = bandButtons[b];
-            const bool enabled = toneui::value(owner, eqBandParameterId(slot, b, "On")) >= 0.5f;
+            const auto id = isSpatialEq() ? spatialEqBandParameterId(slot, b, processorRouting::spatialOn)
+                                          : eqBandParameterId(slot, b, "On");
+            const bool enabled = toneui::value(owner, id) >= 0.5f;
             const auto colour = toneui::bandColour(b, *this, neon);
             button.setToggleState(b == selectedBand, juce::dontSendNotification);
             button.setColour(juce::TextButton::buttonColourId, colour.withAlpha(enabled ? 0.30f : 0.08f));
@@ -496,8 +535,8 @@ private:
             button.setColour(juce::TextButton::textColourOnId, device ? juce::Colour(0xffeef2ee)
                 : enabled ? p.background : p.text);
         }
-        const auto bandMode = int(std::lround(toneui::value(owner, eqBandParameterId(slot, selectedBand, "Mode"))));
-        if (bandControls.size() == 3) {
+        if (isEq() && bandControls.size() == 3) {
+            const auto bandMode = int(std::lround(toneui::value(owner, eqBandParameterId(slot, selectedBand, "Mode"))));
             bandControls[1]->setEnabled(bandMode <= 4);
             bandControls[2]->setEnabled(bandMode != 5 && bandMode != 9);
         }
@@ -524,6 +563,7 @@ private:
     void timerCallback() override {
         if (!isShowing()) return;
         if (graph) { graph->refresh(); updateBandButtons(); }
+        else if (isSpatialEq()) updateBandButtons();
         else if (!isWave() && slot >= 1 && slot <= 15) updateBands();
         if (isWave()) {
             updateWaveQuality();

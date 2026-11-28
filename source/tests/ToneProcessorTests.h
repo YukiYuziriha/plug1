@@ -2,10 +2,12 @@
 
 #include "PluginProcessor.h"
 #include "ProcessorRoutingState.h"
+#include <array>
 #include <cmath>
 #include <memory>
 #include <stdexcept>
 #include <unordered_set>
+#include <vector>
 
 // MAIN can call run() from the editor test runner without changing its existing
 // UI regression header. These tests do not construct an editor or reconfigure DSP
@@ -41,7 +43,7 @@ inline Graph graph(NodeType type) {
 inline void parameterContract() {
     auto processor = std::make_unique<Processor>();
     auto& p = *processor;
-    require(p.getParameters().size() == 2457 && parameterIds.size() == 2457 && creativeParameterStart == 1007
+    require(p.getParameters().size() == 3177 && parameterIds.size() == 3177 && creativeParameterStart == 1007
         && legacyCreativeParameterCount == 48 && creativeParameterCount == 68
         && utilityParameterStart == 1772 && utilityParameterCount == 21,
             "Incorrect host count or appended parameter layout");
@@ -257,6 +259,188 @@ inline void audioBridge() {
             require(std::isfinite(renderTone(p, position)), "Crossed cutoffs broke DSP");
         }
         p.releaseResources();
+    }
+}
+
+inline void spatialEq() {
+    using namespace processorRouting;
+    static_assert(int(NodeType::equalizer) == 7 && int(NodeType::spatialEq) == 28);
+    static_assert(spatialEqParameterStart == 2457 && spatialEqParameterCount == 720);
+    auto owner = std::make_unique<Processor>();
+    auto& p = *owner;
+    auto g = graph(NodeType::spatialEq);
+    auto& band = g.nodes[1].spatialEq.bands.back();
+    band = {true, true, SpatialEqShape::Bell, 1000.f, 12.f, 1.f, .25f};
+    const auto id = [](size_t b, SpatialEqField field) { return spatialEqBandParameterId(1, b, field); };
+    for (size_t b = 0; b < 8; ++b) {
+        const auto* depth = p.parameters.getParameter(id(b, spatialDepth));
+        require(depth && depth->isAutomatable(), "Missing Spatial EQ Depth automation");
+        near(read(p, id(b, spatialDepth)), 0, "Spatial EQ Depth default must be zero");
+    }
+    juce::String error;
+    write(p, eqBandParameterId(1, 7, "Gain"), -9.f);
+    require(p.setRoutingGraph(g, error), error);
+    near(read(p, id(7, spatialDepth)), 25, "Spatial EQ creation did not seed Depth");
+    near(read(p, eqBandParameterId(1, 7, "Gain")), -9, "Spatial EQ overwrote EQ8 parameters");
+    for (size_t b = 0; b < 8; ++b) write(p, id(b, spatialDepth), 10.f * float(b + 1));
+    auto cableOnly = g;
+    cableOnly.links.clear();
+    require(p.setRoutingGraph(cableOnly, error), error);
+    require(p.setRoutingGraph(g, error), error);
+    const auto settings = p.settings().fxSettings[1].spatialEq;
+    for (size_t b = 0; b < settings.bands.size(); ++b)
+        near(settings.bands[b].depth, .1f * float(b + 1), "Depth did not reach the correct DSP band");
+    auto copy = std::make_unique<Processor>();
+    require(copy->pasteSettings(p.settingsText()), "Spatial EQ state round-trip failed");
+    require(copy->getRoutingGraph().nodes[1].type == NodeType::spatialEq, "Spatial EQ type not recalled");
+    for (size_t b = 0; b < 8; ++b)
+        near(read(*copy, id(b, spatialDepth)), 10.f * float(b + 1), "Spatial EQ state lost Depth");
+    auto partial = state(p);
+    partial.removeChild(partial.getChildWithProperty("id", id(7, spatialDepth)), nullptr);
+    require(copy->pasteSettings(partial.toXmlString()), "Spatial EQ graph fallback failed");
+    near(read(*copy, id(7, spatialDepth)), 25, "Missing Depth did not use graph-authored value");
+
+    copy.reset();
+    write(p, "levelOn", 0);
+    write(p, "doubleOn", 0);
+    write(p, "formantOn", 0);
+    write(p, id(7, spatialDepth), 0);
+    p.prepareToPlay(48000, 256);
+    const auto renderSide = [&](int& position) {
+        juce::AudioBuffer<float> buffer(2, 256);
+        juce::MidiBuffer midi;
+        double peak = 0;
+        for (int block = 0; block < 256; ++block) {
+            const int frames = 1 + (block * 53) % 256;
+            buffer.setSize(2, frames, false, false, true);
+            for (int i = 0; i < frames; ++i, ++position) {
+                const float sample = float(.05 * std::sin(6.283185307179586 * 1000 * position / 48000));
+                buffer.setSample(0, i, sample);
+                buffer.setSample(1, i, sample);
+            }
+            p.processBlock(buffer, midi);
+            for (int i = 0; i < frames; ++i) {
+                const auto l = buffer.getSample(0, i), r = buffer.getSample(1, i);
+                require(std::isfinite(l) && std::isfinite(r), "Spatial EQ rendered non-finite audio");
+                if (block >= 216) peak = std::max(peak, double(std::abs(l - r)));
+            }
+        }
+        return peak;
+    };
+    int position = 0;
+    require(renderSide(position) < 1.e-7, "Depth 0 colored the stereo difference on dual mono");
+    write(p, id(7, spatialDepth), 100);
+    require(renderSide(position) > 1.e-5, "Automating Depth did not generate stereo from dual mono");
+    require(p.getLatencySamples() == 0 && !p.routingRestartPending(), "Spatial EQ changed latency or requested reactivation");
+    write(p, fxParameterId(1, "On"), 0);
+    require(renderSide(position) < 1.e-7, "Settled Spatial EQ bypass leaked the reflection return");
+    write(p, fxParameterId(1, "On"), 1);
+    require(renderSide(position) > 1.e-5, "Spatial EQ did not resume after bypass");
+    p.releaseResources();
+
+    auto legacy = std::make_unique<Processor>();
+    auto eq8 = graph(NodeType::equalizer);
+    eq8.nodes[1].eq.bands[7] = {true, 1000, -9, .707f, 13};
+    require(legacy->setRoutingGraph(eq8, error), error);
+    auto legacyState = state(*legacy);
+    for (size_t i = spatialEqParameterStart; i < parameterIds.size(); ++i)
+        legacyState.removeChild(legacyState.getChildWithProperty("id", parameterIds[i]), nullptr);
+    require(legacy->pasteSettings(legacyState.toXmlString()), "Legacy EQ8 state without Spatial EQ controls was rejected");
+    const auto recalled = legacy->getRoutingGraph().nodes[1];
+    require(recalled.type == NodeType::equalizer && recalled.eq.bands[7].mode == 13, "Recall migrated or modified EQ8");
+    near(read(*legacy, eqBandParameterId(1, 7, "Gain")), -9, "Legacy EQ8 gain changed on recall");
+    near(read(*legacy, id(7, spatialDepth)), 0, "Legacy state did not default Spatial EQ Depth to zero");
+}
+
+inline void spatialEqSignedAudio() {
+    using namespace processorRouting;
+    constexpr double rate = 48000;
+    constexpr int firstCrossing = 4093, secondCrossing = 8191, totalFrames = 12289;
+    constexpr std::array<float, 3> depths{0, 50, 100};
+    constexpr std::array<const char*, 3> shapeNames{"Bell", "Low Shelf", "High Shelf"};
+    constexpr std::array shapes{SpatialEqShape::Bell, SpatialEqShape::LowShelf, SpatialEqShape::HighShelf};
+    constexpr std::array<float, 3> frequencies{900, 360, 4100};
+    constexpr size_t cutSlot = 6, boostSlot = 1;
+    auto owner = std::make_unique<Processor>();
+    auto& p = *owner;
+    juce::String error;
+    require(p.setRoutingGraph(graph(NodeType::spatialEq), error), error);
+    for (const auto* id : {"levelOn", "doubleOn", "formantOn", "bypass", "outputGain"}) write(p, id, 0);
+    write(p, "globalMix", 100);
+    const auto setBand = [&](size_t band, int shape, float hz, float gain, float q, float depth) {
+        const std::array<float, 6> raw{1, float(shape), hz, gain, q, depth};
+        for (size_t field = 0; field < raw.size(); ++field)
+            write(p, spatialEqBandParameterId(1, band, field), raw[field]);
+    };
+    const auto render = [&](size_t shape, float depth, bool crossing) {
+        const float hz = frequencies[shape];
+        // Construct the reference from the fixture, not from the processor's mapped settings.
+        SpatialEqSettings target;
+        target.bands[cutSlot] = {true, true, shapes[shape], hz, -9, 1.2f, depth * .01f};
+        setBand(cutSlot, int(shape), hz, -9, 1.2f, depth);
+        if (crossing) {
+            target.bands[boostSlot] = {true, true, SpatialEqShape::Bell, hz * 1.1f, 7, .8f, .8f};
+            setBand(boostSlot, 0, hz * 1.1f, 7, .8f, 80);
+        } else write(p, spatialEqBandParameterId(1, boostSlot, spatialOn), 0);
+        p.prepareToPlay(rate, 256);
+        require(p.getLatencySamples() == 0, "Spatial EQ parity needs a zero-latency graph");
+        SpatialEq direct;
+        direct.setSettings(target);
+        direct.prepare(rate);
+        juce::AudioBuffer<float> inOut(2, 256);
+        juce::MidiBuffer midi;
+        std::array<float, 256> referenceLeft{}, referenceRight{};
+        std::vector<float> rendered;
+        rendered.reserve(2 * totalFrames);
+        float peakError = 0;
+        for (int position = 0, block = 0; position < totalFrames; ++block) {
+            if (crossing && (position == firstCrossing || position == secondCrossing)) {
+                const float gain = position == firstCrossing ? 9.f : -9.f;
+                write(p, spatialEqBandParameterId(1, cutSlot, spatialGain), gain);
+                target.bands[cutSlot].gainDb = gain;
+                direct.setSettings(target);
+            }
+            int end = totalFrames;
+            if (crossing && position < secondCrossing)
+                end = position < firstCrossing ? firstCrossing : secondCrossing;
+            const int frames = std::min(end - position, 1 + (31 + block * 53) % 256);
+            inOut.setSize(2, frames, false, false, true);
+            for (int i = 0; i < frames; ++i) {
+                const double t = (position + i) / rate;
+                const double phase = 6.283185307179586 * hz * t;
+                const auto left = float(.036 * std::sin(phase * .63) + .024 * std::cos(phase * 1.13));
+                const auto right = float(.031 * std::cos(phase * .82) - .021 * std::sin(phase * 1.37));
+                inOut.setSample(0, i, referenceLeft[size_t(i)] = left);
+                inOut.setSample(1, i, referenceRight[size_t(i)] = right);
+            }
+            direct.process(referenceLeft.data(), referenceRight.data(), size_t(frames));
+            p.processBlock(inOut, midi);
+            for (int i = 0; i < frames; ++i) {
+                const auto left = inOut.getSample(0, i), right = inOut.getSample(1, i);
+                require(std::isfinite(left) && std::isfinite(right), "Signed Spatial EQ produced non-finite audio");
+                peakError = std::max({peakError, std::abs(left - referenceLeft[size_t(i)]), std::abs(right - referenceRight[size_t(i)])});
+                rendered.push_back(left);
+                rendered.push_back(right);
+            }
+            position += frames;
+        }
+        p.releaseResources();
+        require(peakError < 2.e-6f, juce::String(shapeNames[shape])
+            + (crossing ? " crossing with boost" : " cut at Depth " + juce::String(depth))
+            + " differs from direct SpatialEq; peak error " + juce::String(peakError, 9));
+        return rendered;
+    };
+    const auto distance = [](const auto& a, const auto& b) {
+        float peak = 0;
+        for (size_t i = 0; i < a.size(); ++i) peak = std::max(peak, std::abs(a[i] - b[i]));
+        return peak;
+    };
+    for (size_t shape = 0; shape < shapes.size(); ++shape) {
+        std::array<std::vector<float>, depths.size()> cuts;
+        for (size_t depth = 0; depth < depths.size(); ++depth) cuts[depth] = render(shape, depths[depth], false);
+        require(distance(cuts[0], cuts[1]) > 1.e-4f && distance(cuts[1], cuts[2]) > 1.e-4f,
+            juce::String(shapeNames[shape]) + " cut fixture did not distinguish 0%, 50%, and 100% Depth");
+        render(shape, 100, true);
     }
 }
 

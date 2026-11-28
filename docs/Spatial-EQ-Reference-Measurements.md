@@ -240,4 +240,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1 python -B tools/Test-Spatial-EQ-Voice.py Harmonica_sings_Tourdion.flac --seconds 40 --ab
 ```
 
-**Remaining scope:** negative shelves and other shapes/modes, automated shape or gain-sign changes, VST3 in-block parameter delivery, human listening, and realtime integration/benchmarks. No HEAVEN product or UI changes have been made and no reference audio or decompiler output is tracked.
+### Negative shelves and C++ test build
+
+[`Test-Spatial-EQ-Negative.py`](../tools/Test-Spatial-EQ-Negative.py) verifies negative Bells and both shelves plus live gain-sign crossings. The trace separates cut and boost amount envelopes from the signed direct coefficients. Crossing zero keeps filter and delay histories; the wet cut has a separate state and uses nonpositive working gain. The HEAVEN processor tests cover Depth 0/50/100% and crossings in both directions with an overlapping boost.
+
+[`Test-Spatial-EQ-Cpp.py`](../tools/Test-Spatial-EQ-Cpp.py) ran 38 C++/Python parity fixtures at 44.1, 48, and 96 kHz. Worst peak errors were `9.96e-8` FS full output and `6.74e-8` FS Depth delta, with sample-identical irregular splits per fixture. [`Compare-Spatial-EQ-Cpp-Reference.py`](../tools/Compare-Spatial-EQ-Cpp-Reference.py) compares the standalone C++ engine directly against installed 0.7.0. On mono speech and native stereo choir at 48 kHz, the worst pooled stereo residuals were **−106.99 dBr full / −96.13 dBr Depth delta** on static renders and **−104.42 / −99.07 dBr** on gain-crossing renders. These are whole excerpts plus tail at original alignment and levels; the first 100 ms after the gain write independently scored **−104.13 / −99.65 dBr**. Here dBr measures RMS difference relative to the RMS of the reference waveform, not a perceptual match percentage.
+
+The Release test build uses the new eight-band Spatial EQ node without changing legacy EQ8. The native harness verifies impulse onset with no added latency and observes no C++ `new` calls during the test after prepare. At 48 kHz and 256 stereo frames, median steady-state standalone cost was about 7/31/223 µs per block for zero/one/eight active Depth bands. That is approximately 0.13/0.57/4.19% of the block deadline, not total HEAVEN or machine-wide CPU. CLAP and VST3 smoke tests and focused offscreen editor/processor Spatial EQ tests passed.
+
+**Remaining scope:** automated shape changes, additional shapes/channel modes and spatial controls, VST3 in-block parameter delivery, and human listening. The research build has not been installed or released. No reference audio or decompiler output is tracked.

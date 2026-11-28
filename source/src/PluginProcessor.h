@@ -7,6 +7,7 @@
 #include "VoiceBridge.h"
 #include "FxMonitor.h"
 #include "Modulation.h"
+#include "ProcessorRoutingState.h"
 #include <map>
 #include <mutex>
 #include <string_view>
@@ -235,8 +236,25 @@ inline constexpr std::array<const char*, 9> sidechainParameterIds{
     "sidechainOn", "sidechainGain", "sidechainPan", "sidechainDelay", "sidechainDetune",
     "sidechainFormant", "sidechainDepth", "sidechainRate", "sidechainPitch"
 };
+inline constexpr size_t spatialEqParameterStart = sidechainParameterStart + sidechainParameterIds.size();
+inline constexpr size_t spatialEqFieldsPerBand = processorRouting::spatialEqFields.size();
+inline constexpr size_t spatialEqParametersPerSlot = SpatialEqSettings::bandCount * spatialEqFieldsPerBand;
+inline constexpr size_t spatialEqParameterCount = 15 * spatialEqParametersPerSlot;
+static_assert(spatialEqParameterStart == 2457);
+inline constexpr size_t spatialEqParameterIndex(size_t slot, size_t band, size_t field) noexcept {
+    return spatialEqParameterStart + (slot - 1) * spatialEqParametersPerSlot + band * spatialEqFieldsPerBand + field;
+}
+inline const auto spatialEqParameterIdStorage = [] {
+    std::array<std::string, spatialEqParameterCount> ids;
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t band = 0; band < SpatialEqSettings::bandCount; ++band)
+            for (size_t p = 0; p < spatialEqFieldsPerBand; ++p)
+                ids[spatialEqParameterIndex(slot, band, p) - spatialEqParameterStart] = "fx" + std::to_string(slot)
+                    + "SpatialEqBand" + std::to_string(band + 1) + processorRouting::spatialEqFields[p].id;
+    return ids;
+}();
 inline const auto parameterIds = [] {
-    std::array<const char*, sidechainParameterStart + sidechainParameterIds.size()> ids{};
+    std::array<const char*, spatialEqParameterStart + spatialEqParameterCount> ids{};
         static_assert(utilityParameterStart + 15 * utilityParameterCount == newCreativeParameterStart);
     for (size_t i = 0; i < legacyParameterIds.size(); ++i) ids[i] = legacyParameterIds[i];
     for (size_t i = 0; i < toneParameterIdStorage.size(); ++i)
@@ -262,11 +280,16 @@ inline const auto parameterIds = [] {
     for (size_t i = 0; i < stereoMonoIdStorage.size(); ++i) ids[stereoMonoParameterStart + i] = stereoMonoIdStorage[i].c_str();
     ids[sidechainBlendParameterIndex] = "sidechainBlend";
     for (size_t i = 0; i < sidechainParameterIds.size(); ++i) ids[sidechainParameterStart + i] = sidechainParameterIds[i];
+    for (size_t i = 0; i < spatialEqParameterCount; ++i) ids[spatialEqParameterStart + i] = spatialEqParameterIdStorage[i].c_str();
     return ids;
 }();
 static_assert(parameterIds.size() <= ModulationBackend::maxTargets);
 juce::String toneParameterId(size_t slot, const char* field);
 juce::String eqBandParameterId(size_t slot, size_t band, const char* field);
+inline juce::String spatialEqBandParameterId(size_t slot, size_t band, size_t field) {
+    return slot > 0 && slot < 16 && band < SpatialEqSettings::bandCount && field < spatialEqFieldsPerBand
+        ? juce::String(parameterIds[spatialEqParameterIndex(slot, band, field)]) : juce::String();
+}
 
 // All slots are zero-based. Voice fields: On, Gain, Pan, Delay, Detune,
 // Formant, Depth, Rate. FX slot 0 is legacy node 12; 1..15 are nodes 100..114.

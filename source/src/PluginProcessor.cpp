@@ -339,6 +339,17 @@ State::ParameterLayout Processor::makeParameters() {
         }
     percent(int(sidechainBlendParameterIndex), "Sidechain Blend", 0.0f, 2);
     addVoiceCard(sidechainParameterIds, "Sidechain", false, 3);
+    for (size_t slot = 1; slot < 16; ++slot)
+        for (size_t band = 0; band < SpatialEqSettings::bandCount; ++band)
+            for (size_t p = 0; p < spatialEqFieldsPerBand; ++p) {
+                const auto& d = processorRouting::spatialEqFields[p];
+                const auto id = spatialEqBandParameterId(slot, band, p);
+                const auto name = "FX " + juce::String(int(slot)) + " Spatial EQ Band " + juce::String(int(band + 1)) + " " + d.label;
+                if (p == processorRouting::spatialShape)
+                    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{id, 1}, name,
+                        processorRouting::spatialEqShapeNames, int(d.initial)));
+                else appendDescriptor(id, name, d);
+            }
     return layout;
 }
 
@@ -379,6 +390,12 @@ Settings Processor::settingsFromValues(const std::array<float, parameterIds.size
         processorRouting::applyToneSettings(result.fxSettings[slot], [&](size_t field) {
             return value(toneParameterIndex(slot, field));
         });
+        auto& spatialBands = result.fxSettings[slot].spatialEq.bands;
+        for (size_t band = 0; band < spatialBands.size(); ++band) {
+            processorRouting::SpatialEqValues v{};
+            for (size_t p = 0; p < v.size(); ++p) v[p] = value(spatialEqParameterIndex(slot, band, p));
+            spatialBands[band] = processorRouting::spatialEqBandFromValues(v);
+        }
         std::array<float, spectralMorphParameterCount> spectralValues{};
         for (size_t p = 0; p < spectralValues.size(); ++p) spectralValues[p] = value(spectralMorphParameterIndex(slot, p));
         result.fxSettings[slot].spectralMorph = spectralMorphFromValues(spectralValues);
@@ -911,6 +928,15 @@ bool Processor::restoreState(const juce::XmlElement& xml) {
             if (i == sidechainBlendParameterIndex)
                 for (const auto& node : active.nodes)
                     if (node.type == NodeType::sidechainBlend) initial = node.mix * 100;
+            if (i >= spatialEqParameterStart) {
+                const auto offset = i - spatialEqParameterStart;
+                const auto slot = 1 + offset / spatialEqParametersPerSlot;
+                const auto band = (offset % spatialEqParametersPerSlot) / spatialEqFieldsPerBand;
+                const auto field = offset % spatialEqFieldsPerBand;
+                for (const auto& node : active.nodes)
+                    if (node.type == NodeType::spatialEq && routingFxSlot(node.id) == int(slot))
+                        initial = processorRouting::spatialEqBandValues(node.spatialEq.bands[band])[field];
+            }
             initial = parameter->convertFrom0to1(parameter->convertTo0to1(initial));
             missing.setProperty("value", initial, nullptr);
             restored.addChild(missing, -1, nullptr);
@@ -1413,7 +1439,17 @@ bool Processor::setRoutingGraphImpl(const Graph& graph, juce::String& error, con
                         if (old == previous.nodes.end() || node.utility.values[p] != old->utility.values[p])
                             setParameterValue(parameterIds[utilityParameterStart + (slot - 1) * utilityParameterCount + p], node.utility.values[p]);
                 }
-                if (slot > 0 && node.type != NodeType::chorale && node.type != NodeType::spectralMorph && !isCreativeEffect(node.type) && !isUtilityEffect(node.type)) {
+                if (slot > 0 && node.type == NodeType::spatialEq) {
+                    for (size_t band = 0; band < node.spatialEq.bands.size(); ++band) {
+                        const auto next = processorRouting::spatialEqBandValues(node.spatialEq.bands[band]);
+                        const auto before = old == previous.nodes.end() ? next : processorRouting::spatialEqBandValues(old->spatialEq.bands[band]);
+                        for (size_t p = 0; p < next.size(); ++p)
+                            if (old == previous.nodes.end() || next[p] != before[p])
+                                setParameterValue(parameterIds[spatialEqParameterIndex(slot, band, p)], next[p]);
+                    }
+                }
+                if (slot > 0 && node.type != NodeType::chorale && node.type != NodeType::spectralMorph
+                    && node.type != NodeType::spatialEq && !isCreativeEffect(node.type) && !isUtilityEffect(node.type)) {
                     const auto next = processorToneValues(node);
                     const auto before = old == previous.nodes.end() ? next : processorToneValues(*old);
                     if (node.type == NodeType::waveshaper && (old == previous.nodes.end() || node.waveshaper.shape != old->waveshaper.shape))
@@ -1577,6 +1613,7 @@ bool Processor::setModulationState(const ModulationState& state, juce::String& e
         for (size_t i = 0; i < plan.modulatorCount; ++i) if (plan.modulators[i].id == a.modulatorId) source = i;
         for (size_t i = 0; i < parameterIds.size(); ++i) if (a.targetParameterId == parameterIds[i]) target = i;
         if (source == plan.modulatorCount || target == parameterIds.size()) return fail("Unknown modulation source or parameter ID");
+        if (target >= spatialEqParameterStart) return fail("Spatial EQ controls are host automation only, not modulation targets");
         if (target >= sidechainBlendParameterIndex) return fail("Sidechain controls are host automation only, not modulation targets");
         if (target >= vocalGlitchParameterStart) return fail("Vocal Glitch controls are host automation only, not modulation targets");
         if (target >= stereoMonoParameterStart) return fail("Mono Audition is host automation only, not a continuous modulation target");

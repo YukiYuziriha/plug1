@@ -34,6 +34,7 @@ class RoutingPanel final : public juce::Component, private juce::Timer {
         juce::ValueTree layout;
         std::array<std::array<float, 3>, 16> fxValues{};
         std::array<std::array<float, toneParametersPerSlot>, 15> toneValues{};
+        std::array<float, spatialEqParameterCount> spatialEqValues{};
                 std::array<std::array<float, 2>, 15> waveValues{};
                         std::array<float, 15> qualityValues{}, levelMatchValues{};
         std::array<std::array<float, creativeParameterCount>, 15> creativeValues{};
@@ -778,6 +779,7 @@ private:
         case NodeType::splitter: return "Splitter";
         case NodeType::waveshaper: return "WAVESHAPER " + juce::String(routingFxSlot(n.id));
         case NodeType::equalizer: return "EQ8 " + juce::String(routingFxSlot(n.id));
+        case NodeType::spatialEq: return "Spatial EQ " + juce::String(routingFxSlot(n.id));
         case NodeType::crossover: return "MULTIBAND " + juce::String(routingFxSlot(n.id));
         case NodeType::gain:
         case NodeType::stereo:
@@ -799,7 +801,7 @@ private:
     }
     static bool isEffect(NodeType type) {
         return type == NodeType::chorale || type == NodeType::waveshaper
-            || type == NodeType::equalizer || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
+            || type == NodeType::equalizer || type == NodeType::spatialEq || type == NodeType::crossover || isCreativeEffect(type) || isUtilityEffect(type) || type == NodeType::spectralMorph;
     }
     static bool canOwnWetPocket(const RoutingNode& n) {
         return !n.wetOwner && routingSupportsWetPocket(n.type);
@@ -1659,6 +1661,7 @@ private:
             case NodeType::chorale:
             case NodeType::waveshaper:
             case NodeType::equalizer:
+            case NodeType::spatialEq:
             case NodeType::crossover:
             case NodeType::delay:
             case NodeType::reverb:
@@ -1754,6 +1757,11 @@ private:
             for (size_t field = 0; field < utilityParameterCount; ++field)
                 if (const auto* p = owner.parameters.getRawParameterValue(utilityParameterId(slot, field)))
                     result.utilityValues[slot - 1][field] = p->load();
+        for (const auto& node : result.graph.nodes) if (node.type == NodeType::spatialEq) {
+            const auto first = spatialEqParameterIndex(size_t(routingFxSlot(node.id)), 0, 0);
+            for (size_t field = 0; field < spatialEqParametersPerSlot; ++field)
+                result.spatialEqValues[first - spatialEqParameterStart + field] = owner.values[first + field]->load();
+        }
         return result;
     }
     void limitHistory() { if (undoStates.size() > 80) undoStates.erase(undoStates.begin()); }
@@ -1865,6 +1873,11 @@ private:
                                                 setParameter(utilityParameterId(slot, field), s.utilityValues[slot - 1][field]);
             }
             if (slot > 0 && lifecycleChange) {
+                if (after && after->type == NodeType::spatialEq) {
+                    const auto first = spatialEqParameterIndex(slot, 0, 0);
+                    for (size_t field = 0; field < spatialEqParametersPerSlot; ++field)
+                        setParameter(parameterIds[first + field], s.spatialEqValues[first - spatialEqParameterStart + field]);
+                }
                 for (size_t field = 0; field < toneParametersPerSlot; ++field)
                     setParameter(parameterIds[toneParameterIndex(slot, field)], s.toneValues[slot - 1][field]);
                 for (size_t field = 0; field < 2; ++field)
@@ -2003,6 +2016,7 @@ private:
         {1, NodeType::chorale, "Chorale"},
         {4, NodeType::waveshaper, "Waveshaper"},
         {5, NodeType::equalizer, "EQ8"},
+        {65, NodeType::spatialEq, "Spatial EQ"},
         {6, NodeType::crossover, "Multiband | 2 / 3 bands"},
         {50, NodeType::delay, "Delay | stereo / tempo sync"},
         {51, NodeType::reverb, "Reverb | space / ducking"},

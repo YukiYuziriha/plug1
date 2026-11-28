@@ -788,4 +788,45 @@ inline void run() {
     }
     std::cout << "Tone UI tests passed (both skins; graph gestures, calibrated FFT, static curves, live monitors, source pins and history).\n";
 }
+
+inline void spatialEq() {
+    auto owner = std::make_unique<Processor>();
+    for (bool neon : {false, true}) {
+        ToneEffectPanel panel(*owner, 1, NodeType::spatialEq);
+        panel.setNeon(neon);
+        auto* shape = find<juce::ComboBox>(panel, [](auto& c) { return c.getName() == "Spatial EQ band shape"; });
+        require(shape && shape->getNumItems() == 3 && shape->getItemText(0) == "Bell"
+            && shape->getItemText(1) == "Low Shelf" && shape->getItemText(2) == "High Shelf",
+            "Spatial EQ shape choices do not match the supported DSP shapes");
+        for (int width : {260, 400, 720}) {
+            panel.setSize(width, panel.preferredContentHeight(width));
+            for (size_t band = 0; band < 8; ++band) {
+                const auto name = "Select EQ band " + juce::String(int(band + 1));
+                auto* button = find<juce::TextButton>(panel, [&](auto& b) { return b.getName() == name; });
+                require(button && button->onClick && !button->getBounds().isEmpty(), "Missing Spatial EQ band selector");
+                button->onClick();
+                const auto id = spatialEqBandParameterId(1, band, processorRouting::spatialDepth);
+                auto& depth = slider(panel, id);
+                require(!depth.getBounds().isEmpty() && !depth.getWantsKeyboardFocus(), "Spatial EQ Depth layout/focus");
+                depth.setValue(12.5 * double(band + 1), juce::sendNotificationSync);
+                near(read(*owner, id), 12.5f * float(band + 1), "Depth control is bound to the wrong band");
+            }
+        }
+        require(!find<toneui::EqGraph>(panel, [](auto&) { return true; }), "Spatial EQ showed the legacy response plot");
+    }
+    auto routing = std::make_unique<RoutingPanel>(*owner);
+    const auto initial = owner->getRoutingGraph();
+    auto added = initial;
+    added.nodes.push_back({100, NodeType::spatialEq});
+    juce::String error;
+    require(routing->commitExternalGraphEdit(added, error), error);
+    const auto depth = spatialEqBandParameterId(1, 7, processorRouting::spatialDepth);
+    write(*owner, depth, 73);
+    require(routing->commitExternalGraphEdit(initial, error), error);
+    auto* undo = find<juce::TextButton>(*routing, [](auto& b) { return b.getButtonText() == "Undo"; });
+    require(undo && undo->onClick, "Missing Routing undo");
+    undo->onClick();
+    near(read(*owner, depth), 73, "Routing undo did not restore the deleted Spatial EQ's Depth");
+    require(owner->getRoutingGraph().nodes.size() == added.nodes.size(), "Routing undo did not restore Spatial EQ");
+}
 } // namespace vocalstack::toneUiTests

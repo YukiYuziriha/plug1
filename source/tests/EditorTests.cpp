@@ -86,7 +86,7 @@ void advancedParameterContract() {
     Processor& owner = *ownerStorage;
     const std::array<const char*, 10> originalNames{"Leveler", "Mix", "Human", "Width", "Formant",
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"};
-    expect(owner.getParameters().size() == 2457, "Expected 2447 legacy parameters, Sidechain Blend, and nine Sidechain card parameters");
+    expect(owner.getParameters().size() == 3177, "Expected 2457 existing controls and 720 appended Spatial EQ controls");
     for (size_t slot = 1; slot < 16; ++slot) {
         for (size_t field = 0; field < vocalstack::creativeParameterCount; ++field) {
             const auto expectedIndex = field < 48 ? 1007 + (slot - 1) * 48 + field
@@ -752,14 +752,15 @@ void editorSkin(int theme) {
             checkDrawerControls(owner, *child, advancedSliders, advancedButtons, true);
     }
     auto* rack = vocalstack::toneUiTests::find<vocalstack::MainBusFxRackPanel>(canvas, [](auto&) { return true; });
-    expect(rack && rack->isVisible() && rack->getBounds() == juce::Rectangle<int>(18, 344, 904, vocalstack::MainBusFxRackPanel::preferredHeight),
-           "Stack must retain the taller horizontal Main Bus FX row below the main controls");
+    expect(rack && rack->isVisible() && rack->getBounds() == juce::Rectangle<int>(
+               18, vocalstack::editorLayout::stackRackY, 904, rack->preferredHeightForWidth(904)),
+           "Stack must lay out the Main Bus FX row below the voice cards at its preferred height");
     auto* freshStack = vocalstack::toneUiTests::find<vocalstack::DoublerPanel>(canvas, [](auto&) { return true; });
     expect(freshStack && freshStack->getBounds() == juce::Rectangle<int>(18, vocalstack::editorLayout::stackPanelY, 904,
                                                                         vocalstack::editorLayout::stackPanelHeight)
                && canvas.getLocalBounds().contains(freshStack->getBounds())
                && !rack->getBounds().intersects(freshStack->getBounds()),
-           "The rack must not overlap or clip the full Stack panel at its new 706px origin");
+           "The rack must not overlap or clip the full Stack panel");
     auto* chorale = vocalstack::toneUiTests::find<juce::Component>(*rack, [](auto& child) {
         return child.getComponentID() == "mainBusFx12";
     });
@@ -1006,7 +1007,7 @@ int main(int argc, char** argv) {
         const char* name;
         void (*run)();
     };
-    const std::array<Test, 82> tests{{
+    const std::array<Test, 85> tests{{
                 {"Technical typography fits reserved lanes in all themes", vocalstack::typographyMotionTests::run},
             {"Control layout update, midpoint sliders, inward rings and wide Morph", vocalstack::controlLayoutUpdateTests::run},
             {"Compressor measured four-second gain reduction history", vocalstack::compressorHistoryTests::run},
@@ -1038,6 +1039,9 @@ int main(int argc, char** argv) {
         {"Routing inspector useful dial area, text lanes and narrow reflow", vocalstack::inspectorControlLayoutTests::run},
         {"Routing drafts, active fallback and layout state", routingStateRegression},
         {"Fixed FX automation slots", fxAutomationRegression},
+        {"Spatial EQ parameters, recall and rendered automation", vocalstack::toneProcessorTests::spatialEq},
+        {"Spatial EQ selected-band controls (offscreen)", vocalstack::toneUiTests::spatialEq},
+        {"Spatial EQ signed audio through HEAVEN", vocalstack::toneProcessorTests::spatialEqSignedAudio},
         {"Tone FX parameters, recall and rendered automation", vocalstack::toneProcessorTests::run},
         {"Tone FX UI, EQ gestures and multiband cable endpoints", vocalstack::toneUiTests::run},
         {"Preset validation, full patch recall, files and toolbar", vocalstack::presetTests::run},

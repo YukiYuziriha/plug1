@@ -1,6 +1,6 @@
 # Spatial audio DSP and product notes
 
-**Status:** The offline model matches the tested static Stereo Bell boosts and cuts and positive low and high shelves in presets of up to eight bands, without captured impulse responses or fitted coefficients. Fixed-shape, fixed-gain-sign multiband automation and tail lifecycle match the tested host-call-boundary renders. Static recorded-voice comparisons passed on narration and stereo choir. VST3 in-block parameter delivery and human listening remain unverified. No HEAVEN DSP or UI integration yet.
+**Status:** The research branch has an unreleased HEAVEN Spatial EQ node in CLAP and VST3 test builds. The independent C++ engine matches the tested Bell, Low Shelf, and High Shelf boosts, cuts, and live gain-sign crossings without captured impulse responses or fitted coefficients. The legacy EQ8 is unchanged. Strength is fixed at unity, with no control or parameter. VST3 in-block delivery and human listening remain unverified.
 
 Reference: [RFA Spatial EQ transcript notes](Spatial-EQ-RFA-Transcript-Notes.md) separate the speaker’s claims from open questions. The [reference measurements and offline tests](Spatial-EQ-Reference-Measurements.md) document the measured behavior and match limits.
 
@@ -48,7 +48,7 @@ Design cautions:
 2. **Verified offline — positive low and high shelves.** Both reuse the reflection engine with their own post-EQ extraction filter. Impulses and sweeps cover 0%, 50%, and 100% Depth with separate direct EQ and Depth-added Mid/Side scores.
 3. **Verified offline — Stereo Bell cut and one boost/cut pair.** The cut changes direct Mid and separately filters accumulated wet. Both band orders and a separated-band control are covered. Static overlap weights are verified on overlapping bells, mixed shelves and bells, and eight-band holdouts with cuts.
 4. **Verified offline — automation and tails.** The model reproduces tested Depth/frequency/Q/gain changes, slot-ordered overlap updates, switch and eligibility changes, Depth-zero re-entry, and explicit resets. Tests include four/eight-band holdouts with positive bells and shelves and a moving negative Bell fixture. Shape and gain sign stay fixed; host-call boundaries do not establish VST3 in-block delivery.
-5. **Integration gate.** Static matches on real mono narration and native stereo choir passed and RMS-matched A/B files were made, but have not been auditioned. Listen to these (and an isolated sung vocal if available) and verify native automation delivery. Then integrate basic per-band controls and benchmark the realtime engine before visual polish. Validate remaining shapes/channel modes and spatial controls separately; dynamic EQ and linear phase remain later scope.
+5. **Integrated in a test build.** The C++ engine is wired into Routing and the Stack rack with eight Depth controls. Verify playback and VST3 in-block automation before release. Static and gain-crossing comparisons on real narration and stereo choir passed, and RMS-matched A/B files were exported but not auditioned. Shape swaps, remaining channel modes, and other spatial controls are outside the verified scope; dynamic EQ and linear phase remain later work.
 6. Reuse the engine in the separate mono-in/stereo-out Signal Placer. Build advanced visuals afterward, including an optional top-down EQ view.
 
 ## Performance and validation

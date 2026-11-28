@@ -106,7 +106,10 @@ inline void editorControls() {
     std::unique_ptr<juce::AudioProcessorEditor> editor(owner->createEditor());
     require(editor->getWidth() == editorLayout::editorWidth
         && editor->getHeight() == editorLayout::defaultWindowHeight, "Fresh default window changed");
-    require(MainBusFxRackPanel::preferredHeight == 388, "Stack FX allocation changed");
+    auto* rack = dynamic_cast<MainBusFxRackPanel*>(find(*editor, "mainBusFxRack"));
+    require(rack && rack->getY() == editorLayout::stackRackY
+        && rack->getHeight() == rack->preferredHeightForWidth(rack->getWidth()),
+        "Stack FX rack did not use its width-dependent allocation");
     for (const auto* id : {"outputGain", "double", "globalMix"}) {
         auto* slider = dynamic_cast<juce::Slider*>(find(*editor, id));
         const auto expected = juce::String(id) == "globalMix" ? juce::Slider::LinearHorizontal

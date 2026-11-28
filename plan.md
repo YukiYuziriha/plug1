@@ -2,7 +2,7 @@
 
 ## Planned — shared spatial DSP, Spatial EQ and Signal Placer
 
-Research is underway offline; nothing has been integrated into HEAVEN. See the [spatial audio plan](docs/Spatial-Audio-Plan.md) and [reference tests](docs/Spatial-EQ-Reference-Measurements.md).
+An unreleased Spatial EQ test build is available on the research branch; it has not been installed or merged. See the [spatial audio plan](docs/Spatial-Audio-Plan.md) and [reference tests](docs/Spatial-EQ-Reference-Measurements.md).
 
 - [x] **Static Stereo Bell boost:** verify a standalone offline reflection network with no measured impulse responses. Match both Mid and Side on held-out overlaps, and check additional frequency/Q/gain and sample-rate settings.
 - [x] **Static positive low and high shelves:** verify their shape-specific feeds into the shared Depth engine. Impulse and sweep comparisons cover 0%, 50%, and 100% Depth at three sample rates.
@@ -11,9 +11,10 @@ Research is underway offline; nothing has been integrated into HEAVEN. See the [
 - [x] **Static multiband expansion:** implement and verify overlap normalization for simultaneous positive bells and shelves, including held-out eight-band presets and mixed Bell cuts.
 - [x] **Fixed-shape multiband automation:** verify slot-ordered overlap updates for positive bells and shelves and negative Bell cuts, including four/eight-band holdouts, eligibility changes, and reset at host-call boundaries.
 - [x] **Recorded voice comparison:** verify one static four-band preset on mono narration and native-stereo choir; export RMS-matched A/B pairs.
+- [x] **Negative EQ and live gain crossings:** verify Bell and both shelf cuts, including overlap with a boost and live crossings through zero, against the reference and through HEAVEN's processor path.
+- [x] **Research-branch test build:** one eight-band minimum-phase Spatial EQ node, with per-band Depth, no Spatial switch, and no added reported latency. Spatial work stops after zero-Depth tails fade. Legacy EQ8 is unchanged. Build and validate CLAP/VST3; benchmark zero, one, and eight active Depth bands.
 - [ ] **Next — listening and delivery:** audition the A/B pairs (including an isolated sung vocal if available) and verify VST3 in-block parameter timestamps independently of host-call steps.
-- [ ] Integrate and benchmark one eight-band minimum-phase EQ node with per-band Depth, no Spatial switch, and no added reported latency. Skip spatial work when all Depth controls are at zero and tails have faded.
-- [ ] Add per-band **Strength** for boosts: 0% mutes that band's generated space, 50% (default) is the reference match, and 100% doubles the generated signal's amplitude. Keep direct EQ and Depth cuts unchanged. Verify unity, smoothing, and headroom.
+- [ ] **Deferred — fixed at unity in the test build.** Add per-band **Strength** for boosts: 0% mutes that band's generated space, 50% (default) is the reference match, and 100% doubles the generated signal's amplitude. Keep direct EQ and Depth cuts unchanged. Verify unity, smoothing, and headroom.
 - [ ] **Signal Placer (working name):** a separate tool using the same spatial engine. Collapse incoming mono/stereo audio to 100% mono, then place that source into a new stereo scene with direct-source positioning, width and distance. Define the downmix policy explicitly because anti-phase input can cancel. Panning, width and perceived distance are distinct controls; the placer's mono behavior needs its own acceptance criteria.
 - [ ] **UI later:** Signal Placer uses a top-down space with a draggable source-position dot. Left/right controls source position; near/far coordinates perceived distance cues. Width remains separately controllable. Spatial EQ may reuse this top-down view as an optional secondary view, not its main UI. Do not build the 3D UI before proving the DSP; begin with per-band Depth knobs.
 - [ ] Keep reusable DSP modules composable for related and experimental effects without building a speculative general-purpose framework. Use preallocated bounded processing, smoothed controls and inactive-branch bypass; benchmark CPU rather than assuming the reference plugin's slowdown is DSP-related.

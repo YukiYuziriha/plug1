@@ -3,6 +3,7 @@
 #include "Chorale.h"
 #include "Waveshaper.h"
 #include "Equalizer.h"
+#include "SpatialEq.h"
 #include "Multiband.h"
 #include "FxMonitor.h"
 #include "CreativeEffects.h"
@@ -10,6 +11,7 @@
 #include "UtilityFilters.h"
 #include "SpectralMorph.h"
 #include "SpectralMorphBridge.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -27,7 +29,7 @@ namespace vocalstack {
 // an effect ID, type or wet owner creates fresh state. FX
 // with an internal Mix also restart when switching between native Mix and a
 // separately rendered wet endpoint.
-enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19, convolution = 20, saturator = 21, sidechain = 22, spectralMorph = 23, vocalGlitch = 24, sidechainBlend = 25, wetInput = 26, wetOutput = 27 };
+enum class NodeType : std::uint8_t { lead = 0, voice = 1, chorale = 2, sum = 3, mix = 4, output = 5, waveshaper = 6, equalizer = 7, crossover = 8, delay = 9, reverb = 10, compressor = 11, bitcrusher = 12, granular = 13, gain = 14, stereo = 15, gate = 16, xpFilter = 17, synthFilter = 18, splitter = 19, convolution = 20, saturator = 21, sidechain = 22, spectralMorph = 23, vocalGlitch = 24, sidechainBlend = 25, wetInput = 26, wetOutput = 27, spatialEq = 28 };
 inline constexpr std::uint32_t sidechainNodeId = 14;
 inline constexpr std::uint32_t sidechainBlendNodeId = 15;
 
@@ -50,6 +52,7 @@ inline constexpr EffectInputDeclaration routingInput(NodeType type, int pin) noe
 }
 // Mandatory whole-sample DSP delay only, not creative timing or filter phase.
 inline constexpr int routingDeclaredLatency(NodeType type) noexcept {
+    static_assert(SpatialEq::latencySamples == 0);
     return type == NodeType::spectralMorph ? SpectralMorph::latencySamples : 0;
 }
 inline constexpr bool isCreativeEffect(NodeType type) noexcept {
@@ -96,6 +99,7 @@ struct RoutingNode {
     SpectralMorphSettings spectralMorph;
     bool monoAudition = false;
     std::uint32_t wetOwner = 0; // Pocket scope (0 = main); processed before the owner's local Mix.
+    SpatialEqSettings spatialEq;
 };
 inline constexpr bool routingUsesInput(const RoutingNode& node, int pin) noexcept {
     return node.enabled || !routingInput(node.type, pin).auxiliary;
@@ -182,6 +186,7 @@ struct FxSettings {
     UtilitySettings utility;
     SpectralMorphSettings spectralMorph;
     bool monoAudition = false;
+    SpatialEqSettings spatialEq;
 };
 
 // Stable processor automation identities. Unmapped standalone machines keep
@@ -660,7 +665,7 @@ private:
                 }
                 break;
             }
-            case NodeType::chorale: case NodeType::waveshaper: case NodeType::equalizer:
+            case NodeType::chorale: case NodeType::waveshaper: case NodeType::equalizer: case NodeType::spatialEq:
             case NodeType::delay: case NodeType::reverb: case NodeType::compressor:
             case NodeType::bitcrusher: case NodeType::granular: case NodeType::convolution:
             case NodeType::saturator: case NodeType::vocalGlitch: case NodeType::spectralMorph:
@@ -796,6 +801,10 @@ private:
             case NodeType::chorale: chorale.prepare(sr); break;
             case NodeType::waveshaper: waveshaper.prepare(sr); break;
             case NodeType::equalizer: eq.prepare(sr); break;
+            case NodeType::spatialEq:
+                spatialEq = std::make_unique<SpatialEq>(); spatialEq->prepare(sr);
+                bypassStep = -std::expm1(-1.0 / (sr * .025));
+                break;
             case NodeType::crossover: crossover.prepare(sr); break;
             case NodeType::vocalGlitch: glitch = std::make_unique<VocalGlitch>(); glitch->prepare(sr); break;
             case NodeType::spectralMorph:
@@ -814,6 +823,7 @@ private:
             chorale.reset(); waveshaper.reset(); eq.reset(); crossover.reset(); creative.reset(); utility.reset();
             if (spectral) { spectral->reset(); alignedDry.reset(); spectralMix = 0; }
             if (glitch) glitch->reset();
+            if (spatialEq) spatialEq->reset();
         }
         double bypassBlend = 0., bypassStep = 0., choraleWetBlend = 0.;
         bool bypassInitialized = false;
@@ -823,6 +833,8 @@ private:
         Chorale chorale;
         Waveshaper waveshaper;
         Equalizer eq;
+        std::unique_ptr<SpatialEq> spatialEq;
+        SpatialEqSettings spatialEqTarget;
         Multiband crossover;
         CreativeEffect creative;
         UtilityEffect utility;
@@ -836,6 +848,7 @@ private:
         case NodeType::chorale: return .040;
         case NodeType::waveshaper: return Waveshaper::tailSeconds; // DC / IIR resampling / smoothing
         case NodeType::equalizer: return 256; // conservative extreme-Q/low-cutoff IIR decay
+        case NodeType::spatialEq: return 8; // Low-frequency IIR ringing plus the reflection return.
         case NodeType::crossover: return 8;
 
         case NodeType::compressor: case NodeType::bitcrusher: return 2;
@@ -849,7 +862,7 @@ private:
         }
     }
     static bool isEffect(NodeType t) noexcept {
-        return t == NodeType::crossover || routingSupportsWetPocket(t);
+        return t == NodeType::crossover || t == NodeType::spatialEq || routingSupportsWetPocket(t);
     }
     static constexpr bool usesInternalWetMix(NodeType t) noexcept {
         return t == NodeType::chorale || t == NodeType::waveshaper || t == NodeType::equalizer
@@ -948,6 +961,27 @@ private:
                 }
                 machine.eq.process(output.left, output.right, settings);
             }
+            return frame;
+        }
+        case NodeType::spatialEq: {
+            const bool waking = !machine.bypassInitialized || machine.bypassBlend == 0.;
+            if (!machine.clockBypass(fx.enabled, fx.enabled ? 1. : 0., 1.e-8, true)
+                || (!fx.enabled && machine.bypassBlend == 0.)) return frame;
+            const auto& target = fx.spatialEq;
+            const auto sameBand = [](const auto& a, const auto& b) {
+                return a.active == b.active && a.enabled == b.enabled && a.shape == b.shape
+                    && a.frequency == b.frequency && a.gainDb == b.gainDb && a.q == b.q && a.depth == b.depth;
+            };
+            if (!std::equal(target.bands.begin(), target.bands.end(), machine.spatialEqTarget.bands.begin(), sameBand)) {
+                machine.spatialEqTarget = target;
+                machine.spatialEq->setSettings(target);
+            }
+            // Do not replay a frozen reflection tail after a settled node bypass.
+            if (waking && fx.enabled) machine.spatialEq->reset();
+            frame.wet = finiteDry();
+            machine.spatialEq->process(frame.wet.left, frame.wet.right);
+            frame.mix = machine.bypassBlend;
+            frame.hasWet = true;
             return frame;
         }
         case NodeType::spectralMorph: {
@@ -1090,6 +1124,7 @@ private:
         FxSettings fx{n.enabled, n.mix, n.motion};
         fx.waveshaper = n.waveshaper; fx.eq = n.eq; fx.creative = n.creative; fx.utility = n.utility; fx.spectralMorph = n.spectralMorph; fx.monoAudition = n.monoAudition;
         fx.bandCount = n.bandCount; fx.crossoverLow = n.crossoverLow; fx.crossoverHigh = n.crossoverHigh;
+        fx.spatialEq = n.spatialEq;
         return fx;
     }
     double creativeTailSeconds(NodeType type, const CreativeSettings& settings, double bpm) const noexcept {
@@ -1223,6 +1258,7 @@ private:
                     return {false, "invalid waveshaper shape/quality controls"};
                 [[fallthrough]];
             case NodeType::equalizer:
+            case NodeType::spatialEq:
             case NodeType::chorale: ++effects; break;
             case NodeType::spectralMorph: {
                 const auto values = spectralMorphValues(n.spectralMorph);

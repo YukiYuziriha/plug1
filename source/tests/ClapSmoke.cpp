@@ -186,7 +186,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         "Leveler Active", "Doubler Active", "Formant Active", "Bypass", "Output"
     };
     const auto& params = instance.get<clap_plugin_params_t>(CLAP_EXT_PARAMS);
-    expect(params.count(instance.plugin) == 2457, "Expected 2447 legacy parameters, Sidechain Blend, and nine Sidechain card parameters");
+    expect(params.count(instance.plugin) == 3177, "Expected 2457 existing controls and 720 appended Spatial EQ controls");
     for (uint32_t i = 0; i < params.count(instance.plugin); ++i) {
         clap_param_info_t info{};
         expect(params.get_info(instance.plugin, i, &info), "Host parameter metadata missing");
@@ -195,6 +195,12 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
         if (i == 10) expect(std::string_view(info.name) == "Advanced Doubler", "Legacy Advanced index changed");
         if (i == 2447) expect(std::string_view(info.name) == "Sidechain Blend" && info.default_value == info.min_value,
                               "Sidechain Blend must stay at index 2447 and default to 0%");
+        if (i >= 2457 && (i - 2457) % 6 == 5) {
+            const auto band = (i - 2457) / 6;
+            const auto name = "FX " + std::to_string(1 + band / 8) + " Spatial EQ Band " + std::to_string(1 + band % 8) + " Depth";
+            expect(name == info.name && info.default_value == info.min_value && (info.flags & CLAP_PARAM_IS_STEPPED) == 0,
+                   "Spatial EQ Depth name, default, or continuous automation changed");
+        }
         if (i >= 11 && i < 43) {
             constexpr std::array<std::string_view, 8> fields{"Active", "Gain", "Pan", "Delay", "Detune", "Formant", "Depth", "Rate"};
             const auto expected = "Voice " + std::to_string(1 + (i - 11) / 8) + " " + std::string(fields[(i - 11) % 8]);
@@ -233,7 +239,7 @@ void checkHostControls(const clap_plugin_factory_t& factory) {
            "Output remote controls are mapped incorrectly");
     for (size_t i = 2; i < CLAP_REMOTE_CONTROLS_COUNT; ++i)
         expect(page.param_ids[i] == CLAP_INVALID_ID, "An unused Output remote slot is not empty");
-    std::cout << "2457 automatable parameters and two remote pages verified; original indices unchanged\n";
+    std::cout << "3177 automatable parameters and two remote pages verified; original indices unchanged\n";
 }
 
 void checkState(const clap_plugin_factory_t& factory) {
