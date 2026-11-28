@@ -25,6 +25,18 @@
   controls without resetting unrelated modules. Independent Advanced formants
   remain active when the shared Formant switch is off.
 
+## Shared UI layout and controls
+
+- Neon is the geometry reference. Device, Neon, Spectral, and Grass share the
+  same component structure, spacing, control sizes, stroke widths, and corner
+  radii. Skins change only colors and fonts. Fit text using actual font width
+  and line height; do not fork the layout or add padding for individual skins.
+- Reuse shared components and sizing tokens before adding local UI code. Define
+  Small/Medium/Large knob sizes and Stack/Routing density presets once; select
+  from those presets rather than hardcoding dimensions in individual FX panels.
+- Every FX uses the shared thick Mix slider in the top row, with 1:1 mouse drag
+  and consistent zero, partial, and full fill in Stack and Routing.
+
 ## Architecture
 
 - Keep processing, host integration/state, and presentation separate. Small,
@@ -66,8 +78,9 @@
 - Cover DSP changes with offline tests: mono/stereo, supported sample rates,
   irregular block sizes, automation, silence/reset, finite output, level/headroom,
   and bypass/latency as relevant. Cover parameter/state and UI changes too.
-- Verify GUI layout in both skins when changing controls or meters. Distinguish
-  automated checks from a listening check in the user's actual DAW.
+- Verify GUI layout and text fit in all four skins at narrow and wide window
+  sizes when changing controls or meters. Distinguish automated checks from a
+  listening check in the user's actual DAW.
 - Permanent user preference: always do GUI testing and screenshotting on the
   non-primary second monitor when available. At the start of every GUI test or
   capture session, enumerate the actual connected displays, their primary flags,
