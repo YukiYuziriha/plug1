@@ -23,6 +23,49 @@ An unreleased Spatial EQ test build is available on the research branch; it has 
 - [ ] Keep reusable DSP modules composable for related and experimental effects without building a speculative general-purpose framework. Use preallocated bounded processing, smoothed controls and inactive-branch bypass; benchmark CPU rather than assuming the reference plugin's slowdown is DSP-related.
 - [ ] Validate mono fold-down, frequency localization, reflection timing, transient preservation, bass leakage, automation stability and CPU across sample rates/block sizes before visual polish. Linear Phase and additional channel modes are outside this build.
 
+## Planned — shared UI, Stack review, and Volume Match
+
+### Shared UI rules
+
+- [ ] Adopt Neon as the geometry reference for **Device, Neon, Spectral, and Grass**. Share the component structure, bounds, spacing, control sizes, stroke thickness, and corner radii. Skins supply colors and fonts, not alternate layouts. Record these rules in `AGENTS.md` and enforce them through shared components and layout constants.
+- [ ] Define shared **Small / Medium / Large** knob sizes and density presets for Stack and the Routing inspector. Use Chorale as the density reference; leave its effect-specific layout alone. Avoid per-effect pixel sizes unless clearly justified.
+- [ ] Use the existing thick, 1:1-drag slider for **every FX Mix**, consistently in the top row in Stack and Routing. Fix Routing's 0% Mix fill bug; verify empty, partial, and full fills against the actual value.
+- [ ] Unify the typography scale, including dropdowns. Reduce the voice-card labels between sliders one font step and fit using each typeface's actual width and line height inside the same bounds. Keep spacing tight; add no blank padding just to hide clipping. Review narrow and wide layouts in all four skins.
+
+### Stack and voice cards
+
+- [ ] Default **Motion** to 100% for fresh or missing settings without overwriting a saved value.
+- [ ] Keep **Gain Rider** visible regardless of which card is selected.
+- [ ] Place **Sidechain** immediately left of Lead. Show it only when connected. Give it a narrow collapsed tab that opens its controls when clicked.
+- [ ] Default the voice area to a compact browser-style tab strip. Put **Collapse Voices** beside **Add Voice** and **Reset to Basic** so FX can be reached without scrolling past expanded voices.
+- [ ] Keep each collapsed tab's **On/Off** switch independently clickable: clicking the switch changes the voice state without expanding it; clicking the rest of the tab opens that card's controls. Collapse and expand do not change audio settings.
+- [ ] Let the Stack voice row and scrollable content consume the available width as the window grows. Anchor the scrollbar to the far right and preserve Routing's current resize behavior.
+
+### FX review
+
+- [ ] **Waveshaper:** enlarge knobs using the shared preset. Fit the full **Quality** label in Stack and match the dropdown font to nearby controls.
+- [ ] **Bitcrusher:** overlay actual input and crushed-output waveforms on the existing graph. Show the held output as a staircase so sample hold and quantization are visible. Use bounded snapshots and a low UI refresh rate, not a decorative animation.
+- [ ] **Compressor:** reduce knob size in Stack and especially in the Routing inspector using the shared density presets.
+- [ ] **Delay:** fit the **Tempo** button. Swap the time control in the same position between free milliseconds and synced division, rather than leaving an inactive duplicate. Preserve each mode's last setting.
+- [ ] **Reverb:** use smaller knobs. Apply the High Cut visual direction consistently everywhere that control appears: more knob travel means more high-frequency removal, while the text shows actual cutoff Hz. Preserve existing values, automation mappings, and DSP.
+- [ ] **Granular:** reduce **Color** and **Scatter** knob sizes and change **Colour** to **Color** in the UI without renaming parameter IDs.
+- [ ] **Vocal Glitch:** retain the current effect-specific layout; apply shared rules where applicable.
+- [ ] **EQ8:** single-click empty graph space to add a band; double-click an existing band to remove it. Enlarge band knobs and move Mix to the shared top row.
+- [ ] **Stereo:** enlarge knobs and rename **Balance** to **Pan** in the UI; preserve the existing DSP and parameter identity.
+- [ ] **Gate:** enlarge knobs using the shared size preset.
+- [ ] **XP Filter and Synth Filter:** enlarge knobs and reduce dropdown text to the shared typography scale.
+- [ ] **Convolution:** list next to **Reverb** in every FX picker and shrink knobs, especially in Routing.
+- [ ] **Saturator:** keep the useful Level Match interaction when adopting shared Volume Match. Review the actual Saturator and Waveshaper implementations and document their workflow differences before changing either effect's role.
+- [ ] **FX slot reuse:** reproduce the failure to add FX after deletions; fix slot ownership or stale picker availability at the source. Regression-test filling the rack, deleting nodes, adding again, and undoing a deletion in Stack and Routing. Do not increase the slot limit to hide the bug.
+
+### Volume Match on every FX
+
+- [ ] Add one consistent **Volume Match** control to every FX, **off by default** and independent of Mix. Apply a per-effect output trim; use exact compensation when the gain change is analytically known. Keep manual Output Trim manual.
+- [ ] For signal-dependent effects, learn a bounded, smoothed correction from a short stretch of valid active input/output, show **Learning → Matched**, then hold the trim until explicit relearn. Do not keep riding the gain after matching. If the material is insufficient to learn reliably, leave the trim unchanged.
+- [ ] For Delay, Reverb, Convolution, or any effect with a tail, learn only with valid source activity and hold through silence and decay. Never derive extra gain from a tail alone. A fixed trim may change the whole tail's level, but must not make it swell or change its decay shape. Be conservative on wet-only material with insufficient input for a reliable estimate.
+- [ ] For dynamics, learn slowly from representative active material, exclude closed-gate intervals, and preserve the intended envelope and attenuation rather than normalizing each gain change.
+- [ ] Verify match-off transparency, no gain chasing, explicit relearn, silence and tail handling, headroom, recall and legacy compatibility. Measure overhead; use bounded real-time work with no audio-thread allocation. Validate the full UI pass in all four skins before installation.
+
 ## Adaptive DSP and latency
 
 - Stack and Routing share the same processing plan. An explicitly disabled module keeps its settings and wiring, but stops its DSP once bypass settles. Disconnected paths do not render. A simple chain does not pay for the vocal stretcher when no routed vocal processing needs it.
