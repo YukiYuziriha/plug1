@@ -1,6 +1,6 @@
 """Offline static Stereo EQ and spatial Depth model.
 
-Supports up to eight Bell or shelf boosts and Bell cuts in total. Controls
+Supports up to eight Bell or shelf boosts and cuts in total. Controls
 are settled from sample zero, with empty histories on every call. No
 automation, dynamics, other channel modes or host processing is modeled.
 """
@@ -31,21 +31,24 @@ def _matched_pole(sample_rate, hz, q, response, gain_db=0.0):
     """Fit numerator magnitudes at DC, center and Nyquist to analog targets."""
     w = 2.0 * pi * min(0.475 * sample_rate, max(10.0, hz)) / sample_rate
     shelf = response in _SHELF_FEEDS
-    cut = response == "bell" and gain_db < 0.0
-    if cut:
+    bell_cut = response == "bell" and gain_db < 0.0
+    inverse = bell_cut
+    if bell_cut:
         if gain_db > -1e-9:
             return 1.0, 0.0, 0.0, 0.0, 0.0
         q = min(30.0, max(0.1, q))
         gain_db = min(-gain_db, 60.0)
     if shelf:
-        if gain_db < 1e-9:
+        if abs(gain_db) < 1e-9:
             return 1.0, 0.0, 0.0, 0.0, 0.0
         q = min(30.0, max(0.1, q))
-        signed_gain = min(gain_db, 36.0) * (1 if response == "low_shelf" else -1)
+        low = response == "low_shelf"
+        inverse = (gain_db > 0.0) != low
+        # Fit a Low Shelf boost or High Shelf cut first, then invert as needed.
+        # Only the pole frequency moves; the fit still uses w.
+        signed_gain = min(abs(gain_db), 36.0 if gain_db > 0.0 else 60.0) * (1 if low else -1)
         boost = 10.0 ** (signed_gain / 40.0)
-        # A high boost is the reciprocal of a fitted high cut. In both
-        # cases only the pole frequency moves; the fit still uses w.
-        pole_w = w / sqrt(boost) if response == "low_shelf" else w * sqrt(boost)
+        pole_w = w / sqrt(boost) if low else w * sqrt(boost)
         damping = 0.5 / q
     else:
         boost = 10.0 ** (gain_db / 40.0)
@@ -97,8 +100,7 @@ def _matched_pole(sample_rate, hz, q, response, gain_db=0.0):
     imag_sq = center**2 * (den_real**2 + den_imag**2) - num_real**2
     outer_diff = sqrt(max(0.0, imag_sq)) / sw
     b0, b2 = (outer_sum + outer_diff) * 0.5, (outer_sum - outer_diff) * 0.5
-    if cut or response == "high_shelf":
-        # The fitted prototype is inverted, rather than fitting a negative Bell.
+    if inverse:
         scale = b0 if abs(b0) > 1e-30 else 1e-30
         return 1.0 / scale, a1 / scale, a2 / scale, inner / scale, b2 / scale
     return b0, inner, b2, a1, a2
@@ -218,8 +220,7 @@ def _validate_band(frequency, gain_db, q, shape):
         raise ValueError("frequency must be finite and positive")
     if not isfinite(gain_db) or gain_db == 0.0 or not isfinite(q) or q <= 0.0:
         raise ValueError("gain_db must be finite and nonzero; q must be finite and positive")
-    if gain_db < 0.0 and shape != "bell":
-        raise ValueError("only 'bell' supports negative gain")
+
     if shape == "bell" and gain_db > 0.0 and q < 0.5:
         raise ValueError("the static positive Bell model requires q >= 0.5")
 
@@ -242,9 +243,10 @@ def process_direct_eq(stereo, *, sample_rate=48000, frequency=2400.0, gain_db=6.
                       q=1.0, shape="bell"):
     """Return the settled Depth-off EQ output as a (2, N) float64 array.
 
-    Shape is 'bell', 'low_shelf', or 'high_shelf'. Only Bell accepts negative
-    gain. A positive Bell requires Q >= 0.5. The shelves and negative Bell
-    limit design Q to [0.1, 30] and gain magnitude to 36 and 60 dB respectively.
+    Shape is 'bell', 'low_shelf', or 'high_shelf'; all accept either gain sign.
+    A positive Bell requires Q >= 0.5. The shelves and negative Bell limit
+    design Q to [0.1, 30]. Shelf gain is clamped to [-60, 36] dB; Bell cuts
+    are limited to -60 dB.
     Design frequency is limited to 10 Hz through 0.475 * sample_rate.
     Controls are physical values, not host parameters.
     """
