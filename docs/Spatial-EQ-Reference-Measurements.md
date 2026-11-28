@@ -248,4 +248,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-HalfCpu.ps1
 
 The Release test build uses the new eight-band Spatial EQ node without changing legacy EQ8. The native harness verifies impulse onset with no added latency and observes no C++ `new` calls during the test after prepare. At 48 kHz and 256 stereo frames, median steady-state standalone cost was about 7/31/223 µs per block for zero/one/eight active Depth bands. That is approximately 0.13/0.57/4.19% of the block deadline, not total HEAVEN or machine-wide CPU. CLAP and VST3 smoke tests and focused offscreen editor/processor Spatial EQ tests passed.
 
-**Remaining scope:** automated shape changes, additional shapes/channel modes and spatial controls, VST3 in-block parameter delivery, and human listening. The research build has not been installed or released. No reference audio or decompiler output is tracked.
+### Integrated HEAVEN VST3 on recorded singing
+
+[`Compare-Heaven-Spatial-EQ-Reference.py`](../tools/Compare-Heaven-Spatial-EQ-Reference.py) loads the built HEAVEN VST3, recalls `Lead → Spatial EQ → Output`, and compares it against Spatial EQ 0.7.0 on the stereo *Tourdion* excerpt. Both all-bands-off renders matched dry exactly. The static cut/boost preset scored **−108.05 dBr** full output and **−101.10 dBr** Depth delta, before any level matching or time shift. Between-call Bell and Low Shelf gain crossings in both directions scored **−104.85 dBr or better** on full output, with a worst peak residual of `2.34e-6` FS. In the first 100 ms after the write, the isolated change relative to a no-op scored **−94.13 dBr or better**. No-op split renders matched their unsplit controls exactly. The A/B export uses pooled L/R RMS matching; it has not been auditioned.
+
+Native CLAP Gain and Depth timestamps matched explicit splits; native VST3 Gain and Depth did not. The [native automation findings](Spatial-Audio-Plan.md#native-vst3-automation-finding) describe the wrapper limitation. The singing comparison does not test VST3 parameter queues.
+
+**Remaining scope:** automated shape changes, additional shapes/channel modes and spatial controls, a fix for VST3 in-block parameter delivery, and human listening. The research build has not been installed or released. No reference audio or decompiler output is tracked.
