@@ -19,7 +19,7 @@ FetchContent_Declare(signalsmith-stretch
     GIT_SUBMODULES "")
 FetchContent_MakeAvailable(signalsmith-linear signalsmith-stretch)
 
-add_library(vocalstack_dsp STATIC src/VocalEngine.cpp)
+add_library(vocalstack_dsp STATIC src/VocalEngine.cpp src/SpatialEq.cpp)
 set_target_properties(vocalstack_dsp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(vocalstack_dsp PUBLIC src)
 target_link_libraries(vocalstack_dsp PUBLIC signalsmith-stretch)
@@ -77,6 +77,9 @@ endif()
 
 if(VOCALSTACK_BUILD_TESTS)
     enable_testing()
+    add_executable(vocalstack_spatial_eq_harness tests/SpatialEqHarness.cpp)
+    target_link_libraries(vocalstack_spatial_eq_harness PRIVATE vocalstack_dsp)
+    add_test(NAME VocalStackSpatialEq COMMAND vocalstack_spatial_eq_harness --self-test)
     add_executable(vocalstack_spectralmorph_benchmark tests/SpectralMorphBenchmark.cpp)
     target_include_directories(vocalstack_spectralmorph_benchmark PRIVATE src)
     add_executable(vocalstack_spectralmorph_tests tests/SpectralMorphTests.cpp)
